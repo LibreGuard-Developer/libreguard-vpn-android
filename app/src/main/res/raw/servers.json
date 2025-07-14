@@ -1,0 +1,58 @@
+[
+  {
+    "name": "US-East-01",
+    "ip": "192.168.1.1",
+    "hostname": "us-east-01.host.com",
+    "country": "USA",
+    "linkSpeed": 10,
+    "pricingTier": "Premium"
+  },
+  {
+    "name": "US-West-03",
+    "ip": "192.168.1.2",
+    "hostname": "us-west-03.host.com",
+    "country": "USA",
+    "linkSpeed": 1,
+    "pricingTier": "Free"
+  },
+  {
+    "name": "UK-London-05",
+    "ip": "192.168.1.3",
+    "hostname": "uk-london-05.host.com",
+    "country": "UK",
+    "linkSpeed": 10,
+    "pricingTier": "Premium"
+  },
+  {
+    "name": "JP-Tokyo-11",
+    "ip": "192.168.1.4",
+    "hostname": "jp-tokyo-11.host.com",
+    "country": "Japan",
+    "linkSpeed": 1,
+    "pricingTier": "Free"
+  },
+  {
+    "name": "JP-Osaka-02",
+    "ip": "192.168.1.5",
+    "hostname": "jp-osaka-02.host.com",
+    "country": "Japan",
+    "linkSpeed": 10,
+    "pricingTier": "Premium"
+  },
+  {
+    "name": "DE-Frankfurt-01",
+    "ip": "192.168.1.6",
+    "hostname": "de-frankfurt-01.host.com",
+    "country": "Germany",
+    "linkSpeed": 1,
+    "pricingTier": "Free"
+  },
+  {
+    "name": "DE-MULTI-1",
+    "ip": "217.154.229.53",
+    "hostname": "shadowcircuit-de-1.ddns.net",
+    "country": "Germany",
+    "linkSpeed": 1,
+    "pricingTier": "Free"
+  }
+]
