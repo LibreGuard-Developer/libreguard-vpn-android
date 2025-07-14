@@ -57,7 +57,7 @@ fun MainScreen() {
             Text("Upload: 0.0 MB")
         }
         Spacer(modifier = Modifier.height(16.dp))
-        Divider()
+        HorizontalDivider()
 
         // Server List
         LazyColumn(modifier = Modifier.fillMaxWidth()) {
