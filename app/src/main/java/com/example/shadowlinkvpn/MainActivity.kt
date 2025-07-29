@@ -4,7 +4,11 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.runtime.Composable
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Scaffold
+import androidx.compose.runtime.*
+import androidx.compose.ui.Modifier
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
@@ -18,26 +22,43 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             ShadowLinkVPNTheme {
-                AppNavigation()
+                Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
+                    AppNavigation(modifier = Modifier.padding(innerPadding))
+                }
             }
         }
     }
 }
 
 @Composable
-fun AppNavigation() {
+fun AppNavigation(modifier: Modifier = Modifier) {
     val navController = rememberNavController()
-    NavHost(navController = navController, startDestination = "login") {
+    var authToken by remember { mutableStateOf<String?>(null) }
+
+    NavHost(
+        navController = navController,
+        startDestination = "login",
+        modifier = modifier
+    ) {
         composable("login") {
-            LoginScreen(onLoginSuccess = {
+            LoginScreen(onLoginSuccess = { token ->
+                authToken = token
                 navController.navigate("main") {
-                    // Prevents going back to login screen
                     popUpTo("login") { inclusive = true }
                 }
             })
         }
         composable("main") {
-            MainScreen()
+            authToken?.let { token ->
+                MainScreen(authToken = token)
+            } ?: run {
+                // If token is null, navigate back to login
+                LaunchedEffect(Unit) {
+                    navController.navigate("login") {
+                        popUpTo("main") { inclusive = true }
+                    }
+                }
+            }
         }
     }
 }
