@@ -22,6 +22,8 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.shadowlinkvpn.viewmodel.VpnViewModel
 import com.example.shadowlinkvpn.viewmodel.VpnProtocol
+import com.example.shadowlinkvpn.service.vpn.StrongSwanHandler  // <- Add this line
+
 
 // Keep your existing VpnServer data class
 data class VpnServer(
@@ -51,16 +53,18 @@ fun MainScreen(authToken: String) {
     val context = LocalContext.current
 
     val servers by viewModel.servers.collectAsState()
+    val remoteServers by viewModel.remoteServers.collectAsState()
     val selectedServer by viewModel.selectedServer.collectAsState()
     val selectedProtocol by viewModel.selectedProtocol.collectAsState()
     val isConnected by viewModel.isConnected.collectAsState()
     val isConnecting by viewModel.isConnecting.collectAsState()
+    val isLoadingServers by viewModel.isLoadingServers.collectAsState()
     val errorMessage by viewModel.errorMessage.collectAsState()
 
     // Set auth token and load servers
     LaunchedEffect(authToken) {
-        viewModel.setAuthToken(authToken)
-        viewModel.loadServers(context)
+        viewModel.setAuthToken(authToken) // This will automatically load remote servers
+        viewModel.loadLocalServers(context) // Load local servers as backup
     }
 
     val connectionStatus = when {
@@ -82,8 +86,19 @@ fun MainScreen(authToken: String) {
             TopAppBar(
                 title = { Text("ShadowLink VPN") },
                 actions = {
-                    IconButton(onClick = { /* TODO: Handle settings click */ }) {
-                        Icon(Icons.Default.Settings, contentDescription = "Settings")
+                    // Add refresh button for server list
+                    IconButton(
+                        onClick = { viewModel.refreshServers() },
+                        enabled = !isLoadingServers
+                    ) {
+                        if (isLoadingServers) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(20.dp),
+                                strokeWidth = 2.dp
+                            )
+                        } else {
+                            Icon(Icons.Default.Settings, contentDescription = "Refresh Servers")
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -103,12 +118,28 @@ fun MainScreen(authToken: String) {
             Spacer(modifier = Modifier.height(24.dp))
             Text(connectionStatus, color = statusColor, fontSize = 20.sp, fontWeight = FontWeight.Bold)
 
+            Button(
+                onClick = { viewModel.testStrongSwanInitialization() },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Test StrongSwan Init")
+            }
+
             // Selected server info
             selectedServer?.let { server ->
                 Text(
                     text = "${server.country} - ${selectedProtocol.displayName}",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            // Remote server count info
+            if (remoteServers.isNotEmpty()) {
+                Text(
+                    text = "CA Server: ${remoteServers.size} servers available",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary
                 )
             }
 
@@ -122,7 +153,7 @@ fun MainScreen(authToken: String) {
                         viewModel.connectToVpn()
                     }
                 },
-                enabled = !isConnecting && (selectedServer != null || isConnected),
+                enabled = !isConnecting && !isLoadingServers && (selectedServer != null || isConnected),
                 modifier = Modifier.size(150.dp),
                 shape = RoundedCornerShape(75.dp)
             ) {
@@ -148,7 +179,7 @@ fun MainScreen(authToken: String) {
                         .padding(horizontal = 16.dp)
                         .clickable { viewModel.clearError() },
                     colors = CardDefaults.cardColors(
-                        containerColor = if (error.contains("Connected"))
+                        containerColor = if (error.contains("Connected") || error.contains("updated") || error.contains("received"))
                             MaterialTheme.colorScheme.primaryContainer
                         else
                             MaterialTheme.colorScheme.errorContainer
@@ -157,7 +188,7 @@ fun MainScreen(authToken: String) {
                     Text(
                         text = error,
                         modifier = Modifier.padding(12.dp),
-                        color = if (error.contains("Connected"))
+                        color = if (error.contains("Connected") || error.contains("updated") || error.contains("received"))
                             MaterialTheme.colorScheme.onPrimaryContainer
                         else
                             MaterialTheme.colorScheme.onErrorContainer
