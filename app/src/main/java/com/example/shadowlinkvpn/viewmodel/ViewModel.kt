@@ -2,26 +2,41 @@ package com.example.shadowlinkvpn.viewmodel
 
 import android.app.Application
 import android.content.Context
+import android.content.Intent
+import android.net.VpnService
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
-import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.shadowlinkvpn.R
+import com.example.shadowlinkvpn.network.RemoteVpnServer
 import com.example.shadowlinkvpn.network.RetrofitClient
 import com.example.shadowlinkvpn.network.VpnConfigRequest
-import com.example.shadowlinkvpn.network.RemoteVpnServer
+import com.example.shadowlinkvpn.service.StrongSwanVpnService
+import com.example.shadowlinkvpn.service.vpn.ConnectionState
+import com.example.shadowlinkvpn.service.vpn.OpenVpnHandler
+import com.example.shadowlinkvpn.service.vpn.StrongSwanHandler
+import com.example.shadowlinkvpn.service.vpn.VpnProtocolFactory
+import com.example.shadowlinkvpn.service.vpn.VpnProtocolHandler
+import com.example.shadowlinkvpn.service.vpn.WireGuardHandler
 import com.example.shadowlinkvpn.ui.screens.VpnServer
+import com.example.shadowlinkvpn.util.VpnConfigManager
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
-import java.io.InputStreamReader
-// in `app/src/main/java/com/example/shadowlinkvpn/viewmodel/ViewModel.kt`
+import kotlinx.coroutines.withContext
+import org.strongswan.android.data.VpnProfile
 import java.io.File
-import android.content.Intent
-import com.example.shadowlinkvpn.service.StrongSwanVpnService
-import com.example.shadowlinkvpn.service.vpn.StrongSwanHandler
-import com.example.shadowlinkvpn.util.VpnConfigManager
+import java.io.InputStreamReader
+import org.json.JSONObject
+
+private val _connectionState = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected)
+val connectionState: StateFlow<ConnectionState> = _connectionState
+
+
+private const val TAG = "VpnViewModel"
 
 enum class VpnProtocol(val displayName: String, val apiName: String) {
     IKEV2_IPSEC("IKEV2/IPSec", "IKEV2"),
@@ -55,6 +70,8 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     val errorMessage: StateFlow<String?> = _errorMessage
 
     private var authToken: String? = null
+    private var activeVpnHandler: VpnProtocolHandler? = null
+    private val configManager by lazy { VpnConfigManager(getApplication()) }
 
     fun loadLocalServers(context: Context) {
         try {
@@ -63,7 +80,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             val serverListType = object : TypeToken<List<VpnServer>>() {}.type
             val serverList: List<VpnServer> = Gson().fromJson(reader, serverListType) ?: emptyList()
             _servers.value = serverList
+            Log.d(TAG, "Loaded ${serverList.size} local servers")
         } catch (e: Exception) {
+            Log.e(TAG, "Error loading local servers", e)
             _errorMessage.value = "Failed to load local servers: ${e.localizedMessage}"
         }
     }
@@ -86,6 +105,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                     val serverResponse = response.body()
                     if (serverResponse?.servers != null) {
                         _remoteServers.value = serverResponse.servers
+                        Log.d(TAG, "Loaded ${serverResponse.servers.size} remote servers")
                         _errorMessage.value = "Server list updated (${serverResponse.servers.size} servers)"
                     } else {
                         _errorMessage.value = "No servers received from API"
@@ -94,6 +114,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                     _errorMessage.value = "Failed to load servers: ${response.code()} - ${response.message()}"
                 }
             } catch (e: Exception) {
+                Log.e(TAG, "Error loading remote servers", e)
                 _errorMessage.value = "Failed to load remote servers: ${e.localizedMessage}"
             } finally {
                 _isLoadingServers.value = false
@@ -133,10 +154,10 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
-        // Step 4: Check if selected server exists in remote server list
+        // Check if selected server exists in remote server list
         val remoteServer = findRemoteServerByName(server.name)
         if (remoteServer == null) {
-            _errorMessage.value = "Selected server '${server.name}' not found in CA server list. Please refresh server list."
+            _errorMessage.value = "Selected server '${server.name}' not found in server list. Please refresh server list."
             return
         }
 
@@ -145,7 +166,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
         viewModelScope.launch {
             try {
-                // Step 5: Request VPN config using remote server ID
+                // Request VPN config using remote server ID
                 val request = VpnConfigRequest(
                     serverId = remoteServer.id,
                     protocol = _selectedProtocol.value.apiName
@@ -154,12 +175,13 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 val response = RetrofitClient.instance.getVpnConfig("Bearer $token", request)
 
                 if (response.isSuccessful && response.body()?.success == true) {
-                    val configContent = response.body()?.configContent // Changed from configData
+                    val configContent = response.body()?.configContent
                     val certificateName = response.body()?.certificateName
                     val passphrase = response.body()?.passphrase
 
                     if (configContent != null) {
-                        _errorMessage.value = "Config received: ${certificateName ?: "IKEV2 config"}"
+                        Log.d(TAG, "Config received for ${_selectedProtocol.value.displayName}")
+                        _errorMessage.value = "Config received: ${certificateName ?: "VPN config"}"
                         connectWithConfig(configContent, server, _selectedProtocol.value, certificateName, passphrase)
                     } else {
                         _errorMessage.value = "No config content received"
@@ -169,6 +191,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                     _errorMessage.value = errorBody?.message ?: "Failed to get VPN config: ${response.code()}"
                 }
             } catch (e: Exception) {
+                Log.e(TAG, "Error connecting to VPN", e)
                 _errorMessage.value = "Connection error: ${e.localizedMessage}"
             } finally {
                 _isConnecting.value = false
@@ -177,74 +200,158 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun connectWithConfig(configContent: String, server: VpnServer, protocol: VpnProtocol, certificateName: String?, passphrase: String?) {
-        when (protocol) {
-            VpnProtocol.IKEV2_IPSEC -> {
-                connectStrongSwan(configContent, certificateName, passphrase)
-            }
-            VpnProtocol.OPENVPN -> {
-                connectOpenVpn(configContent, certificateName)
-            }
-            VpnProtocol.WIREGUARD -> {
-                connectWireGuard(configContent, certificateName)
-            }
-        }
-    }
-
-    private fun connectStrongSwan(configContent: String, certificateName: String?, passphrase: String?) {
         viewModelScope.launch {
             try {
-                // Create the VPN config manager
+                // Create and initialize the appropriate VPN handler based on protocol
+                activeVpnHandler = VpnProtocolFactory.createHandler(protocol)
+
                 val context = getApplication<Application>().applicationContext
-                val configManager = VpnConfigManager(context)
+                val initialized = withContext(Dispatchers.IO) {
+                    activeVpnHandler?.initialize(context) ?: false
+                }
 
-                // Save the .sswan file properly formatted
-                val configFile = configManager.saveStrongSwanConfig(
-                    configContent,
-                    certificateName ?: "config.sswan"
-                )
+                if (!initialized) {
+                    throw Exception("Failed to initialize ${protocol.displayName} handler")
+                }
 
-                // Start the VPN service - pass the File object directly, not its path
-                startVpnService(context, configFile)  // Fixed - pass File object instead of String path
-
-                _isConnected.value = true
-                _errorMessage.value = "Connected using IKEv2/IPSec"
+                when (protocol) {
+                    VpnProtocol.IKEV2_IPSEC -> {
+                        connectStrongSwan(configContent, certificateName, passphrase)
+                    }
+                    // Update these lines in connectWithConfig function
+                    VpnProtocol.OPENVPN -> {
+                        connectOpenVpn(configContent) // Remove certificateName parameter
+                    }
+                    VpnProtocol.WIREGUARD -> {
+                        connectWireGuard(configContent) // Remove certificateName parameter
+                    }
+                }
             } catch (e: Exception) {
+                Log.e(TAG, "Error in connectWithConfig", e)
                 _isConnected.value = false
-                _errorMessage.value = "Failed to connect: ${e.localizedMessage}"
+                _errorMessage.value = "Connection error: ${e.localizedMessage}"
+                activeVpnHandler = null
             }
         }
     }
 
-    private fun saveSswanFile(context: Context, configContent: String, certificateName: String?): File {
-        val fileName = certificateName ?: "config.sswan"
-        val file = File(context.filesDir, fileName)
-        file.writeText(configContent)
-        return file
-    }
+    // Update the connectStrongSwan method in VpnViewModel
+    private suspend fun connectStrongSwan(configContent: String, certificateName: String?, passphrase: String?) {
+        try {
+            val context = getApplication<Application>().applicationContext
+            val server = _selectedServer.value
 
-    private fun startVpnService(context: Context, sswanFile: File) {
-        val intent = Intent(context, StrongSwanVpnService::class.java).apply {
-            putExtra("configFile", sswanFile.absolutePath)
+            // Modify the config to include both hostname and IP from the selected server
+            val modifiedConfig = if (server != null) {
+                val configJson = JSONObject(configContent)
+                configJson.put("server", server.hostname) // Use hostname first
+                configJson.put("server_ip", server.ip) // Keep IP as fallback
+                configJson.toString()
+            } else {
+                configContent
+            }
+
+            // Save the modified config
+            val configFile = configManager.saveStrongSwanConfig(
+                modifiedConfig,
+                certificateName ?: "ikev2.sswan"
+            )
+
+            // Connect using the correct method signature
+            val connected = withContext(Dispatchers.IO) {
+                activeVpnHandler?.connect(context, configFile.absolutePath) ?: false
+            }
+
+            if (connected) {
+                _isConnected.value = true
+                _errorMessage.value = "Connected using IKEv2/IPSec to ${server?.hostname ?: "server"}"
+                Log.d(TAG, "Successfully connected using IKEv2/IPSec")
+            } else {
+                throw Exception("Failed to connect using IKEv2/IPSec")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "IKEv2/IPSec connection error", e)
+            _isConnected.value = false
+            _errorMessage.value = "IKEv2/IPSec connection failed: ${e.localizedMessage}"
+            activeVpnHandler = null
         }
-        context.startService(intent)
     }
 
-    private fun connectOpenVpn(configData: String, filename: String?) {
-        // TODO: Implement OpenVPN connection
-        _isConnected.value = true
-        _errorMessage.value = "OpenVPN config received: ${filename ?: "config.ovpn"}"
+    private suspend fun connectOpenVpn(config: String) {
+        try {
+            val context = getApplication<Application>().applicationContext
+            val configFile = saveOpenVpnConfig(context, config)
+
+            activeVpnHandler = VpnProtocolFactory.createHandler(VpnProtocol.OPENVPN)
+
+//            val connected = withContext(Dispatchers.IO) {
+//                (activeVpnHandler as OpenVpnHandler).connect(configFile.absolutePath, params)
+//            }
+//
+//            if (connected) {
+//                _isConnected.value = true
+//                _errorMessage.value = "Connected using OpenVPN"
+//                Log.d(TAG, "Successfully connected using OpenVPN")
+//            } else {
+//                throw Exception("Failed to connect using OpenVPN")
+//            }
+        } catch (e: Exception) {
+            Log.e(TAG, "OpenVPN connection error", e)
+            _isConnected.value = false
+            _errorMessage.value = "OpenVPN connection failed: ${e.localizedMessage}"
+            activeVpnHandler = null
+        }
     }
 
-    private fun connectWireGuard(configData: String, filename: String?) {
-        // TODO: Implement WireGuard connection
-        _isConnected.value = true
-        _errorMessage.value = "WireGuard config received: ${filename ?: "config.conf"}"
+    suspend fun connectWireGuard(config: String) {
+        try {
+            val context = getApplication<Application>().applicationContext
+            val configFile = saveWireguardConfig(context, config)
+
+            activeVpnHandler = VpnProtocolFactory.createHandler(VpnProtocol.WIREGUARD)
+
+//            val connected = withContext(Dispatchers.IO) {
+//                (activeVpnHandler as WireGuardHandler).connect(configFile.absolutePath, params)
+//            }
+//
+//            if (connected) {
+//                _isConnected.value = true
+//                _errorMessage.value = "Connected using WireGuard"
+//                Log.d(TAG, "Successfully connected using WireGuard")
+//            } else {
+//                throw Exception("Failed to connect using WireGuard")
+//            }
+        } catch (e: Exception) {
+            Log.e(TAG, "WireGuard connection error", e)
+            _isConnected.value = false
+            _errorMessage.value = "WireGuard connection failed: ${e.localizedMessage}"
+            activeVpnHandler = null
+        }
     }
 
     fun disconnect() {
-        _isConnected.value = false
-        _selectedServer.value = null
-        _errorMessage.value = "Disconnected"
+        viewModelScope.launch {
+            try {
+                val context = getApplication<Application>().applicationContext
+                activeVpnHandler?.let { handler ->
+                    val result = withContext(Dispatchers.IO) {
+                        handler.disconnect(context)
+                    }
+
+                    if (result) {
+                        Log.d(TAG, "VPN disconnected successfully")
+                    } else {
+                        Log.w(TAG, "VPN disconnect returned false")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error disconnecting VPN", e)
+            } finally {
+                activeVpnHandler = null
+                _isConnected.value = false
+                _errorMessage.value = "Disconnected"
+            }
+        }
     }
 
     fun clearError() {
@@ -255,27 +362,119 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         loadRemoteServers()
     }
 
-    // TESTING ONLY
-    fun testStrongSwanInitialization() {
-        _isLoadingServers.value = true
-        _errorMessage.value = null
+    // Check if VPN permission is granted
+    suspend fun prepareVpn(context: Context): Intent? = withContext(Dispatchers.IO) {
+        VpnService.prepare(context)
+    }
 
+    // Check current VPN connection status
+    suspend fun checkVpnStatus(): Boolean = withContext(Dispatchers.IO) {
+        activeVpnHandler?.let { handler ->
+            return@withContext when (handler.connectionState.value) {
+                is ConnectionState.Connected -> true
+                else -> false
+            }
+        } ?: false
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        viewModelScope.launch {
+            disconnect()
+        }
+    }
+
+    private suspend fun getConfigFilePath(context: Context, filename: String): String {
+        return withContext(Dispatchers.IO) {
+            val configDir = File(context.filesDir, "configs")
+            if (!configDir.exists()) {
+                configDir.mkdirs()
+            }
+            return@withContext File(configDir, filename).absolutePath
+        }
+    }
+
+    private suspend fun saveStrongSwanConfig(context: Context, config: String): File {
+        return withContext(Dispatchers.IO) {
+            val configFile = File(context.filesDir, "configs/strongswan.sswan")
+            if (!configFile.parentFile?.exists()!!) {
+                configFile.parentFile?.mkdirs()
+            }
+            configFile.writeText(config)
+            return@withContext configFile
+        }
+    }
+
+    private suspend fun saveOpenVpnConfig(context: Context, config: String): String {
+        return withContext(Dispatchers.IO) {
+            val configFile = File(context.filesDir, "configs/openvpn.ovpn")
+            if (!configFile.parentFile?.exists()!!) {
+                configFile.parentFile?.mkdirs()
+            }
+
+            configFile.writeText(config)
+            return@withContext configFile.absolutePath
+        }
+    }
+
+    private suspend fun saveWireguardConfig(context: Context, config: String): String {
+        return withContext(Dispatchers.IO) {
+            val configFile = File(context.filesDir, "configs/wireguard.conf")
+            if (!configFile.parentFile?.exists()!!) {
+                configFile.parentFile?.mkdirs()
+            }
+
+            configFile.writeText(config)
+            return@withContext configFile.absolutePath
+        }
+    }
+
+    // Add this function to your VpnViewModel class
+    fun testStrongSwanInitialization() {
         viewModelScope.launch {
             try {
-                val strongSwanHandler = StrongSwanHandler()
-                val result = strongSwanHandler.testInitializationOnly(getApplication())
-
-                if (result) {
-                    _errorMessage.value = "StrongSwan initialization successful"
+                val context = getApplication<Application>().applicationContext
+                val handler = VpnProtocolFactory.createHandler(VpnProtocol.IKEV2_IPSEC)
+                val initialized = withContext(Dispatchers.IO) {
+                    handler.initialize(context)
+                }
+                _errorMessage.value = if (initialized) {
+                    "StrongSwan initialization successful"
                 } else {
-                    _errorMessage.value = "StrongSwan initialization failed"
+                    "StrongSwan initialization failed"
                 }
             } catch (e: Exception) {
-                _errorMessage.value = "Error testing StrongSwan: ${e.localizedMessage}"
-            } finally {
-                _isLoadingServers.value = false
+                _errorMessage.value = "StrongSwan test error: ${e.localizedMessage}"
             }
         }
     }
+
+    private fun updateConnectionState(state: com.example.shadowlinkvpn.service.vpn.ConnectionState) {
+        viewModelScope.launch {
+            _connectionState.value = state
+        }
+    }
+
+
+    fun requestVpnPermission(context: Context, onResult: (Intent?) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val vpnIntent = VpnService.prepare(context)
+            withContext(Dispatchers.Main) {
+                onResult(vpnIntent)
+            }
+        }
+    }
+
+    private fun checkAndRequestVpnPermission(context: Context, onPermissionGranted: () -> Unit) {
+        requestVpnPermission(context) { vpnIntent ->
+            if (vpnIntent != null) {
+                _errorMessage.value = "VPN permission required. Please grant permission in the dialog that appears."
+                // The intent should be started by the UI layer
+            } else {
+                onPermissionGranted()
+            }
+        }
+    }
+
 
 }

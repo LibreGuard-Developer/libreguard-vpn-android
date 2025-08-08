@@ -22,8 +22,9 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.shadowlinkvpn.viewmodel.VpnViewModel
 import com.example.shadowlinkvpn.viewmodel.VpnProtocol
-import com.example.shadowlinkvpn.service.vpn.StrongSwanHandler  // <- Add this line
-
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import android.app.Activity
 
 // Keep your existing VpnServer data class
 data class VpnServer(
@@ -61,15 +62,24 @@ fun MainScreen(authToken: String) {
     val isLoadingServers by viewModel.isLoadingServers.collectAsState()
     val errorMessage by viewModel.errorMessage.collectAsState()
 
+    val vpnPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            // Permission granted, try connecting again
+            viewModel.connectToVpn()
+        }
+    }
+
     // Set auth token and load servers
     LaunchedEffect(authToken) {
-        viewModel.setAuthToken(authToken) // This will automatically load remote servers
-        viewModel.loadLocalServers(context) // Load local servers as backup
+        viewModel.setAuthToken(authToken)
+        viewModel.loadLocalServers(context)
     }
 
     val connectionStatus = when {
-        isConnecting -> "Connecting to ${selectedServer?.name}..."
-        isConnected -> "Connected to ${selectedServer?.name}"
+        isConnecting -> "Connecting..."
+        isConnected -> "Connected"
         else -> "Disconnected"
     }
 
@@ -79,235 +89,145 @@ fun MainScreen(authToken: String) {
         else -> Color.Red
     }
 
-    val groupedServers = servers.groupBy { it.country }
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+    ) {
+        // Status Card
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = connectionStatus,
+                    fontSize = 24.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = statusColor
+                )
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("ShadowLink VPN") },
-                actions = {
-                    // Add refresh button for server list
-                    IconButton(
-                        onClick = { viewModel.refreshServers() },
-                        enabled = !isLoadingServers
-                    ) {
-                        if (isLoadingServers) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(20.dp),
-                                strokeWidth = 2.dp
-                            )
+                if (selectedServer != null) {
+                    Text(
+                        text = "${getFlagEmoji(selectedServer!!.country)} ${selectedServer!!.name}",
+                        fontSize = 16.sp,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Protocol Selector
+        ProtocolSelector(
+            selectedProtocol = selectedProtocol,
+            onProtocolSelected = { viewModel.selectProtocol(it) }
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Connect/Disconnect Button
+        Button(
+            onClick = {
+                // Check VPN permission before connecting
+                viewModel.requestVpnPermission(context) { vpnIntent ->
+                    if (vpnIntent != null) {
+                        // Launch permission request
+                        vpnPermissionLauncher.launch(vpnIntent)
+                    } else {
+                        // Permission already granted, connect/disconnect
+                        if (isConnected) {
+                            viewModel.disconnect()
                         } else {
-                            Icon(Icons.Default.Settings, contentDescription = "Refresh Servers")
+                            viewModel.connectToVpn()
                         }
                     }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer,
-                    titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer
-                )
+                }
+            },
+            modifier = Modifier.fillMaxWidth(),
+            enabled = !isConnecting && selectedServer != null,
+            colors = ButtonDefaults.buttonColors(
+                containerColor = if (isConnected) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+            )
+        ) {
+            Text(
+                text = if (isConnecting) "Connecting..." else if (isConnected) "Disconnect" else "Connect",
+                fontSize = 18.sp
             )
         }
-    ) { paddingValues ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues),
-            horizontalAlignment = Alignment.CenterHorizontally
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Server List
+        Card(
+            modifier = Modifier.weight(1f),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
         ) {
-            // Connection Status and Button
-            Spacer(modifier = Modifier.height(24.dp))
-            Text(connectionStatus, color = statusColor, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-
-            Button(
-                onClick = { viewModel.testStrongSwanInitialization() },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("Test StrongSwan Init")
-            }
-
-            // Selected server info
-            selectedServer?.let { server ->
-                Text(
-                    text = "${server.country} - ${selectedProtocol.displayName}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-
-            // Remote server count info
-            if (remoteServers.isNotEmpty()) {
-                Text(
-                    text = "CA Server: ${remoteServers.size} servers available",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.primary
-                )
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            Button(
-                onClick = {
-                    if (isConnected) {
-                        viewModel.disconnect()
-                    } else {
-                        viewModel.connectToVpn()
-                    }
-                },
-                enabled = !isConnecting && !isLoadingServers && (selectedServer != null || isConnected),
-                modifier = Modifier.size(150.dp),
-                shape = RoundedCornerShape(75.dp)
-            ) {
-                if (isConnecting) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(24.dp),
-                        color = MaterialTheme.colorScheme.onPrimary
-                    )
-                } else {
-                    Text(
-                        if (isConnected) "DISCONNECT" else "CONNECT",
-                        fontSize = 16.sp
-                    )
-                }
-            }
-
-            // Error message
-            errorMessage?.let { error ->
-                Spacer(modifier = Modifier.height(8.dp))
-                Card(
+            Column {
+                Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp)
-                        .clickable { viewModel.clearError() },
-                    colors = CardDefaults.cardColors(
-                        containerColor = if (error.contains("Connected") || error.contains("updated") || error.contains("received"))
-                            MaterialTheme.colorScheme.primaryContainer
-                        else
-                            MaterialTheme.colorScheme.errorContainer
-                    )
+                        .padding(16.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = error,
-                        modifier = Modifier.padding(12.dp),
-                        color = if (error.contains("Connected") || error.contains("updated") || error.contains("received"))
-                            MaterialTheme.colorScheme.onPrimaryContainer
-                        else
-                            MaterialTheme.colorScheme.onErrorContainer
+                        text = "Servers",
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold
                     )
-                }
-            }
 
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Protocol Selector
-            ProtocolSelector(
-                selectedProtocol = selectedProtocol,
-                onProtocolSelected = { viewModel.selectProtocol(it) }
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Server List
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f)
-                    .padding(horizontal = 16.dp)
-            ) {
-                groupedServers.forEach { (country, serversInCountry) ->
-                    stickyHeader {
-                        CountryHeader(country = country)
+                    if (isLoadingServers) {
+                        CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                    } else {
+                        TextButton(onClick = { viewModel.refreshServers() }) {
+                            Text("Refresh")
+                        }
                     }
-                    items(serversInCountry) { server ->
-                        ServerListItem(
-                            server = server,
-                            isSelected = selectedServer?.name == server.name,
-                            onServerClick = { viewModel.selectServer(server) }
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
+                }
+
+                LazyColumn {
+                    val serverGroups = servers.groupBy { it.country }
+
+                    serverGroups.forEach { (country, countryServers) ->
+                        item {
+                            CountryHeader(country = country)
+                        }
+
+                        items(countryServers) { server ->
+                            ServerListItem(
+                                server = server,
+                                isSelected = selectedServer == server,
+                                onServerSelected = { viewModel.selectServer(it) }
+                            )
+                        }
                     }
                 }
             }
         }
-    }
-}
 
-@Composable
-fun CountryHeader(country: String) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surfaceVariant)
-            .padding(horizontal = 8.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(getFlagEmoji(country), fontSize = 20.sp)
-        Spacer(modifier = Modifier.width(8.dp))
-        Text(
-            text = country,
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-    }
-}
-
-@Composable
-fun ServerListItem(
-    server: VpnServer,
-    isSelected: Boolean,
-    onServerClick: () -> Unit
-) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onServerClick() },
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = if (isSelected)
-                MaterialTheme.colorScheme.primaryContainer
-            else
-                MaterialTheme.colorScheme.surface
-        )
-    ) {
-        Row(
-            modifier = Modifier.padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            if (server.pricingTier == "Premium") {
-                Icon(
-                    imageVector = Icons.Default.Star,
-                    contentDescription = "Premium Server",
-                    tint = Color(0xFFFFD700),
-                    modifier = Modifier.size(24.dp)
+        // Error Message
+        errorMessage?.let { message ->
+            Spacer(modifier = Modifier.height(8.dp))
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = if (message.contains("Connected") || message.contains("Config received"))
+                        MaterialTheme.colorScheme.primaryContainer
+                    else MaterialTheme.colorScheme.errorContainer
                 )
-                Spacer(modifier = Modifier.width(8.dp))
-            }
-            Column(modifier = Modifier.weight(1f)) {
+            ) {
                 Text(
-                    server.name,
-                    fontWeight = FontWeight.Bold,
-                    color = if (isSelected)
+                    text = message,
+                    modifier = Modifier.padding(12.dp),
+                    color = if (message.contains("Connected") || message.contains("Config received"))
                         MaterialTheme.colorScheme.onPrimaryContainer
-                    else
-                        MaterialTheme.colorScheme.onSurface
-                )
-                Text(
-                    server.hostname,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (isSelected)
-                        MaterialTheme.colorScheme.onPrimaryContainer
-                    else
-                        MaterialTheme.colorScheme.onSurfaceVariant
+                    else MaterialTheme.colorScheme.onErrorContainer
                 )
             }
-            Spacer(modifier = Modifier.width(16.dp))
-            Text(
-                "${server.linkSpeed} Gbps",
-                fontWeight = FontWeight.SemiBold,
-                color = if (isSelected)
-                    MaterialTheme.colorScheme.onPrimaryContainer
-                else
-                    MaterialTheme.colorScheme.onSurface
-            )
         }
     }
 }
@@ -317,22 +237,91 @@ fun ProtocolSelector(
     selectedProtocol: VpnProtocol,
     onProtocolSelected: (VpnProtocol) -> Unit
 ) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text("Protocol", style = MaterialTheme.typography.titleSmall)
-        Spacer(modifier = Modifier.height(8.dp))
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.SpaceEvenly
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp)
         ) {
-            VpnProtocol.values().forEach { protocol ->
-                FilterChip(
-                    onClick = { onProtocolSelected(protocol) },
-                    label = { Text(protocol.displayName) },
-                    selected = selectedProtocol == protocol
-                )
+            Text(
+                text = "Protocol",
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                VpnProtocol.values().forEach { protocol ->
+                    FilterChip(
+                        onClick = { onProtocolSelected(protocol) },
+                        label = { Text(protocol.displayName) },
+                        selected = selectedProtocol == protocol,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
             }
+        }
+    }
+}
+
+@Composable
+fun CountryHeader(country: String) {
+    Text(
+        text = "${getFlagEmoji(country)} $country",
+        fontSize = 16.sp,
+        fontWeight = FontWeight.SemiBold,
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
+}
+
+@Composable
+fun ServerListItem(
+    server: VpnServer,
+    isSelected: Boolean,
+    onServerSelected: (VpnServer) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onServerSelected(server) }
+            .background(
+                if (isSelected) MaterialTheme.colorScheme.primaryContainer
+                else Color.Transparent
+            )
+            .padding(16.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = server.name,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Medium,
+                color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer
+                else MaterialTheme.colorScheme.onSurface
+            )
+            Text(
+                text = "${server.linkSpeed} Mbps • ${server.pricingTier}",
+                fontSize = 12.sp,
+                color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer
+                else MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        if (isSelected) {
+            Icon(
+                imageVector = Icons.Default.Star,
+                contentDescription = "Selected",
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(20.dp)
+            )
         }
     }
 }

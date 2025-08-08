@@ -1,14 +1,16 @@
 cmake_minimum_required(VERSION 3.22.1)
 
-project("strongswan_bridge")
+project("androidbridge")
 
-# Add your library
-add_library(strongswan_bridge SHARED strongswan_bridge.cpp)
+# Add the main source file that was commented out
+add_library(androidbridge SHARED
+        strongswan_bridge.cpp
+)
 
 # Find required libraries
 find_library(log-lib log)
 
-# Link pre-built StrongSwan libraries - CORRECTED PATHS
+# Link pre-built StrongSwan libraries
 add_library(strongswan SHARED IMPORTED)
 set_target_properties(strongswan PROPERTIES
         IMPORTED_LOCATION ${CMAKE_SOURCE_DIR}/../libs/${ANDROID_ABI}/libstrongswan.so)
@@ -17,11 +19,6 @@ add_library(charon SHARED IMPORTED)
 set_target_properties(charon PROPERTIES
         IMPORTED_LOCATION ${CMAKE_SOURCE_DIR}/../libs/${ANDROID_ABI}/libcharon.so)
 
-add_library(androidbridge SHARED IMPORTED)
-set_target_properties(androidbridge PROPERTIES
-        IMPORTED_LOCATION ${CMAKE_SOURCE_DIR}/../libs/${ANDROID_ABI}/libandroidbridge.so)
-
-# Add other StrongSwan libraries you have
 add_library(ipsec SHARED IMPORTED)
 set_target_properties(ipsec PROPERTIES
         IMPORTED_LOCATION ${CMAKE_SOURCE_DIR}/../libs/${ANDROID_ABI}/libipsec.so)
@@ -42,17 +39,28 @@ add_library(tpmtss SHARED IMPORTED)
 set_target_properties(tpmtss PROPERTIES
         IMPORTED_LOCATION ${CMAKE_SOURCE_DIR}/../libs/${ANDROID_ABI}/libtpmtss.so)
 
-# Add this to your target_link_libraries section
-target_link_libraries(strongswan_bridge
+# Include directories for headers
+target_include_directories(androidbridge PRIVATE
+        ${CMAKE_SOURCE_DIR}
+)
+
+# Link all libraries
+target_link_libraries(androidbridge
         ${log-lib}
         -Wl,--start-group
         strongswan
         charon
-        androidbridge
         ipsec
         imcv
         tnccs
         tncif
         tpmtss
         -Wl,--end-group
-        dl)  # <-- Add this for dlopen/dlsym functions
+        dl
+)
+
+# Set compiler flags
+target_compile_definitions(androidbridge PRIVATE
+        ANDROID
+        HAVE_CONFIG_H
+)

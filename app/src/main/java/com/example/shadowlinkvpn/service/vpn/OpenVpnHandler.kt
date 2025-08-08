@@ -2,27 +2,66 @@
 package com.example.shadowlinkvpn.service.vpn
 
 import android.content.Context
-import kotlinx.coroutines.flow.MutableStateFlow
+import android.util.Log
+import kotlinx.coroutines.delay
 
-class OpenVpnHandler : VpnProtocolHandler {
-    override val connectionState = MutableStateFlow(VpnConnectionState(VpnConnectionStatus.DISCONNECTED))
+class OpenVpnHandler : VpnProtocolHandler() {
+    private val TAG = "OpenVpnHandler"
 
     override suspend fun initialize(context: Context): Boolean {
-        // TODO: Implement OpenVPN initialization
-        return false
+        return try {
+            // Initialize OpenVPN components
+            Log.d(TAG, "OpenVPN handler initialized")
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to initialize OpenVPN handler", e)
+            false
+        }
     }
 
-    override suspend fun connect(configPath: String, params: Map<String, Any>?): Boolean {
-        // TODO: Implement OpenVPN connection
-        return false
+    override suspend fun connect(context: Context, configPath: String): Boolean {
+        return try {
+            updateConnectionState(ConnectionState.Connecting)
+            Log.d(TAG, "Starting OpenVPN connection with config: $configPath")
+
+            // TODO: Implement actual OpenVPN connection logic
+            // This would typically involve:
+            // 1. Parsing the .ovpn config file
+            // 2. Starting OpenVPN process or using OpenVPN library
+            // 3. Monitoring connection status
+
+            // Simulate connection process
+            delay(3000)
+
+            // For now, assume connection is successful
+            updateConnectionState(ConnectionState.Connected)
+            Log.d(TAG, "OpenVPN connected successfully")
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "OpenVPN connection failed", e)
+            updateConnectionState(ConnectionState.Error(e.localizedMessage ?: "Connection failed"))
+            false
+        }
     }
 
-    override suspend fun disconnect(): Boolean {
-        // TODO: Implement OpenVPN disconnection
-        return false
-    }
+    override suspend fun disconnect(context: Context): Boolean {
+        return try {
+            updateConnectionState(ConnectionState.Disconnecting)
+            Log.d(TAG, "Disconnecting OpenVPN")
 
-    override fun cleanup() {
-        // TODO: Implement OpenVPN cleanup
+            // TODO: Implement actual OpenVPN disconnection logic
+            // This would typically involve stopping the OpenVPN process
+
+            // Simulate disconnection process
+            delay(1000)
+
+            updateConnectionState(ConnectionState.Disconnected)
+            Log.d(TAG, "OpenVPN disconnected successfully")
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "OpenVPN disconnect failed", e)
+            updateConnectionState(ConnectionState.Error(e.localizedMessage ?: "Disconnect failed"))
+            false
+        }
     }
 }

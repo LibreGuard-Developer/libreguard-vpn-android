@@ -1,6 +1,8 @@
 [versions]
 agp = "8.8.2"
+appcompat = "1.7.1"
 converterGson = "2.11.0"
+fragmentKtx = "1.6.2"
 gradle = "8.5.2"
 gson = "2.10.1"
 kotlin = "2.0.0"
@@ -12,19 +14,31 @@ lifecycleRuntimeKtx = "2.9.1"
 activityCompose = "1.10.1"
 composeBom = "2025.06.01"
 lifecycleViewmodelCompose = "2.9.1"
+material = "1.11.0"
 navigationCompose = "2.9.1"
+preference = "1.2.1"
 preferenceKtx = "1.2.1"
+recyclerview = "1.4.0"
 retrofit = "2.11.0"
+securityCrypto = "1.1.0"
+strongswanAndroidSdk = "5.9.5"
+viewpager2 = "1.0.0"
 workRuntimeKtx = "2.10.2"
 loggingInterceptor = "4.12.0"
 
 
 [libraries]
+androidx-appcompat = { module = "androidx.appcompat:appcompat", version.ref = "appcompat" }
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
+androidx-fragment-ktx = { module = "androidx.fragment:fragment-ktx", version.ref = "fragmentKtx" }
 androidx-lifecycle-viewmodel-compose = { module = "androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "lifecycleViewmodelCompose" }
 androidx-material-icons-extended = { module = "androidx.compose.material:material-icons-extended" }
 androidx-navigation-compose = { module = "androidx.navigation:navigation-compose", version.ref = "navigationCompose" }
+androidx-preference = { module = "androidx.preference:preference", version.ref = "preference" }
 androidx-preference-ktx = { module = "androidx.preference:preference-ktx", version.ref = "preferenceKtx" }
+androidx-recyclerview = { module = "androidx.recyclerview:recyclerview", version.ref = "recyclerview" }
+androidx-security-crypto = { module = "androidx.security:security-crypto", version.ref = "securityCrypto" }
+androidx-viewpager2 = { module = "androidx.viewpager2:viewpager2", version.ref = "viewpager2" }
 androidx-work-runtime-ktx = { module = "androidx.work:work-runtime-ktx", version.ref = "workRuntimeKtx" }
 converter-gson = { module = "com.squareup.retrofit2:converter-gson", version.ref = "converterGson" }
 gradle = { module = "com.android.tools.build:gradle", version.ref = "gradle" }
@@ -42,8 +56,10 @@ androidx-ui-tooling-preview = { group = "androidx.compose.ui", name = "ui-toolin
 androidx-ui-test-manifest = { group = "androidx.compose.ui", name = "ui-test-manifest" }
 androidx-ui-test-junit4 = { group = "androidx.compose.ui", name = "ui-test-junit4" }
 androidx-material3 = { group = "androidx.compose.material3", name = "material3" }
+material = { module = "com.google.android.material:material", version.ref = "material" }
 retrofit = { module = "com.squareup.retrofit2:retrofit", version.ref = "retrofit" }
 logging-interceptor = { module = "com.squareup.okhttp3:logging-interceptor", version.ref = "loggingInterceptor" }
+strongswan-android-sdk = { module = "org.strongswan.android:strongswan-android-sdk", version.ref = "strongswanAndroidSdk" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
