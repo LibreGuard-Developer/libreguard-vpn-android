@@ -43,32 +43,37 @@ class VpnConfigManager(private val context: Context) {
             val configContent = configFile.readText()
             val json = JSONObject(configContent)
 
+            val remote = json.getJSONObject("remote")
+            val local = json.getJSONObject("local")
+
             StrongSwanConfig(
-                serverAddress = json.getString("server"),
-                serverIp = json.optString("server_ip"), // Add IP fallback
-                remoteId = json.optString("remote_id", json.getString("server")),
-                localId = json.optString("local_id"),
-                certificateData = json.optString("certificate"),
-                privateKeyData = json.optString("private_key"),
-                username = json.optString("username"),
-                password = json.optString("password"),
-                mtu = json.optInt("mtu", 1400)
+                uuid = json.getString("uuid"),
+                serverAddress = json.optString("server", remote.getString("addr")),
+                serverIp = json.optString("server_ip", remote.optString("addr")),
+                remoteId = remote.optString("id"),
+                clientP12 = local.optString("p12"),
+                clientPassword = local.optString("password"),
+                serverCert = remote.optString("cert"),
+                dnsServers = json.optJSONArray("dns-servers")?.let { dns ->
+                    (0 until dns.length()).map { dns.getString(it) }
+                } ?: listOf("1.1.1.1")
             )
         } catch (e: Exception) {
             null
         }
     }
 
+
     // Data classes for different VPN configurations
     data class StrongSwanConfig(
+        val uuid: String,
         val serverAddress: String,
-        val serverIp: String?, // Add IP fallback field
+        val serverIp: String?,
         val remoteId: String,
-        val localId: String?,
-        val certificateData: String?,
-        val privateKeyData: String?,
-        val username: String?,
-        val password: String?,
-        val mtu: Int
+        val clientP12: String,
+        val clientPassword: String,
+        val serverCert: String,
+        val dnsServers: List<String>
     )
+
 }

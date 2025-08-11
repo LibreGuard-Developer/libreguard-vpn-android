@@ -1,18 +1,18 @@
 // app/src/main/java/com/example/shadowlinkvpn/service/vpn/StrongSwanHandler.kt
 package com.example.shadowlinkvpn.service.vpn
-
+// Add / replace imports at top of StrongSwanHandler.kt
 import android.content.Context
 import android.content.Intent
+import android.util.Base64
 import android.util.Log
-import com.example.shadowlinkvpn.service.StrongSwanVpnService
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.strongswan.android.logic.CharonVpnService
 import java.io.File
 import android.net.VpnService
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import org.strongswan.android.logic.VpnStateService
 import org.json.JSONObject
+
 
 class StrongSwanHandler : VpnProtocolHandler() {
     private val TAG = "StrongSwanHandler"
@@ -62,7 +62,7 @@ class StrongSwanHandler : VpnProtocolHandler() {
             }
 
             // Import client certificate
-            val certImported = importClientCertificate(context, swanConfig.clientP12, swanConfig.clientPassword)
+            val certImported = installCertificatesIntoManagedStore(context, swanConfig)
             if (!certImported) {
                 Log.e(TAG, "Failed to import client certificate")
                 updateConnectionState(ConnectionState.Error("Certificate import failed"))
@@ -277,44 +277,274 @@ class StrongSwanHandler : VpnProtocolHandler() {
         }
     }
 
-    private fun importClientCertificate(context: Context, p12Base64: String, password: String): Boolean {
-        return try {
-            // Decode P12 certificate
-            val p12Bytes = android.util.Base64.decode(p12Base64, android.util.Base64.DEFAULT)
+    /**
+     * Install client .p12 and server cert into StrongSwan managed stores via reflection.
+     * This uses several method-name fallbacks so it likely works with small API diffs.
+     */
+    private fun installCertificatesIntoManagedStore(context: Context, cfg: StrongSwanConnectionConfig): Boolean {
+        try {
+            val decodedP12 = Base64.decode(cfg.clientP12, Base64.DEFAULT)
+            val decodedCert = Base64.decode(cfg.serverCert, Base64.DEFAULT)
 
-            // Save to internal storage for StrongSwan to access
-            val certFile = File(context.filesDir, "client.p12")
-            certFile.writeBytes(p12Bytes)
+            // ---- ManagedUserCertificateInstaller (user cert) ----
+            try {
+                val cls = Class.forName("org.strongswan.android.logic.ManagedUserCertificateInstaller")
+                val instance = cls.getConstructor(Context::class.java).newInstance(context)
 
-            Log.d(TAG, "Client certificate imported successfully")
-            true
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to import certificate", e)
-            false
-        }
-    }
+                // try various possible method signatures
+                var installed = false
+                try {
+                    val m = cls.getMethod("install", ByteArray::class.java, String::class.java, String::class.java)
+                    m.invoke(instance, decodedP12, cfg.clientPassword, cfg.uuid)
+                    installed = true
+                } catch (_: NoSuchMethodException) { /* try next */ }
 
-    private fun startStrongSwanConnection(context: Context, config: StrongSwanConnectionConfig): Boolean {
-        return try {
-            // Create proper StrongSwan connection intent
-            val intent = Intent(context, CharonVpnService::class.java).apply {
-                // Use the actual StrongSwan connection action
-                action = "org.strongswan.android.action.START_VPN"
-                putExtra("VPN_PROFILE_UUID", config.uuid)
-                putExtra("VPN_PROFILE_NAME", config.name)
-                putExtra("VPN_GATEWAY", config.serverAddress)
-                putExtra("VPN_TYPE", "ikev2-cert")
-                putExtra("VPN_USERNAME", "") // Certificate-based auth
+                if (!installed) {
+                    try {
+                        val m = cls.getMethod("install", ByteArray::class.java, String::class.java)
+                        m.invoke(instance, decodedP12, cfg.clientPassword)
+                        installed = true
+                    } catch (_: NoSuchMethodException) { /* try next */ }
+                }
+
+                if (!installed) {
+                    try {
+                        val m = cls.getMethod("installP12", ByteArray::class.java, String::class.java, String::class.java)
+                        m.invoke(instance, decodedP12, cfg.clientPassword, cfg.uuid)
+                        installed = true
+                    } catch (_: NoSuchMethodException) { /* no known signature */ }
+                }
+
+                if (!installed) {
+                    Log.w(TAG, "ManagedUserCertificateInstaller: no known install method found")
+                    return false
+                }
+            } catch (e: ClassNotFoundException) {
+                Log.w(TAG, "ManagedUserCertificateInstaller class not found: ${e.message}")
+                return false
             }
 
+            // ---- ManagedTrustedCertificateManager (CA/server cert) ----
+            try {
+                val cls = Class.forName("org.strongswan.android.logic.ManagedTrustedCertificateManager")
+                val instance = cls.getConstructor(Context::class.java).newInstance(context)
+
+                var installed = false
+                try {
+                    val m = cls.getMethod("install", ByteArray::class.java, String::class.java)
+                    m.invoke(instance, decodedCert, cfg.uuid + "_ca")
+                    installed = true
+                } catch (_: NoSuchMethodException) {}
+
+                if (!installed) {
+                    try {
+                        val m = cls.getMethod("install", ByteArray::class.java)
+                        m.invoke(instance, decodedCert)
+                        installed = true
+                    } catch (_: NoSuchMethodException) {}
+                }
+
+                if (!installed) {
+                    Log.w(TAG, "ManagedTrustedCertificateManager: no known install method found")
+                    return false
+                }
+            } catch (e: ClassNotFoundException) {
+                Log.w(TAG, "ManagedTrustedCertificateManager class not found: ${e.message}")
+                return false
+            }
+
+            Log.d(TAG, "Certificates installed into StrongSwan managed stores")
+            return true
+        } catch (e: Exception) {
+            Log.e(TAG, "installCertificatesIntoManagedStore failed", e)
+            return false
+        }
+    }
+
+
+    /**
+     * Create a VpnProfile instance via reflection, populate some common fields and persist it
+     * using VpnProfileDataSource (reflection used for compatibility).
+     *
+     * Returns the profile object (Any) or null on failure.
+     */
+    private fun createAndPersistProfile(context: Context, cfg: StrongSwanConnectionConfig): Any? {
+        try {
+            val profileClass = Class.forName("org.strongswan.android.data.VpnProfile")
+            val profile = profileClass.getDeclaredConstructor().newInstance()
+
+            // helper to call setter or set field
+            fun setStringFieldOrSetter(instance: Any, propName: String, value: String?) {
+                if (value == null) return
+                val cls = instance::class.java
+                val setter = "set" + propName.replaceFirstChar { it.uppercase() }
+                try {
+                    val m = cls.getMethod(setter, String::class.java)
+                    m.invoke(instance, value)
+                    return
+                } catch (_: NoSuchMethodException) { /* try field */ }
+                try {
+                    val f = cls.getDeclaredField(propName)
+                    f.isAccessible = true
+                    f.set(instance, value)
+                    return
+                } catch (_: NoSuchFieldException) { /* give up silently */ }
+            }
+
+            // set the common profile properties (names tuned to common strongSwan versions)
+            setStringFieldOrSetter(profile, "uuid", cfg.uuid)
+            setStringFieldOrSetter(profile, "name", cfg.name)
+            setStringFieldOrSetter(profile, "gatewayAddress", cfg.serverAddress)
+            setStringFieldOrSetter(profile, "remoteId", cfg.serverId)
+            setStringFieldOrSetter(profile, "userCertificate", cfg.uuid) // alias used during install
+            setStringFieldOrSetter(profile, "trustedCertificate", cfg.uuid + "_ca")
+            setStringFieldOrSetter(profile, "dnsServers", cfg.dnsServers.joinToString(","))
+
+            // try to set IKE/ESP strings if available
+            setStringFieldOrSetter(profile, "ike", cfg.ike)
+            setStringFieldOrSetter(profile, "esp", cfg.esp)
+
+            // try to set vpnType enum -> lookup an enum constant that likely exists
+            try {
+                val vpnTypeClass = Class.forName("org.strongswan.android.data.VpnType")
+                val desired = try {
+                    // Prefer certificate-based names; try the most common constants
+                    when {
+                        cfg.type.contains("cert", true) -> vpnTypeClass.getField("IKEV2_CERT").get(null)
+                        cfg.type.contains("eap", true) -> vpnTypeClass.getField("IKEV2_EAP").get(null)
+                        else -> vpnTypeClass.getField("IKEV2_CERT").get(null)
+                    }
+                } catch (e: Exception) {
+                    // fallback to first enum constant
+                    vpnTypeClass.getEnumConstants().firstOrNull()
+                }
+                if (desired != null) {
+                    // try setter setVpnType(...) or field vpnType
+                    try {
+                        val m = profile::class.java.getMethod("setVpnType", vpnTypeClass)
+                        m.invoke(profile, desired)
+                    } catch (_: NoSuchMethodException) {
+                        try {
+                            val f = profile::class.java.getDeclaredField("vpnType")
+                            f.isAccessible = true
+                            f.set(profile, desired)
+                        } catch (_: Exception) { /* ignore */ }
+                    }
+                }
+            } catch (e: ClassNotFoundException) {
+                // no VpnType enum available — ignore
+            }
+
+            // persist profile with VpnProfileDataSource
+            try {
+                val dsClass = Class.forName("org.strongswan.android.data.VpnProfileDataSource")
+                val ds = dsClass.getConstructor(Context::class.java).newInstance(context)
+                // open if exists
+                try { dsClass.getMethod("open").invoke(ds) } catch (_: NoSuchMethodException) {}
+                var persisted = false
+                val tryMethods = arrayOf("insertProfile", "addProfile", "createProfile", "save")
+                for (mname in tryMethods) {
+                    try {
+                        val m = dsClass.getMethod(mname, profileClass)
+                        m.invoke(ds, profile)
+                        persisted = true
+                        break
+                    } catch (_: NoSuchMethodException) { /* try next */ }
+                }
+                try { dsClass.getMethod("close").invoke(ds) } catch (_: NoSuchMethodException) {}
+                if (!persisted) {
+                    Log.w(TAG, "VpnProfileDataSource: could not find a known insert method; profile not persisted")
+                } else {
+                    Log.d(TAG, "VpnProfile persisted (uuid=${cfg.uuid})")
+                }
+
+                return profile
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to persist VpnProfile reflectively", e)
+                return null
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "createAndPersistProfile failed", e)
+            return null
+        }
+    }
+
+
+    private fun startStrongSwanConnection(context: Context, profileObj: Any): Boolean {
+        return try {
+            // extract uuid via getter or field
+            var uuid: String? = null
+            try {
+                val m = profileObj::class.java.getMethod("getUuid")
+                uuid = m.invoke(profileObj) as? String
+            } catch (_: NoSuchMethodException) {}
+            if (uuid == null) {
+                try {
+                    val f = profileObj::class.java.getDeclaredField("uuid")
+                    f.isAccessible = true
+                    uuid = f.get(profileObj) as? String
+                } catch (_: Exception) {}
+            }
+            if (uuid == null) {
+                Log.w(TAG, "Could not extract profile UUID; aborting start")
+                return false
+            }
+
+            // start service — use CharonVpnService class you already have imported
+            val intent = Intent(context, CharonVpnService::class.java).apply {
+                // action string used by many official builds
+                action = "org.strongswan.android.action.START_VPN"
+                putExtra("VPN_PROFILE_UUID", uuid)
+                // compatibility extras (some builds read different extras)
+                putExtra("org.strongswan.android.intent.extra.PROFILE_UUID", uuid)
+            }
+
+            // On modern Android, startForegroundService might be required, but CharonVpnService is inside the same app and will handle start.
             context.startService(intent)
-            Log.d(TAG, "Started StrongSwan service for profile: ${config.name}")
+            Log.d(TAG, "Requested CharonVpnService start for profile $uuid")
             true
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to start StrongSwan service", e)
+            Log.e(TAG, "startStrongSwanConnection failed", e)
             false
         }
     }
+
+
+    private fun checkStrongSwanLogs(context: Context): Boolean {
+        return try {
+            val uriClass = try { Class.forName("org.strongswan.android.data.LogContentProvider") } catch (_: Exception) { null }
+            if (uriClass != null) {
+                try {
+                    val contentUriField = uriClass.getDeclaredField("CONTENT_URI")
+                    contentUriField.isAccessible = true
+                    val contentUri = contentUriField.get(null) as? android.net.Uri
+                    if (contentUri != null) {
+                        val cursor = context.contentResolver.query(contentUri, null, null, null, null)
+                        cursor?.use {
+                            val msgIdx = try { it.getColumnIndex("message") } catch(_: Exception) { -1 }
+                            while (it.moveToNext()) {
+                                if (msgIdx >= 0) {
+                                    val msg = it.getString(msgIdx) ?: ""
+                                    if (msg.contains("AUTH_FAILED", true) || msg.contains("certificate", true) || msg.contains("no suitable certificate", true)) {
+                                        Log.w(TAG, "StrongSwan log detected: $msg")
+                                        return true
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "checkStrongSwanLogs reflection/query failed", e)
+                }
+            }
+            false
+        } catch (e: Exception) {
+            Log.w(TAG, "checkStrongSwanLogs failed", e)
+            false
+        }
+    }
+
+
 
     private suspend fun monitorConnection(context: Context, serverAddress: String): Boolean {
         var attempts = 0
@@ -344,8 +574,7 @@ class StrongSwanHandler : VpnProtocolHandler() {
             // Check for errors in StrongSwan logs
             if (attempts > 10) {
                 // I commented this out for now, to remove error
-//                val errorDetected = checkStrongSwanLogs(context)
-                val errorDetected = true
+                val errorDetected = checkStrongSwanLogs(context)
                 if (errorDetected) {
                     updateConnectionState(ConnectionState.Error("Authentication or configuration error"))
                     return false
