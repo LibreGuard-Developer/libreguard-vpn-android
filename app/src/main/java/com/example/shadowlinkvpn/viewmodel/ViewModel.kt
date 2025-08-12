@@ -476,5 +476,24 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun getConnectionLogs() {
+        viewModelScope.launch {
+            try {
+                val context = getApplication<Application>().applicationContext
+                val logs = activeVpnHandler?.let { handler ->
+                    if (handler is StrongSwanHandler) {
+                        handler.getConnectionLogs(context)
+                    } else null
+                }
+                _errorMessage.value = if (logs != null) {
+                    "Logs: ${logs.take(200)}..." // Show first 200 chars
+                } else {
+                    "No logs available"
+                }
+            } catch (e: Exception) {
+                _errorMessage.value = "Failed to get logs: ${e.localizedMessage}"
+            }
+        }
+    }
 
 }

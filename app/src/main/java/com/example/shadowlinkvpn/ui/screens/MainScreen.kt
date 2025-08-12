@@ -153,13 +153,22 @@ fun MainScreen(authToken: String) {
             colors = ButtonDefaults.buttonColors(
                 containerColor = if (isConnected) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
             )
-        ) {
+        )
+
+
+        {
             Text(
                 text = if (isConnecting) "Connecting..." else if (isConnected) "Disconnect" else "Connect",
                 fontSize = 18.sp
             )
         }
-
+// Add this button after the Connect/Disconnect button
+        Button(
+            onClick = { viewModel.getConnectionLogs() },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Show Logs")
+        }
         Spacer(modifier = Modifier.height(16.dp))
 
         // Server List

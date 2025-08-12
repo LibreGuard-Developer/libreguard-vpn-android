@@ -16,7 +16,8 @@ import java.util.UUID
 import org.strongswan.android.data.VpnProfile
 import org.strongswan.android.data.VpnType
 import android.app.ActivityManager
-
+import android.net.Uri
+import org.strongswan.android.data.LogContentProvider
 class StrongSwanHandler : VpnProtocolHandler() {
     private val TAG = "StrongSwanHandler"
     private lateinit var configManager: VpnConfigManager
@@ -597,6 +598,29 @@ class StrongSwanHandler : VpnProtocolHandler() {
         // Get the server IP from the current connection config
         // You'll need to store this when connecting
         return currentServerIp // Add this as a class property
+    }
+
+    suspend fun getConnectionLogs(context: Context): String? {
+        return try {
+            // Try direct file access first
+            val logFile = File(context.filesDir, "charon.log")
+            if (logFile.exists()) {
+                logFile.readText()
+            } else {
+                // Fallback to content provider if file doesn't exist
+                val uri = LogContentProvider.createContentUri()
+                if (uri != null) {
+                    context.contentResolver.openInputStream(uri)?.use { inputStream ->
+                        inputStream.bufferedReader().readText()
+                    }
+                } else {
+                    "No logs available - log file not found"
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error reading logs", e)
+            "Error reading logs: ${e.localizedMessage}"
+        }
     }
 
 }

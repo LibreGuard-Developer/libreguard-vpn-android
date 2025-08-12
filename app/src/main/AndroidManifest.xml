@@ -50,5 +50,9 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+<!--        <provider-->
+<!--            android:name="org.strongswan.android.data.LogContentProvider"-->
+<!--            android:authorities="org.strongswan.android.content.log"-->
+<!--            android:exported="false" />-->
     </application>
 </manifest>
