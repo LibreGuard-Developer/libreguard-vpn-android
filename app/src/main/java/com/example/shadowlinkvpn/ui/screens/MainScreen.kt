@@ -151,12 +151,14 @@ fun MainScreen(authToken: String) {
             modifier = Modifier.fillMaxWidth(),
             enabled = !isConnecting && selectedServer != null,
             colors = ButtonDefaults.buttonColors(
-                containerColor = if (isConnected) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                containerColor = when {
+                    isConnected -> MaterialTheme.colorScheme.error // Disconnect: red
+                    isConnecting -> Color(0xFF1976D2) // Connecting: blue shade
+                    else -> Color(0xFF2196F3) // Connect: blue
+                },
+                contentColor = Color.White
             )
-        )
-
-
-        {
+        ) {
             Text(
                 text = if (isConnecting) "Connecting..." else if (isConnected) "Disconnect" else "Connect",
                 fontSize = 18.sp

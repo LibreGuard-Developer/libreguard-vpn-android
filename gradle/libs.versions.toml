@@ -1,5 +1,5 @@
 [versions]
-agp = "8.8.2"
+agp = "8.12.1"
 appcompat = "1.7.1"
 converterGson = "2.11.0"
 fragmentKtx = "1.6.2"
@@ -65,4 +65,3 @@ strongswan-android-sdk = { module = "org.strongswan.android:strongswan-android-s
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
-

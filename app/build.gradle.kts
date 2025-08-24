@@ -19,12 +19,6 @@ android {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86", "x86_64")
         }
 
-        externalNativeBuild {
-            cmake {
-                cppFlags += "-std=c++17"
-            }
-        }
-
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
             useSupportLibrary = true
@@ -58,14 +52,6 @@ android {
         kotlinCompilerExtensionVersion = "1.5.8"
     }
 
-    externalNativeBuild {
-        cmake {
-            path = file("../strongswan/cpp/CMakeLists.txt")
-            version = "3.22.1"
-        }
-    }
-
-    // The 'packaging' line was removed from here.
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
@@ -81,6 +67,17 @@ android {
             java.srcDirs("src/main/java")
             res.srcDirs("src/main/res")
         }
+    }
+
+    tasks.withType<JavaCompile> {
+        exclude("org/strongswan/android/logic/ManagedUserCertificateInstaller.java")
+        exclude("org/strongswan/android/logic/ManagedTrustedCertificateInstaller.java")
+        exclude("org/strongswan/android/logic/ManagedTrustedCertificateManager.java")
+        exclude("org/strongswan/android/logic/ManagedUserCertificateManager.java")
+        exclude("org/strongswan/android/data/VpnProfileManagedDataSource.java")
+        exclude("org/strongswan/android/data/VpnProfileSqlDataSource.java")
+        exclude("org/strongswan/android/data/ManagedTrustedCertificateRepository.java")
+        exclude("org/strongswan/android/data/ManagedUserCertificateRepository.java")
     }
 }
 
@@ -118,6 +115,4 @@ dependencies {
     implementation(libs.androidx.fragment.ktx)
     implementation(libs.androidx.appcompat)
     implementation(libs.androidx.recyclerview)
-
-
 }

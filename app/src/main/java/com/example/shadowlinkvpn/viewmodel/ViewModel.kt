@@ -11,7 +11,7 @@ import com.example.shadowlinkvpn.R
 import com.example.shadowlinkvpn.network.RemoteVpnServer
 import com.example.shadowlinkvpn.network.RetrofitClient
 import com.example.shadowlinkvpn.network.VpnConfigRequest
-import com.example.shadowlinkvpn.service.StrongSwanVpnService
+import com.example.shadowlinkvpn.service.ShadowLinkVpnService
 import com.example.shadowlinkvpn.service.vpn.ConnectionState
 import com.example.shadowlinkvpn.service.vpn.OpenVpnHandler
 import com.example.shadowlinkvpn.service.vpn.StrongSwanHandler
@@ -28,6 +28,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.strongswan.android.data.VpnProfile
+import org.strongswan.android.data.VpnProfileSource
 import java.io.File
 import java.io.InputStreamReader
 import org.json.JSONObject
@@ -199,15 +200,22 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun connectWithConfig(configContent: String, server: VpnServer, protocol: VpnProtocol, certificateName: String?, passphrase: String?) {
+    private fun connectWithConfig(
+        configContent: String,
+        server: VpnServer,
+        protocol: VpnProtocol,
+        certificateName: String?,
+        passphrase: String?
+    ) {
         viewModelScope.launch {
             try {
-                // Create and initialize the appropriate VPN handler based on protocol
-                activeVpnHandler = VpnProtocolFactory.createHandler(protocol)
+                val appContext = getApplication<Application>().applicationContext
 
-                val context = getApplication<Application>().applicationContext
+                // Create and initialize the appropriate VPN handler based on protocol
+                activeVpnHandler = VpnProtocolFactory.createHandler(protocol, appContext)
+
                 val initialized = withContext(Dispatchers.IO) {
-                    activeVpnHandler?.initialize(context) ?: false
+                    activeVpnHandler?.initialize(appContext) ?: false
                 }
 
                 if (!initialized) {
@@ -218,12 +226,11 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                     VpnProtocol.IKEV2_IPSEC -> {
                         connectStrongSwan(configContent, certificateName, passphrase)
                     }
-                    // Update these lines in connectWithConfig function
                     VpnProtocol.OPENVPN -> {
-                        connectOpenVpn(configContent) // Remove certificateName parameter
+                        connectOpenVpn(configContent)
                     }
                     VpnProtocol.WIREGUARD -> {
-                        connectWireGuard(configContent) // Remove certificateName parameter
+                        connectWireGuard(configContent)
                     }
                 }
             } catch (e: Exception) {
@@ -239,36 +246,58 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun connectStrongSwan(configContent: String, certificateName: String?, passphrase: String?) {
         try {
             val context = getApplication<Application>().applicationContext
-            val server = _selectedServer.value
 
-            // Modify the config to include both hostname and IP from the selected server
-            val modifiedConfig = if (server != null) {
-                val configJson = JSONObject(configContent)
-                configJson.put("server", server.hostname) // Use hostname first
-                configJson.put("server_ip", server.ip) // Keep IP as fallback
-                configJson.toString()
-            } else {
-                configContent
+            Log.d(TAG, "Starting strongSwan connection with config content")
+
+            // Parse the server response directly to create a VpnProfile
+            val profile = configManager.parseServerResponseToProfile(configContent)
+            if (profile == null) {
+                throw Exception("Failed to parse server response into VpnProfile")
             }
 
-            // Save the modified config
-            val configFile = configManager.saveStrongSwanConfig(
-                modifiedConfig,
-                certificateName ?: "ikev2.sswan"
-            )
+            Log.d(TAG, "Created VpnProfile: ${profile.name}")
+            Log.d(TAG, "Gateway: ${profile.gateway}")
+            Log.d(TAG, "Remote ID: ${profile.remoteId}")
+            Log.d(TAG, "VPN Type: ${profile.vpnType}")
 
-            // Connect using the correct method signature
+            // Store the profile in the data source for strongSwan to access
+            val dataSource = VpnProfileSource(context)
+            dataSource.open()
+
+            try {
+                // Check if profile already exists and update, otherwise insert
+                val existingProfile = dataSource.getVpnProfile(profile.uuid.toString())
+                if (existingProfile != null) {
+                    dataSource.updateVpnProfile(profile)
+                    Log.d(TAG, "Updated existing VPN profile")
+                } else {
+                    dataSource.insertProfile(profile)
+                    Log.d(TAG, "Inserted new VPN profile")
+                }
+            } finally {
+                dataSource.close()
+            }
+
+            // Create the handler and connect
+            activeVpnHandler = VpnProtocolFactory.createHandler(VpnProtocol.IKEV2_IPSEC, context)
+
+            // Save the JSON server response to a file for the handler to parse
+            val configFile = File(context.filesDir, "server_response_${System.currentTimeMillis()}.json")
+            configFile.writeText(configContent)
+
+            // Connect using the strongSwan handler with the JSON response file
             val connected = withContext(Dispatchers.IO) {
                 activeVpnHandler?.connect(context, configFile.absolutePath) ?: false
             }
 
             if (connected) {
                 _isConnected.value = true
-                _errorMessage.value = "Connected using IKEv2/IPSec to ${server?.hostname ?: "server"}"
-                Log.d(TAG, "Successfully connected using IKEv2/IPSec")
+                _errorMessage.value = "Connected using IKEv2/IPSec to ${profile.gateway}"
+                Log.d(TAG, "Successfully initiated IKEv2/IPSec connection")
             } else {
-                throw Exception("Failed to connect using IKEv2/IPSec")
+                throw Exception("Failed to initiate IKEv2/IPSec connection")
             }
+
         } catch (e: Exception) {
             Log.e(TAG, "IKEv2/IPSec connection error", e)
             _isConnected.value = false
@@ -282,7 +311,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             val context = getApplication<Application>().applicationContext
             val configFile = saveOpenVpnConfig(context, config)
 
-            activeVpnHandler = VpnProtocolFactory.createHandler(VpnProtocol.OPENVPN)
+            activeVpnHandler = VpnProtocolFactory.createHandler(VpnProtocol.OPENVPN, context)
 
 //            val connected = withContext(Dispatchers.IO) {
 //                (activeVpnHandler as OpenVpnHandler).connect(configFile.absolutePath, params)
@@ -308,7 +337,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             val context = getApplication<Application>().applicationContext
             val configFile = saveWireguardConfig(context, config)
 
-            activeVpnHandler = VpnProtocolFactory.createHandler(VpnProtocol.WIREGUARD)
+            activeVpnHandler = VpnProtocolFactory.createHandler(VpnProtocol.WIREGUARD, context)
 
 //            val connected = withContext(Dispatchers.IO) {
 //                (activeVpnHandler as WireGuardHandler).connect(configFile.absolutePath, params)
@@ -394,7 +423,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private suspend fun saveStrongSwanConfig(context: Context, config: String): File {
+    private suspend fun saveStrongSwanConfigFile(context: Context, config: String): File {
         return withContext(Dispatchers.IO) {
             val configFile = File(context.filesDir, "configs/strongswan.sswan")
             if (!configFile.parentFile?.exists()!!) {
@@ -434,7 +463,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             try {
                 val context = getApplication<Application>().applicationContext
-                val handler = VpnProtocolFactory.createHandler(VpnProtocol.IKEV2_IPSEC)
+                val handler = VpnProtocolFactory.createHandler(VpnProtocol.IKEV2_IPSEC, context)
                 val initialized = withContext(Dispatchers.IO) {
                     handler.initialize(context)
                 }
@@ -480,16 +509,8 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             try {
                 val context = getApplication<Application>().applicationContext
-                val logs = activeVpnHandler?.let { handler ->
-                    if (handler is StrongSwanHandler) {
-                        handler.getConnectionLogs(context)
-                    } else null
-                }
-                _errorMessage.value = if (logs != null) {
-                    "Logs: ${logs.take(200)}..." // Show first 200 chars
-                } else {
-                    "No logs available"
-                }
+                val logs = activeVpnHandler?.getConnectionLogs(context)
+                _errorMessage.value = logs?.let { "Logs: ${it.take(200)}..." } ?: "No logs available"
             } catch (e: Exception) {
                 _errorMessage.value = "Failed to get logs: ${e.localizedMessage}"
             }

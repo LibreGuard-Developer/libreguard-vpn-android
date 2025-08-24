@@ -6,7 +6,6 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.BIND_VPN_SERVICE"
         tools:ignore="ProtectedPermissions" />
-
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
@@ -36,10 +35,36 @@
                 android:value="vpn" />
         </service>
 
-        <!-- Your custom service wrapper -->
+        <!-- VPN State Service -->
         <service
-            android:name=".service.StrongSwanVpnService"
+            android:name="org.strongswan.android.logic.VpnStateService"
             android:exported="false" />
+
+        <!-- Your custom VPN service wrapper -->
+        <service
+            android:name=".service.ShadowLinkVpnService"
+            android:permission="android.permission.BIND_VPN_SERVICE"
+            android:foregroundServiceType="specialUse"
+            android:exported="false">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="vpn" />
+        </service>
+
+        <!-- Log Content Provider -->
+        <provider
+            android:name="org.strongswan.android.data.LogContentProvider"
+            android:authorities="org.strongswan.android.content.log"
+            android:exported="false" />
+
+        <!-- VPN Profile Control Activity -->
+        <activity
+            android:name="org.strongswan.android.ui.VpnProfileControlActivity"
+            android:exported="false"
+            android:theme="@android:style/Theme.NoDisplay"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:launchMode="singleTask" />
 
         <activity
             android:name=".MainActivity"
@@ -50,9 +75,5 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-<!--        <provider-->
-<!--            android:name="org.strongswan.android.data.LogContentProvider"-->
-<!--            android:authorities="org.strongswan.android.content.log"-->
-<!--            android:exported="false" />-->
     </application>
 </manifest>
