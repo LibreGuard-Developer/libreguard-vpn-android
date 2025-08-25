@@ -281,11 +281,14 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             // Create the handler and connect
             activeVpnHandler = VpnProtocolFactory.createHandler(VpnProtocol.IKEV2_IPSEC, context)
 
-            // Save the JSON server response to a file for the handler to parse
-            val configFile = File(context.filesDir, "server_response_${System.currentTimeMillis()}.json")
-            configFile.writeText(configContent)
+            // Save config to file for the handler
+            val configFile = configManager.saveStrongSwanConfig(
+                profile.gateway ?: "",
+                profile.username ?: "",
+                profile.password ?: ""
+            )
 
-            // Connect using the strongSwan handler with the JSON response file
+            // Connect using the strongSwan handler
             val connected = withContext(Dispatchers.IO) {
                 activeVpnHandler?.connect(context, configFile.absolutePath) ?: false
             }
@@ -423,7 +426,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private suspend fun saveStrongSwanConfigFile(context: Context, config: String): File {
+    private suspend fun saveStrongSwanConfig(context: Context, config: String): File {
         return withContext(Dispatchers.IO) {
             val configFile = File(context.filesDir, "configs/strongswan.sswan")
             if (!configFile.parentFile?.exists()!!) {

@@ -18,6 +18,8 @@ import kotlinx.coroutines.withContext
 import org.strongswan.android.data.LogContentProvider
 import org.strongswan.android.data.VpnProfile
 import org.strongswan.android.data.VpnProfileDataSource
+import org.strongswan.android.data.VpnProfileSource
+import org.strongswan.android.data.VpnType
 import org.strongswan.android.logic.CharonVpnService
 import java.io.File
 import java.io.FileInputStream
@@ -27,7 +29,6 @@ class StrongSwanHandler(
 ) : VpnProtocolHandler {
 
     private val tag = "StrongSwanHandler"
-    private val scope = CoroutineScope(Dispatchers.IO + Job())
     private val configManager = VpnConfigManager(appContext)
 
     private val _state = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected)
@@ -41,7 +42,7 @@ class StrongSwanHandler(
         return true
     }
 
-    override suspend fun connect(context: Context, configPath: String): Boolean {
+    suspend fun connect(context: Context, profile: VpnProfile): Boolean {
         return withContext(Dispatchers.IO) {
             try {
                 if (_state.value is ConnectionState.Connecting || _state.value is ConnectionState.Connected) {
@@ -50,9 +51,70 @@ class StrongSwanHandler(
                 }
 
                 _state.value = ConnectionState.Connecting
-                Log.d(tag, "Starting IKEv2 connection with config: $configPath")
+                Log.d(tag, "Starting IKEv2 connection with VpnProfile object")
 
-                // Read the config file - this should contain the JSON server response, not a StrongSwan config
+                currentProfile = profile
+                Log.d(tag, "Using VpnProfile: ${profile.name}, Gateway: ${profile.gateway}, Type: ${profile.vpnType}")
+
+                // Start CharonVpnService with the profile
+                val intent = Intent(appContext, CharonVpnService::class.java).apply {
+                    val bundle = Bundle().apply {
+                        putString(VpnProfileDataSource.KEY_UUID, profile.getUUID().toString())
+
+                        // For ikev2-eap-tls, we don't pass a password since it uses certificates
+                        if (profile.vpnType == VpnType.IKEV2_EAP_TLS || profile.vpnType == VpnType.IKEV2_CERT) {
+                            Log.d(tag, "Using certificate-based authentication (${profile.vpnType})")
+                        } else {
+                            putString(VpnProfileDataSource.KEY_PASSWORD, profile.password)
+                            Log.d(tag, "Using password-based / EAP authentication")
+                        }
+
+                        // If we have a P12 certificate alias, add it
+                        profile.userCertificateAlias?.let { alias ->
+                            putString(VpnProfileDataSource.KEY_USER_CERTIFICATE, alias)
+                            Log.d(tag, "Added certificate alias: $alias")
+                        }
+                    }
+                    putExtras(bundle)
+
+                    Log.d(tag, "Starting CharonVpnService with profile UUID: ${profile.getUUID()}")
+                    Log.d(tag, "VPN Type: ${profile.vpnType}, Gateway: ${profile.gateway}")
+                    Log.d(tag, "Certificate alias: ${profile.userCertificateAlias}")
+                }
+
+                // The VpnProfile needs to be in the database for CharonVpnService to find it
+                val dataSource = VpnProfileSource(appContext)
+                dataSource.open()
+                if (dataSource.getVpnProfile(profile.getUUID().toString()) == null) {
+                    dataSource.insertProfile(profile)
+                } else {
+                    dataSource.updateVpnProfile(profile)
+                }
+                dataSource.close()
+
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    appContext.startForegroundService(intent)
+                } else {
+                    appContext.startService(intent)
+                }
+
+                Log.d(tag, "CharonVpnService started, waiting for connection...")
+                true
+
+            } catch (ex: Exception) {
+                Log.e(tag, "Connect failed", ex)
+                _state.value = ConnectionState.Error("Connect failed: ${ex.message}")
+                _state.value = ConnectionState.Disconnected
+                currentProfile = null
+                false
+            }
+        }
+    }
+
+    override suspend fun connect(context: Context, configPath: String): Boolean {
+        return withContext(Dispatchers.IO) {
+            try {
                 val configFile = File(configPath)
                 if (!configFile.exists()) {
                     throw IllegalArgumentException("Config file does not exist: $configPath")
@@ -62,37 +124,19 @@ class StrongSwanHandler(
                 Log.d(tag, "Config content length: ${configContent.length}")
 
                 // Parse the server response to create VpnProfile
-                val profile = configManager.parseServerResponseToProfile(configContent)
-                if (profile == null) {
-                    throw IllegalArgumentException("Failed to parse VPN configuration")
-                }
-
-                currentProfile = profile
-                Log.d(tag, "Created VpnProfile: ${profile.name}, Gateway: ${profile.gateway}, Type: ${profile.vpnType}")
-
-                // Start CharonVpnService with the profile
-                val intent = Intent(appContext, CharonVpnService::class.java).apply {
-                    // Add profile data as extras
-                    val bundle = Bundle().apply {
-                        putString(VpnProfileDataSource.KEY_UUID, profile.uuid.toString())
-                        putString(VpnProfileDataSource.KEY_PASSWORD, profile.password)
-                    }
-                    putExtras(bundle)
-
-                    Log.d(tag, "Starting CharonVpnService with profile UUID: ${profile.uuid}")
-                }
-
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    appContext.startForegroundService(intent)
+                val profile: VpnProfile = if (configContent.trim().startsWith("{")) {
+                    // This is a JSON server response file
+                    Log.d(tag, "Parsing JSON server response")
+                    configManager.parseServerResponseToProfile(configContent)
+                        ?: throw IllegalArgumentException("Failed to parse JSON VPN configuration")
                 } else {
-                    appContext.startService(intent)
+                    // Fallback: parse as strongSwan .conf file
+                    Log.d(tag, "Config not JSON, attempting to parse strongSwan .conf format")
+                    parseStrongSwanConf(configContent)
+                        ?: throw IllegalArgumentException("Unsupported config format; could not parse strongSwan .conf file")
                 }
-
-                // Note: The actual connection status will be updated via VpnStateService callbacks
-                // For now, we set it to connecting and let the service update the real status
-                Log.d(tag, "CharonVpnService started, waiting for connection...")
-
-                true
+                // now call the other connect method
+                connect(context, profile)
             } catch (ex: Exception) {
                 Log.e(tag, "Connect failed", ex)
                 _state.value = ConnectionState.Error("Connect failed: ${ex.message}")
@@ -149,18 +193,6 @@ class StrongSwanHandler(
                     return@withContext "LogContentProvider not available"
                 }
 
-                // Try to read the log content
-                context.contentResolver.query(
-                    uri,
-                    arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE),
-                    null, null, null
-                )?.use { cursor ->
-                    if (!cursor.moveToFirst()) {
-                        Log.w(tag, "No log data available")
-                        return@withContext "No log data available"
-                    }
-                }
-
                 context.contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
                     val logs = readAll(pfd)
                     Log.d(tag, "Retrieved ${logs.length} characters of logs")
@@ -188,20 +220,44 @@ class StrongSwanHandler(
         }
     }
 
-    /**
-     * Update connection state from external sources (e.g., VpnStateService)
-     */
-    fun updateConnectionState(newState: ConnectionState) {
-        Log.d(tag, "Connection state updated to: $newState")
-        _state.value = newState
-    }
-
-    /**
-     * Get the current VPN profile
-     */
-    fun getCurrentProfile(): VpnProfile? = currentProfile
-
-    companion object {
-        const val EXTRA_CONFIG_FILE = "configFile"
+    private fun parseStrongSwanConf(content: String): VpnProfile? {
+        return try {
+            val lines = content.lines()
+            val map = mutableMapOf<String, String>()
+            lines.forEach { raw ->
+                val line = raw.trim()
+                if (line.startsWith("#") || line.isBlank()) return@forEach
+                val parts = line.split('=', limit = 2)
+                if (parts.size == 2) {
+                    val key = parts[0].trim().lowercase()
+                    val value = parts[1].trim()
+                    if (!key.startsWith("conn ")) {
+                        map[key] = value
+                    }
+                }
+            }
+            val gateway = map["right"] ?: map["righthost"] ?: map["rightaddress"]
+            if (gateway.isNullOrBlank()) {
+                Log.w(tag, "Could not find gateway (right=) in .conf")
+            }
+            val remoteId = map["rightid"] ?: gateway
+            val leftId = map["leftid"] ?: map["eap_identity"]
+            val authLeft = map["leftauth"] ?: "eap-mschapv2"
+            val profile = VpnProfile().apply {
+                name = map["conn"] ?: "ShadowLink Config"
+                this.gateway = gateway ?: ""
+                this.remoteId = remoteId
+                this.username = leftId
+                this.password = null // password not stored in .conf for eap-mschapv2 (leftid used as identity)
+                vpnType = if (authLeft.contains("tls", ignoreCase = true)) VpnType.IKEV2_EAP_TLS else VpnType.IKEV2_EAP
+            }
+            if (profile.gateway.isBlank()) {
+                Log.e(tag, "Parsed .conf but gateway is empty")
+            }
+            profile
+        } catch (e: Exception) {
+            Log.e(tag, "Failed to parse strongSwan .conf", e)
+            null
+        }
     }
 }

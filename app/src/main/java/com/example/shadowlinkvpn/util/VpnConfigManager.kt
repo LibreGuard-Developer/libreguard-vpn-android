@@ -3,6 +3,7 @@ package com.example.shadowlinkvpn.util
 import android.content.Context
 import android.util.Base64
 import android.util.Log
+import org.json.JSONArray
 import org.json.JSONObject
 import org.strongswan.android.data.VpnProfile
 import org.strongswan.android.data.VpnType
@@ -57,72 +58,131 @@ class VpnConfigManager(private val context: Context) {
         }
     }
 
+    fun parseServerResponseToProfile(responseBody: String): VpnProfile? {
+        return try {
+            var raw = responseBody.trim()
+            var jsonObj: JSONObject? = null
+            try {
+                jsonObj = JSONObject(raw)
+            } catch (e: Exception) {
+                Log.w(tag, "Initial JSON parse failed, attempting auto-repair: ${e.message}")
+                val repaired = autoRepairJson(raw)
+                if (repaired != raw) {
+                    Log.d(tag, "Repaired JSON diff length: ${repaired.length - raw.length}")
+                }
+                jsonObj = JSONObject(repaired)
+            }
+            createVpnProfile(jsonObj!!)
+        } catch (e: Exception) {
+            Log.e(tag, "Failed to parse server response to profile", e)
+            null
+        }
+    }
+
+    private fun autoRepairJson(input: String): String {
+        var repaired = input
+        // Fix missing comma between cert and ike keys (e.g. "cert":"..."ike")
+        repaired = repaired.replace(Regex("(\"cert\"\\s*:\\s*\"[^\"]+\")\\s*(\"(ike|esp)\")"), "$1, $2")
+        // Fix missing closing quote/comma before password after p12
+        repaired = repaired.replace(Regex("(\"p12\"\\s*:\\s*\"[^\"]+?)(\\s+\"password\")"), "$1\", \"password\"")
+        // Ensure commas between objects when accidentally concatenated
+        repaired = repaired.replace(Regex("}(\\s*)(\"[a-zA-Z0-9_]+\"\\s*:)"), "},$1$2")
+        return repaired
+    }
+
     fun createVpnProfile(json: JSONObject): VpnProfile? {
         return try {
             val profile = VpnProfile()
-
-            // Initialize UUID if missing
-            if (profile.uuid == null) {
-                profile.uuid = UUID.randomUUID()
-            }
+            // Removed invalid null check for profile.UUID (no such Kotlin property); constructor already sets UUID
+            Log.d(tag, "JSON keys: ${json.keys().asSequence().toList()}")
+            Log.d(tag, "Raw JSON (normalized): ${json.toString(2)}")
 
             profile.name = json.optString("name", "ShadowLink VPN")
             profile.gateway = json.optString("gateway")
 
-            // Fix vpnType assignment - use "type" from JSON response
+            if (profile.gateway.isBlank()) {
+                val remoteObj = json.optJSONObject("remote")
+                if (remoteObj != null) {
+                    profile.gateway = remoteObj.optString("addr", remoteObj.optString("address"))
+                }
+                if (profile.gateway.isBlank()) {
+                    profile.gateway = json.optString("server", json.optString("host", json.optString("endpoint")))
+                }
+                Log.i(tag, "Gateway resolved to: ${profile.gateway}")
+            }
+            if (profile.gateway.isBlank()) {
+                profile.gateway = "10.0.2.2"
+                Log.w(tag, "Gateway still empty, using default: ${profile.gateway}")
+            }
+
             val vpnTypeString = json.optString("type", "ikev2-eap")
             profile.vpnType = when (vpnTypeString.lowercase()) {
                 "ikev2-eap" -> VpnType.IKEV2_EAP
                 "ikev2-cert" -> VpnType.IKEV2_CERT
                 "ikev2-eap-tls" -> VpnType.IKEV2_EAP_TLS
+                "ikev2-cert-eap" -> VpnType.IKEV2_CERT_EAP
                 else -> VpnType.IKEV2_EAP
             }
-
             Log.d(tag, "VPN Type from JSON: $vpnTypeString -> ${profile.vpnType}")
 
-            // For ikev2-eap-tls, username/password are not needed as it uses client certificates
-            if (profile.vpnType != VpnType.IKEV2_EAP_TLS) {
+            if (profile.vpnType != VpnType.IKEV2_EAP_TLS && profile.vpnType.has(VpnType.VpnTypeFeature.USER_PASS)) {
                 profile.username = json.optString("username")
                 profile.password = json.optString("password")
+                if (profile.username.isNullOrBlank()) {
+                    // Try local.identity / local.id fallback
+                    json.optJSONObject("local")?.let { local ->
+                        profile.username = local.optString("id", local.optString("identity"))
+                    }
+                }
+            } else {
+                Log.d(tag, "Certificate-based auth selected; skipping direct username/password unless provided for hybrid")
             }
 
-            // Set remoteId to gateway if not specified
             profile.remoteId = json.optString("remoteId", profile.gateway)
+            json.optJSONObject("remote")?.let { remoteObj ->
+                remoteObj.optString("id").takeIf { it.isNotBlank() }?.let { profile.remoteId = it }
+                // Proposals
+                remoteObj.optString("ike").takeIf { it.isNotBlank() }?.let { profile.ikeProposal = it }
+                remoteObj.optString("esp").takeIf { it.isNotBlank() }?.let { profile.espProposal = it }
+            }
 
-            // Handle P12 certificate import with enhanced error handling
+            // DNS servers array
+            json.optJSONArray("dns-servers")?.let { arr ->
+                profile.dnsServers = jsonArrayToSpaceSeparated(arr)
+            }
+
+            // Split tunneling
+            json.optJSONObject("split-tunneling")?.let { st ->
+                var flags = 0
+                if (st.optBoolean("block-ipv4", false)) flags = flags or VpnProfile.SPLIT_TUNNELING_BLOCK_IPV4
+                if (st.optBoolean("block-ipv6", false)) flags = flags or VpnProfile.SPLIT_TUNNELING_BLOCK_IPV6
+                if (flags != 0) profile.splitTunneling = flags
+            }
+
+            // Certificates (client)
             json.optJSONObject("local")?.let { localObj ->
                 val p12Base64 = localObj.optString("p12")
                 val p12Password = localObj.optString("password")
-
                 if (p12Base64.isNotBlank()) {
                     val certAlias = importP12CertificateFixed(p12Base64, p12Password)
                     if (certAlias != null) {
                         profile.userCertificateAlias = certAlias
-                        // For ikev2-eap-tls, we already set the correct type above
-                        // For other types, we can switch to certificate auth if P12 is available
                         if (profile.vpnType == VpnType.IKEV2_EAP) {
                             profile.vpnType = VpnType.IKEV2_CERT
                         }
                         Log.d(tag, "Imported P12 certificate with alias: $certAlias")
-                    } else {
-                        Log.w(tag, "P12 certificate import failed")
-                        // For ikev2-eap-tls, this is critical as it requires certificates
-                        if (profile.vpnType == VpnType.IKEV2_EAP_TLS) {
-                            Log.e(tag, "ikev2-eap-tls requires client certificate but P12 import failed")
-                            return null
-                        }
-                        // For other types, fall back to EAP authentication
+                    } else if (profile.vpnType == VpnType.IKEV2_EAP_TLS) {
+                        Log.e(tag, "Client certificate required but import failed")
+                        return null
                     }
                 }
             }
 
-            // Handle server certificate with trust anchor installation
+            // Server certificate / trust anchor
             json.optJSONObject("remote")?.optString("cert")?.let { serverCert ->
                 if (serverCert.isNotBlank()) {
-                    val caCertAlias = importServerCertificateWithTrustFix(serverCert)
-                    if (caCertAlias != null) {
-                        profile.certificateAlias = caCertAlias
-                        Log.d(tag, "Imported server certificate with alias: $caCertAlias")
+                    importServerCertificateWithTrustFix(serverCert)?.let { caAlias ->
+                        profile.certificateAlias = caAlias
                     }
                 }
             }
@@ -131,6 +191,35 @@ class VpnConfigManager(private val context: Context) {
         } catch (e: Exception) {
             Log.e(tag, "Failed to parse server response", e)
             null
+        }
+    }
+
+    private fun jsonArrayToSpaceSeparated(array: JSONArray): String {
+        val list = mutableListOf<String>()
+        for (i in 0 until array.length()) {
+            val v = array.optString(i)
+            if (!v.isNullOrBlank()) list.add(v)
+        }
+        return list.joinToString(" ")
+    }
+
+    private fun installCertificateAndKey(cert: X509Certificate, privateKey: PrivateKey): String {
+        // Generate unique alias
+        val alias = "shadowlink_${System.currentTimeMillis()}"
+
+        try {
+            // Save certificate to internal storage for StrongSwan
+            val certFile = File(configDir, "$alias.crt")
+            certFile.writeBytes(cert.encoded)
+
+            // For StrongSwan, we need to save the private key in a format it can use
+            // This is complex on Android, so for now we'll use the direct P12 approach
+            Log.d(tag, "Certificate saved with alias: $alias")
+            return alias
+
+        } catch (e: Exception) {
+            Log.e(tag, "Failed to install certificate", e)
+            throw e
         }
     }
 
@@ -155,13 +244,13 @@ class VpnConfigManager(private val context: Context) {
                 val rawResult = tryRawCertificateExtraction(p12Bytes, pass)
                 if (rawResult != null) {
                     Log.d(tag, "Successfully extracted certificate using raw extraction")
-                    return installCertificateAndKey(rawResult.first, rawResult.second, rawResult.third)
+                    return installCertificateAndKey(rawResult.first, rawResult.second)
                 }
 
                 // Try traditional KeyStore approach
                 val result = tryLoadP12WithNativeApproach(p12Bytes, pass)
                 if (result != null) {
-                    return installCertificateAndKey(result.first, result.second, result.third)
+                    return installCertificateAndKey(result.first, result.second)
                 }
             }
 
@@ -396,16 +485,31 @@ class VpnConfigManager(private val context: Context) {
             val p12File = File(configDir, "$alias.p12")
 
             p12File.writeBytes(p12Bytes)
-
-            // Also save the password for StrongSwan
-            val passwordFile = File(configDir, "$alias.pwd")
-            passwordFile.writeText(password)
-
             Log.d(tag, "Saved P12 file directly: ${p12File.absolutePath}")
             Log.d(tag, "P12 file size: ${p12File.length()} bytes")
 
-            // Return the alias so StrongSwan can use the files directly
-            return alias
+            // Try to extract certificate information using native Android keystore
+            val certInfo = tryExtractP12InfoNatively(p12Bytes, password)
+            if (certInfo != null) {
+                Log.d(tag, "Successfully extracted P12 certificate info natively")
+
+                // Save certificate and key files separately for StrongSwan
+                saveCertificateFiles(alias, certInfo.first, certInfo.second)
+
+                // Also save the password for StrongSwan
+                val passwordFile = File(configDir, "$alias.pwd")
+                passwordFile.writeText(password)
+
+                return alias
+            } else {
+                Log.w(tag, "Could not extract certificate info, using P12 file directly")
+
+                // Fallback: Just save the P12 file and let StrongSwan handle it
+                val passwordFile = File(configDir, "$alias.pwd")
+                passwordFile.writeText(password)
+
+                return alias
+            }
 
         } catch (e: Exception) {
             Log.e(tag, "Direct P12 approach failed", e)
@@ -413,22 +517,61 @@ class VpnConfigManager(private val context: Context) {
         }
     }
 
-    private fun installCertificateAndKey(cert: X509Certificate, privateKey: PrivateKey, password: String): String {
-        // Generate unique alias
-        val alias = "shadowlink_${System.currentTimeMillis()}"
+    private fun tryExtractP12InfoNatively(p12Bytes: ByteArray, password: String): Pair<ByteArray, ByteArray>? {
+        return try {
+            // Try using Android's native KeyStore implementation without BouncyCastle
+            val keyStore = KeyStore.getInstance("PKCS12", "AndroidKeyStore")
 
-        try {
-            // Save certificate to internal storage for StrongSwan
-            val certFile = File(configDir, "$alias.crt")
-            certFile.writeBytes(cert.encoded)
+            // This approach bypasses BouncyCastle by using Android's native implementation
+            val tempFile = File.createTempFile("native_p12", ".p12", context.cacheDir)
+            try {
+                tempFile.writeBytes(p12Bytes)
 
-            // For StrongSwan, we need to save the private key in a format it can use
-            // This is complex on Android, so for now we'll use the direct P12 approach
-            Log.d(tag, "Certificate saved with alias: $alias")
-            return alias
+                // Try loading with Android's native provider
+                keyStore.load(tempFile.inputStream(), password.toCharArray())
 
+                // Extract certificate and key
+                val aliases = keyStore.aliases()
+                while (aliases.hasMoreElements()) {
+                    val alias = aliases.nextElement()
+                    val cert = keyStore.getCertificate(alias)
+                    val key = keyStore.getKey(alias, password.toCharArray())
+
+                    if (cert != null && key != null) {
+                        Log.d(tag, "Native extraction successful")
+                        return Pair(cert.encoded, key.encoded)
+                    }
+                }
+            } finally {
+                tempFile.delete()
+            }
+
+            null
         } catch (e: Exception) {
-            Log.e(tag, "Failed to install certificate", e)
+            Log.v(tag, "Native extraction failed: ${e.message}")
+            null
+        }
+    }
+
+    private fun saveCertificateFiles(alias: String, certBytes: ByteArray, keyBytes: ByteArray) {
+        try {
+            // Save certificate in PEM format
+            val certFile = File(configDir, "$alias.crt")
+            val certPem = "-----BEGIN CERTIFICATE-----\n" +
+                    Base64.encodeToString(certBytes, Base64.DEFAULT) +
+                    "-----END CERTIFICATE-----\n"
+            certFile.writeText(certPem)
+
+            // Save private key in PEM format
+            val keyFile = File(configDir, "$alias.key")
+            val keyPem = "-----BEGIN PRIVATE KEY-----\n" +
+                    Base64.encodeToString(keyBytes, Base64.DEFAULT) +
+                    "-----END PRIVATE KEY-----\n"
+            keyFile.writeText(keyPem)
+
+            Log.d(tag, "Saved certificate and key files for alias: $alias")
+        } catch (e: Exception) {
+            Log.e(tag, "Failed to save certificate files", e)
             throw e
         }
     }
@@ -553,16 +696,6 @@ class VpnConfigManager(private val context: Context) {
             }
         }
         return null
-    }
-
-    fun parseServerResponseToProfile(responseBody: String): VpnProfile? {
-        return try {
-            val json = JSONObject(responseBody)
-            createVpnProfile(json)
-        } catch (e: Exception) {
-            Log.e(tag, "Failed to parse server response to profile", e)
-            null
-        }
     }
 
     /**
