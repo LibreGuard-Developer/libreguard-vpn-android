@@ -60,7 +60,17 @@ class VpnConfigManager(private val context: Context) {
 
     fun parseServerResponseToProfile(responseBody: String): VpnProfile? {
         return try {
-            var raw = responseBody.trim()
+            val rawTrimmed = responseBody.trimStart()
+            // Guard: strongSwan .conf starts with "conn ", don't treat as JSON
+            if (rawTrimmed.startsWith("conn ")) {
+                Log.d(tag, "Input looks like strongSwan .conf, skipping JSON parse")
+                return null
+            }
+            if (!rawTrimmed.startsWith("{") && !rawTrimmed.startsWith("[")) {
+                Log.w(tag, "Input does not look like JSON, skipping parse")
+                return null
+            }
+            var raw = rawTrimmed
             var jsonObj: JSONObject? = null
             try {
                 jsonObj = JSONObject(raw)
@@ -82,11 +92,11 @@ class VpnConfigManager(private val context: Context) {
     private fun autoRepairJson(input: String): String {
         var repaired = input
         // Fix missing comma between cert and ike keys (e.g. "cert":"..."ike")
-        repaired = repaired.replace(Regex("(\"cert\"\\s*:\\s*\"[^\"]+\")\\s*(\"(ike|esp)\")"), "$1, $2")
+        repaired = repaired.replace(Regex("(\"cert\"\\s*:\\s*\"[^\"]+\")\\s*(\"(ike|esp)\")"), "\$1, \$2")
         // Fix missing closing quote/comma before password after p12
-        repaired = repaired.replace(Regex("(\"p12\"\\s*:\\s*\"[^\"]+?)(\\s+\"password\")"), "$1\", \"password\"")
+        repaired = repaired.replace(Regex("(\"p12\"\\s*:\\s*\"[^\"]+?)(\\s+\"password\")"), "\$1\", \"password\"")
         // Ensure commas between objects when accidentally concatenated
-        repaired = repaired.replace(Regex("}(\\s*)(\"[a-zA-Z0-9_]+\"\\s*:)"), "},$1$2")
+        repaired = repaired.replace(Regex("}(\\s*)(\"[a-zA-Z0-9_]+\"\\s*:)"), "},\$1\$2")
         return repaired
     }
 
@@ -167,6 +177,11 @@ class VpnConfigManager(private val context: Context) {
                     val certAlias = importP12CertificateFixed(p12Base64, p12Password)
                     if (certAlias != null) {
                         profile.userCertificateAlias = certAlias
+                        // For certificate-based authentication, set the P12 password as the profile password
+                        if (profile.vpnType == VpnType.IKEV2_EAP_TLS && p12Password.isNotBlank()) {
+                            profile.password = p12Password
+                            Log.d(tag, "Set P12 password as profile password for certificate-based auth")
+                        }
                         if (profile.vpnType == VpnType.IKEV2_EAP) {
                             profile.vpnType = VpnType.IKEV2_CERT
                         }
