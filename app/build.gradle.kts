@@ -93,11 +93,16 @@ dependencies {
     implementation(libs.androidx.navigation.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
 
+    // Material icons (extended) for visibility icons
+    implementation("androidx.compose.material:material-icons-extended")
+
     // Networking
     implementation(libs.retrofit)
     implementation(libs.converter.gson)
     implementation(libs.logging.interceptor)
     implementation(libs.gson)
+    implementation(libs.androidx.tv.material)
+    implementation(libs.androidx.foundation)
 
     // Testing
     testImplementation(libs.junit)

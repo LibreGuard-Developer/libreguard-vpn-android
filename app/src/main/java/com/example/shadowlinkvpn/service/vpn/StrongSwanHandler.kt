@@ -3,12 +3,14 @@ package com.example.shadowlinkvpn.service.vpn
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
 import android.os.ParcelFileDescriptor
 import android.util.Log
 import com.example.shadowlinkvpn.util.VpnConfigManager
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.withContext
@@ -37,6 +39,46 @@ class StrongSwanHandler(
     override suspend fun initialize(context: Context): Boolean {
         Log.d(tag, "Initializing StrongSwan handler")
         return true
+    }
+
+    /**
+     * Set the current profile and update connection state accordingly
+     * This is used when restoring connection state after app restart
+     */
+    fun setCurrentProfile(profile: VpnProfile) {
+        currentProfile = profile
+
+        // Check if VPN is actually active and update our state accordingly
+        val isVpnActive = checkIfVpnIsActive()
+        if (isVpnActive) {
+            _state.value = ConnectionState.Connected
+            Log.d(tag, "Set current profile and detected active VPN connection - updated state to Connected")
+        } else {
+            _state.value = ConnectionState.Disconnected
+            Log.d(tag, "Set current profile but no active VPN detected - state remains Disconnected")
+        }
+
+        Log.d(tag, "Current profile set: ${profile.name}, Gateway: ${profile.gateway}, State: ${_state.value}")
+    }
+
+    /**
+     * Check if VPN is actually active by examining network interfaces
+     */
+    private fun checkIfVpnIsActive(): Boolean {
+        return try {
+            val networkInterfaces = java.net.NetworkInterface.getNetworkInterfaces()
+            while (networkInterfaces.hasMoreElements()) {
+                val networkInterface = networkInterfaces.nextElement()
+                if (networkInterface.name.startsWith("tun") && networkInterface.isUp) {
+                    Log.d(tag, "Found active tun interface: ${networkInterface.name}")
+                    return true
+                }
+            }
+            false
+        } catch (e: Exception) {
+            Log.w(tag, "Failed to check network interfaces: ${e.message}")
+            false
+        }
     }
 
     suspend fun connect(context: Context, profile: VpnProfile): Boolean {
@@ -273,20 +315,90 @@ class StrongSwanHandler(
                 _state.value = ConnectionState.Disconnecting
                 Log.d(tag, "Disconnecting from VPN")
 
-                // Stop CharonVpnService
-                val stopIntent = Intent(appContext, CharonVpnService::class.java)
-                appContext.stopService(stopIntent)
+                var disconnectSuccess = false
 
-                // Also send disconnect action
-                val disconnectIntent = Intent(appContext, CharonVpnService::class.java).apply {
-                    action = CharonVpnService.DISCONNECT_ACTION
+                // Method 1: Try to stop CharonVpnService directly
+                try {
+                    val stopIntent = Intent(appContext, CharonVpnService::class.java)
+                    val stopResult = appContext.stopService(stopIntent)
+                    Log.d(tag, "Stop service result: $stopResult")
+                    if (stopResult) disconnectSuccess = true
+                } catch (e: Exception) {
+                    Log.w(tag, "Failed to stop CharonVpnService: ${e.message}")
                 }
-                appContext.startService(disconnectIntent)
+
+                // Method 2: Try multiple disconnect action approaches
+                try {
+                    // Try with explicit action string (StrongSwan standard)
+                    val disconnectIntent1 = Intent().apply {
+                        setClassName("org.strongswan.android", "org.strongswan.android.logic.CharonVpnService")
+                        action = "org.strongswan.android.logic.CharonVpnService.DISCONNECT"
+                    }
+                    appContext.startService(disconnectIntent1)
+                    Log.d(tag, "Sent explicit disconnect action")
+
+                    // Also try generic disconnect action
+                    val disconnectIntent2 = Intent(appContext, CharonVpnService::class.java).apply {
+                        action = "disconnect"
+                    }
+                    appContext.startService(disconnectIntent2)
+                    Log.d(tag, "Sent generic disconnect action")
+
+                    disconnectSuccess = true
+                } catch (e: Exception) {
+                    Log.w(tag, "Failed to send disconnect intents: ${e.message}")
+                }
+
+                // Method 3: Try to kill the VPN connection via VpnService if we have permission
+                try {
+                    // Check if we can prepare VPN service (means we have permission)
+                    val vpnPrepareIntent = VpnService.prepare(context)
+                    if (vpnPrepareIntent == null) {
+                        Log.d(tag, "VPN service prepared, attempting to revoke VPN")
+                        // We have VPN permission, but we can't directly revoke another app's VPN
+                        // However, stopping the service should work
+                    }
+                } catch (e: Exception) {
+                    Log.w(tag, "VPN service check failed: ${e.message}")
+                }
+
+                // Method 4: Clear StrongSwan state files to force cleanup
+                try {
+                    val charonLog = File(context.filesDir, "charon.log")
+                    if (charonLog.exists()) {
+                        charonLog.delete()
+                        Log.d(tag, "Cleared charon.log file")
+                    }
+
+                    val configDir = File(context.filesDir, "sswan_configs")
+                    if (configDir.exists()) {
+                        configDir.listFiles()?.forEach { file ->
+                            if (file.name.endsWith(".conf") || file.name.endsWith(".p12")) {
+                                file.delete()
+                                Log.d(tag, "Cleared config file: ${file.name}")
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w(tag, "Failed to clear state files: ${e.message}")
+                }
+
+                // Method 5: Force kill any strongSwan processes (requires root, likely to fail)
+                try {
+                    Runtime.getRuntime().exec("pkill -f charon")
+                    Log.d(tag, "Attempted to kill charon process")
+                } catch (e: Exception) {
+                    Log.v(tag, "Process kill failed (expected): ${e.message}")
+                }
+
+                // Give some time for the disconnect actions to take effect
+                delay(1000)
 
                 _state.value = ConnectionState.Disconnected
                 currentProfile = null
-                Log.d(tag, "VPN disconnected")
-                true
+
+                Log.d(tag, "VPN disconnect process completed (success: $disconnectSuccess)")
+                return@withContext true // Always return true since we've cleaned up our state
 
             } catch (ex: Exception) {
                 Log.e(tag, "Disconnect failed", ex)

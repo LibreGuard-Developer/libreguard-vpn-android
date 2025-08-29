@@ -10,7 +10,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.ExitToApp
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -28,6 +28,7 @@ import com.example.shadowlinkvpn.viewmodel.VpnProtocol
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import android.app.Activity
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.window.Dialog
 
@@ -54,12 +55,11 @@ fun getFlagEmoji(country: String): String {
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
-fun MainScreen(authToken: String, vpnViewModel: VpnViewModel? = null) {
+fun MainScreen(authToken: String, vpnViewModel: VpnViewModel? = null, onLogout: (() -> Unit)? = null) {
     val viewModel: VpnViewModel = vpnViewModel ?: viewModel()
     val context = LocalContext.current
 
     val servers by viewModel.servers.collectAsState()
-    val remoteServers by viewModel.remoteServers.collectAsState()
     val selectedServer by viewModel.selectedServer.collectAsState()
     val selectedProtocol by viewModel.selectedProtocol.collectAsState()
     val isConnected by viewModel.isConnected.collectAsState()
@@ -71,6 +71,10 @@ fun MainScreen(authToken: String, vpnViewModel: VpnViewModel? = null) {
     val availableCertificates by viewModel.availableCertificates.collectAsState()
     val showCertSelectionDialog by viewModel.showCertSelectionDialog.collectAsState()
     val showImportCertDialog by viewModel.showImportCertDialog.collectAsState()
+    val isInstallingCertificate by viewModel.isInstallingCertificate.collectAsState()
+
+    // State for logout confirmation dialog
+    var showLogoutDialog by remember { mutableStateOf(false) }
 
     val vpnPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
@@ -142,6 +146,21 @@ fun MainScreen(authToken: String, vpnViewModel: VpnViewModel? = null) {
         )
     }
 
+    // Logout confirmation dialog
+    if (showLogoutDialog) {
+        LogoutConfirmationDialog(
+            onConfirm = {
+                viewModel.logout()
+                showLogoutDialog = false
+                // Navigate back to login screen using the callback
+                onLogout?.invoke()
+            },
+            onDismiss = {
+                showLogoutDialog = false
+            }
+        )
+    }
+
     val connectionStatus = when {
         isConnecting -> "Connecting..."
         isConnected -> "Connected"
@@ -154,143 +173,181 @@ fun MainScreen(authToken: String, vpnViewModel: VpnViewModel? = null) {
         else -> Color.Red
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp)
-    ) {
-        // Status Card
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    Box(modifier = Modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp)
         ) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+            // Status Card
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
             ) {
-                Text(
-                    text = connectionStatus,
-                    fontSize = 24.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = statusColor
-                )
-
-                if (selectedServer != null) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
                     Text(
-                        text = "${getFlagEmoji(selectedServer!!.country)} ${selectedServer!!.name}",
-                        fontSize = 16.sp,
-                        color = MaterialTheme.colorScheme.onSurface
+                        text = connectionStatus,
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = statusColor
+                    )
+
+                    if (selectedServer != null) {
+                        Text(
+                            text = "${getFlagEmoji(selectedServer!!.country)} ${selectedServer!!.name}",
+                            fontSize = 16.sp,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Protocol Selector
+            ProtocolSelector(
+                selectedProtocol = selectedProtocol,
+                onProtocolSelected = { viewModel.selectProtocol(it) }
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Connect/Disconnect Button
+            Button(
+                onClick = {
+                    viewModel.requestVpnPermission(context) { vpnIntent ->
+                        if (vpnIntent != null) {
+                            vpnPermissionLauncher.launch(vpnIntent)
+                        } else {
+                            if (isConnected) viewModel.disconnect() else viewModel.connectToVpn()
+                        }
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !isConnecting && !isInstallingCertificate && selectedServer != null,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = when {
+                        isConnected -> MaterialTheme.colorScheme.error
+                        isConnecting || isInstallingCertificate -> Color(0xFF1976D2)
+                        else -> Color(0xFF2196F3)
+                    },
+                    contentColor = Color.White
+                )
+            ) {
+                Row(
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (isConnecting || isInstallingCertificate) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            color = Color.White,
+                            strokeWidth = 2.dp
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                    }
+                    Text(
+                        text = when {
+                            isInstallingCertificate -> "Installing Certificate..."
+                            isConnecting -> "Connecting..."
+                            isConnected -> "Disconnect"
+                            else -> "Connect"
+                        },
+                        fontSize = 18.sp
                     )
                 }
             }
-        }
 
-        Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
-        // Protocol Selector
-        ProtocolSelector(
-            selectedProtocol = selectedProtocol,
-            onProtocolSelected = { viewModel.selectProtocol(it) }
-        )
+            Button(
+                onClick = { viewModel.getConnectionLogs() },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Show Logs") }
 
-        Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(16.dp))
 
-        // Connect/Disconnect Button
-        Button(
-            onClick = {
-                viewModel.requestVpnPermission(context) { vpnIntent ->
-                    if (vpnIntent != null) {
-                        vpnPermissionLauncher.launch(vpnIntent)
-                    } else {
-                        if (isConnected) viewModel.disconnect() else viewModel.connectToVpn()
+            Card(
+                modifier = Modifier.weight(1f),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+            ) {
+                Column {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Servers",
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        if (isLoadingServers) {
+                            CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                        } else {
+                            TextButton(onClick = { viewModel.refreshServers() }) { Text("Refresh") }
+                        }
                     }
-                }
-            },
-            modifier = Modifier.fillMaxWidth(),
-            enabled = !isConnecting && selectedServer != null,
-            colors = ButtonDefaults.buttonColors(
-                containerColor = when {
-                    isConnected -> MaterialTheme.colorScheme.error
-                    isConnecting -> Color(0xFF1976D2)
-                    else -> Color(0xFF2196F3)
-                },
-                contentColor = Color.White
-            )
-        ) {
-            Text(
-                text = when {
-                    isConnecting -> "Connecting..."
-                    isConnected -> "Disconnect"
-                    else -> "Connect"
-                },
-                fontSize = 18.sp
-            )
-        }
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        Button(
-            onClick = { viewModel.getConnectionLogs() },
-            modifier = Modifier.fillMaxWidth()
-        ) { Text("Show Logs") }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        Card(
-            modifier = Modifier.weight(1f),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-        ) {
-            Column {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "Servers",
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                    if (isLoadingServers) {
-                        CircularProgressIndicator(modifier = Modifier.size(24.dp))
-                    } else {
-                        TextButton(onClick = { viewModel.refreshServers() }) { Text("Refresh") }
-                    }
-                }
-                LazyColumn {
-                    val serverGroups = servers.groupBy { it.country }
-                    serverGroups.forEach { (country, list) ->
-                        item { CountryHeader(country) }
-                        items(list) { server ->
-                            ServerListItem(
-                                server = server,
-                                isSelected = selectedServer == server,
-                                onServerSelected = { viewModel.selectServer(it) }
-                            )
+                    LazyColumn {
+                        val serverGroups = servers.groupBy { it.country }
+                        serverGroups.forEach { (country, list) ->
+                            item { CountryHeader(country) }
+                            items(list) { server ->
+                                ServerListItem(
+                                    server = server,
+                                    isSelected = selectedServer == server,
+                                    onServerSelected = { viewModel.selectServer(it) }
+                                )
+                            }
                         }
                     }
                 }
             }
-        }
 
-        errorMessage?.let { message ->
-            Spacer(modifier = Modifier.height(8.dp))
-            Card(
-                colors = CardDefaults.cardColors(
-                    containerColor = if (message.contains("Connected") || message.contains("Config received"))
-                        MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.errorContainer
-                )
-            ) {
-                Text(
-                    text = message,
-                    modifier = Modifier.padding(12.dp),
-                    color = if (message.contains("Connected") || message.contains("Config received"))
-                        MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onErrorContainer
-                )
+            errorMessage?.let { message ->
+                Spacer(modifier = Modifier.height(8.dp))
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (message.contains("Connected") || message.contains("Config received"))
+                            MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.errorContainer
+                    )
+                ) {
+                    Text(
+                        text = message,
+                        modifier = Modifier.padding(12.dp),
+                        color = if (message.contains("Connected") || message.contains("Config received"))
+                            MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onErrorContainer
+                    )
+                }
+            }
+
+            // Certificate installation status
+            if (isInstallingCertificate) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer
+                    )
+                ) {
+                    Text(
+                        text = "Installing certificate... Please check your device's certificate manager.",
+                        modifier = Modifier.padding(12.dp),
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                }
             }
         }
+
+        // Logout Button - positioned at top right
+        LogoutButton(
+            modifier = Modifier.align(Alignment.TopEnd),
+            onClick = { showLogoutDialog = true }
+        )
     }
 }
 
@@ -311,7 +368,7 @@ fun ProtocolSelector(selectedProtocol: VpnProtocol, onProtocolSelected: (VpnProt
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                VpnProtocol.values().forEach { proto ->
+                VpnProtocol.entries.forEach { proto ->
                     FilterChip(
                         onClick = { onProtocolSelected(proto) },
                         label = { Text(proto.displayName) },
@@ -548,5 +605,96 @@ fun ImportCertificateDialog(
                 }
             }
         }
+    }
+}
+
+@Composable
+fun LogoutConfirmationDialog(onConfirm: () -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = {
+            Icon(
+                imageVector = Icons.Default.ExitToApp,
+                contentDescription = "Logout",
+                tint = MaterialTheme.colorScheme.error,
+                modifier = Modifier.size(32.dp)
+            )
+        },
+        title = {
+            Text(
+                "Confirm Logout",
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold
+            )
+        },
+        text = {
+            Text(
+                "Are you sure you want to logout? This will disconnect your VPN and clear all saved data.",
+                style = MaterialTheme.typography.bodyMedium
+            )
+        },
+        confirmButton = {
+            Button(
+                onClick = onConfirm,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color(0xFFE53E3E), // Beautiful red
+                    contentColor = Color.White
+                ),
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.padding(end = 8.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.ExitToApp,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(
+                    "Yes, Logout",
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+        },
+        dismissButton = {
+            OutlinedButton(
+                onClick = onDismiss,
+                border = BorderStroke(1.dp, Color(0xFF2196F3)),
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Close,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                    tint = Color(0xFF2196F3)
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(
+                    "No, Cancel",
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color(0xFF2196F3)
+                )
+            }
+        },
+        containerColor = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(16.dp)
+    )
+}
+
+@Composable
+fun LogoutButton(modifier: Modifier = Modifier, onClick: () -> Unit) {
+    IconButton(
+        onClick = onClick,
+        modifier = modifier
+            .size(48.dp)
+            .background(
+                color = MaterialTheme.colorScheme.primary,
+                shape = RoundedCornerShape(24.dp)
+            )
+    ) {
+        Icon(
+            imageVector = Icons.Default.ExitToApp,
+            contentDescription = "Logout",
+            tint = Color.White
+        )
     }
 }

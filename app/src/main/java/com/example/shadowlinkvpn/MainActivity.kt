@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -38,7 +39,24 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun AppNavigation(modifier: Modifier = Modifier) {
     val navController = rememberNavController()
+    val context = LocalContext.current
     var authToken by remember { mutableStateOf<String?>(null) }
+    var isCheckingToken by remember { mutableStateOf(true) }
+
+    // Check for persisted auth token on startup
+    LaunchedEffect(Unit) {
+        val sharedPrefs = context.getSharedPreferences("vpn_state_prefs", android.content.Context.MODE_PRIVATE)
+        val savedToken = sharedPrefs.getString("auth_token", null)
+
+        if (!savedToken.isNullOrBlank()) {
+            authToken = savedToken
+            // Navigate to main if we have a valid token
+            navController.navigate("main") {
+                popUpTo("login") { inclusive = true }
+            }
+        }
+        isCheckingToken = false
+    }
 
     NavHost(
         navController = navController,
@@ -46,18 +64,29 @@ fun AppNavigation(modifier: Modifier = Modifier) {
         modifier = modifier
     ) {
         composable("login") {
-            LoginScreen(onLoginSuccess = { token ->
-                authToken = token
-                navController.navigate("main") {
-                    popUpTo("login") { inclusive = true }
-                }
-            })
+            if (!isCheckingToken) { // Only show login screen after checking token
+                LoginScreen(onLoginSuccess = { token ->
+                    authToken = token
+                    navController.navigate("main") {
+                        popUpTo("login") { inclusive = true }
+                    }
+                })
+            }
         }
         composable("main") {
             authToken?.let { token ->
                 val viewModel: VpnViewModel = viewModel()
 
-                MainScreen(authToken = token, vpnViewModel = viewModel)
+                MainScreen(
+                    authToken = token,
+                    vpnViewModel = viewModel,
+                    onLogout = {
+                        authToken = null
+                        navController.navigate("login") {
+                            popUpTo("main") { inclusive = true }
+                        }
+                    }
+                )
             } ?: run {
                 // If token is null, navigate back to login
                 LaunchedEffect(Unit) {
