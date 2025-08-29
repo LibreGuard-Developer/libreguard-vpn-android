@@ -9,14 +9,19 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.example.shadowlinkvpn.ui.screens.LoginScreen
 import com.example.shadowlinkvpn.ui.screens.MainScreen
 import com.example.shadowlinkvpn.ui.theme.ShadowLinkVPNTheme
+import com.example.shadowlinkvpn.viewmodel.VpnViewModel
 
 class MainActivity : ComponentActivity() {
+
+    private val TAG = "MainActivity"
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -50,7 +55,9 @@ fun AppNavigation(modifier: Modifier = Modifier) {
         }
         composable("main") {
             authToken?.let { token ->
-                MainScreen(authToken = token)
+                val viewModel: VpnViewModel = viewModel()
+
+                MainScreen(authToken = token, vpnViewModel = viewModel)
             } ?: run {
                 // If token is null, navigate back to login
                 LaunchedEffect(Unit) {

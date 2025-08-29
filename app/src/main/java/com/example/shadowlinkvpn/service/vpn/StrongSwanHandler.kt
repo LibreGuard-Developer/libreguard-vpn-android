@@ -76,8 +76,9 @@ class StrongSwanHandler(
 
                         // If we have a P12 certificate alias, add it
                         profile.userCertificateAlias?.let { alias ->
-                            putString("user_certificate", alias)
-                            Log.d(tag, "Added certificate alias: $alias")
+                            // Use original strongSwan extra key expected by CharonVpnService
+                            putString("certificate_alias", alias)
+                            Log.d(tag, "Added certificate alias (certificate_alias): $alias")
                         }
 
                         // Add username if available
@@ -101,7 +102,14 @@ class StrongSwanHandler(
                 profile.remoteId = "DE-IKEV2-1"
                 profile.gateway = "217.154.229.53"
                 profile.name = "IKEV2_client49 VPN"
-                profile.username = null  // Clear username to avoid issues
+                // Preserve username (EAP identity) for EAP/EAP-TLS instead of nulling it
+                // profile.username was previously nulled which can break identity based auth
+                // Do not overwrite if already set
+                if (profile.username.isNullOrBlank()) {
+                    Log.d(tag, "No explicit username set; leaving as-is (null)")
+                } else {
+                    Log.d(tag, "Preserving username/EAP identity: ${profile.username}")
+                }
                 profile.password = "<redacted>"
 
                 // Avoid assigning null to proposal fields; empty string prevents SettingsWriter newline issues
@@ -116,7 +124,8 @@ class StrongSwanHandler(
                 profile.port = 500
 
                 // Clear any flags that might cause issues
-                profile.flags = 0
+                // DO NOT blindly zero out flags; keep existing behavior unless a specific bit must be cleared.
+                // (Previously: profile.flags = 0) Removing this to preserve strongSwan expectations.
 
                 // Ensure password is preserved when saving to database
                 Log.d(tag, "Profile password before database operations: ${profile.password}")
@@ -142,6 +151,7 @@ class StrongSwanHandler(
                     // existingProfile.certificateAlias = null  // keep original if set
                     // existingProfile.dnsServers = null       // keep original if set
                     existingProfile.splitTunneling = 0
+                    // Preserve existing flags instead of resetting to 0
 
                     dataSource.updateVpnProfile(existingProfile)
                 }

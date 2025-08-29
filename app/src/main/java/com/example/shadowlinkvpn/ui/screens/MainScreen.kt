@@ -6,8 +6,10 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.*
@@ -17,6 +19,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -25,6 +28,8 @@ import com.example.shadowlinkvpn.viewmodel.VpnProtocol
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import android.app.Activity
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.window.Dialog
 
 // Keep your existing VpnServer data class
 data class VpnServer(
@@ -49,8 +54,8 @@ fun getFlagEmoji(country: String): String {
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
-fun MainScreen(authToken: String) {
-    val viewModel: VpnViewModel = viewModel()
+fun MainScreen(authToken: String, vpnViewModel: VpnViewModel? = null) {
+    val viewModel: VpnViewModel = vpnViewModel ?: viewModel()
     val context = LocalContext.current
 
     val servers by viewModel.servers.collectAsState()
@@ -61,6 +66,11 @@ fun MainScreen(authToken: String) {
     val isConnecting by viewModel.isConnecting.collectAsState()
     val isLoadingServers by viewModel.isLoadingServers.collectAsState()
     val errorMessage by viewModel.errorMessage.collectAsState()
+    val pendingKeyChainImport by viewModel.pendingKeyChainImport.collectAsState()
+    val showCertPicker by viewModel.showCertPicker.collectAsState()
+    val availableCertificates by viewModel.availableCertificates.collectAsState()
+    val showCertSelectionDialog by viewModel.showCertSelectionDialog.collectAsState()
+    val showImportCertDialog by viewModel.showImportCertDialog.collectAsState()
 
     val vpnPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
@@ -71,10 +81,65 @@ fun MainScreen(authToken: String) {
         }
     }
 
+    // Launcher for KeyChain certificate installation
+    val keyChainInstallLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            viewModel.completeCertificateInstallation()
+        } else {
+            viewModel.cancelCertificateInstallation()
+        }
+    }
+
     // Set auth token and load servers
     LaunchedEffect(authToken) {
         viewModel.setAuthToken(authToken)
         viewModel.loadLocalServers(context)
+    }
+
+    // Handle certificate import UI feedback
+    LaunchedEffect(pendingKeyChainImport) {
+        pendingKeyChainImport?.let { intent ->
+            // Automatically launch the KeyChain install intent
+            keyChainInstallLauncher.launch(intent)
+        }
+    }
+    // Automatically launch certificate picker when requested
+    LaunchedEffect(showCertPicker) {
+        if (showCertPicker) {
+            (context as? Activity)?.let { act ->
+                viewModel.launchCertPicker(act)
+            }
+        }
+    }
+
+    // Certificate selection dialog
+    if (showCertSelectionDialog) {
+        CertificateSelectionDialog(
+            certificates = availableCertificates,
+            onCertificateSelected = { alias ->
+                viewModel.selectCertificate(alias)
+            },
+            onImportNewCertificate = {
+                viewModel.showImportCertificateDialog()
+            },
+            onDismiss = {
+                viewModel.dismissCertSelectionDialog()
+            }
+        )
+    }
+
+    // Import certificate dialog
+    if (showImportCertDialog) {
+        ImportCertificateDialog(
+            onImport = { alias ->
+                viewModel.importCertificateWithAlias(alias)
+            },
+            onDismiss = {
+                viewModel.dismissImportCertDialog()
+            }
+        )
     }
 
     val connectionStatus = when {
@@ -133,18 +198,11 @@ fun MainScreen(authToken: String) {
         // Connect/Disconnect Button
         Button(
             onClick = {
-                // Check VPN permission before connecting
                 viewModel.requestVpnPermission(context) { vpnIntent ->
                     if (vpnIntent != null) {
-                        // Launch permission request
                         vpnPermissionLauncher.launch(vpnIntent)
                     } else {
-                        // Permission already granted, connect/disconnect
-                        if (isConnected) {
-                            viewModel.disconnect()
-                        } else {
-                            viewModel.connectToVpn()
-                        }
+                        if (isConnected) viewModel.disconnect() else viewModel.connectToVpn()
                     }
                 }
             },
@@ -152,28 +210,32 @@ fun MainScreen(authToken: String) {
             enabled = !isConnecting && selectedServer != null,
             colors = ButtonDefaults.buttonColors(
                 containerColor = when {
-                    isConnected -> MaterialTheme.colorScheme.error // Disconnect: red
-                    isConnecting -> Color(0xFF1976D2) // Connecting: blue shade
-                    else -> Color(0xFF2196F3) // Connect: blue
+                    isConnected -> MaterialTheme.colorScheme.error
+                    isConnecting -> Color(0xFF1976D2)
+                    else -> Color(0xFF2196F3)
                 },
                 contentColor = Color.White
             )
         ) {
             Text(
-                text = if (isConnecting) "Connecting..." else if (isConnected) "Disconnect" else "Connect",
+                text = when {
+                    isConnecting -> "Connecting..."
+                    isConnected -> "Disconnect"
+                    else -> "Connect"
+                },
                 fontSize = 18.sp
             )
         }
-// Add this button after the Connect/Disconnect button
+
+        Spacer(modifier = Modifier.height(8.dp))
+
         Button(
             onClick = { viewModel.getConnectionLogs() },
             modifier = Modifier.fillMaxWidth()
-        ) {
-            Text("Show Logs")
-        }
+        ) { Text("Show Logs") }
+
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Server List
         Card(
             modifier = Modifier.weight(1f),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
@@ -191,25 +253,17 @@ fun MainScreen(authToken: String) {
                         fontSize = 20.sp,
                         fontWeight = FontWeight.Bold
                     )
-
                     if (isLoadingServers) {
                         CircularProgressIndicator(modifier = Modifier.size(24.dp))
                     } else {
-                        TextButton(onClick = { viewModel.refreshServers() }) {
-                            Text("Refresh")
-                        }
+                        TextButton(onClick = { viewModel.refreshServers() }) { Text("Refresh") }
                     }
                 }
-
                 LazyColumn {
                     val serverGroups = servers.groupBy { it.country }
-
-                    serverGroups.forEach { (country, countryServers) ->
-                        item {
-                            CountryHeader(country = country)
-                        }
-
-                        items(countryServers) { server ->
+                    serverGroups.forEach { (country, list) ->
+                        item { CountryHeader(country) }
+                        items(list) { server ->
                             ServerListItem(
                                 server = server,
                                 isSelected = selectedServer == server,
@@ -221,22 +275,19 @@ fun MainScreen(authToken: String) {
             }
         }
 
-        // Error Message
         errorMessage?.let { message ->
             Spacer(modifier = Modifier.height(8.dp))
             Card(
                 colors = CardDefaults.cardColors(
                     containerColor = if (message.contains("Connected") || message.contains("Config received"))
-                        MaterialTheme.colorScheme.primaryContainer
-                    else MaterialTheme.colorScheme.errorContainer
+                        MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.errorContainer
                 )
             ) {
                 Text(
                     text = message,
                     modifier = Modifier.padding(12.dp),
                     color = if (message.contains("Connected") || message.contains("Config received"))
-                        MaterialTheme.colorScheme.onPrimaryContainer
-                    else MaterialTheme.colorScheme.onErrorContainer
+                        MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onErrorContainer
                 )
             }
         }
@@ -244,33 +295,27 @@ fun MainScreen(authToken: String) {
 }
 
 @Composable
-fun ProtocolSelector(
-    selectedProtocol: VpnProtocol,
-    onProtocolSelected: (VpnProtocol) -> Unit
-) {
+fun ProtocolSelector(selectedProtocol: VpnProtocol, onProtocolSelected: (VpnProtocol) -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
     ) {
-        Column(
-            modifier = Modifier.padding(16.dp)
-        ) {
+        Column(Modifier.padding(16.dp)) {
             Text(
                 text = "Protocol",
                 fontSize = 18.sp,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.padding(bottom = 8.dp)
             )
-
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                VpnProtocol.values().forEach { protocol ->
+                VpnProtocol.values().forEach { proto ->
                     FilterChip(
-                        onClick = { onProtocolSelected(protocol) },
-                        label = { Text(protocol.displayName) },
-                        selected = selectedProtocol == protocol,
+                        onClick = { onProtocolSelected(proto) },
+                        label = { Text(proto.displayName) },
+                        selected = selectedProtocol == proto,
                         modifier = Modifier.weight(1f)
                     )
                 }
@@ -294,38 +339,28 @@ fun CountryHeader(country: String) {
 }
 
 @Composable
-fun ServerListItem(
-    server: VpnServer,
-    isSelected: Boolean,
-    onServerSelected: (VpnServer) -> Unit
-) {
+fun ServerListItem(server: VpnServer, isSelected: Boolean, onServerSelected: (VpnServer) -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clickable { onServerSelected(server) }
-            .background(
-                if (isSelected) MaterialTheme.colorScheme.primaryContainer
-                else Color.Transparent
-            )
+            .background(if (isSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)
             .padding(16.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Column(modifier = Modifier.weight(1f)) {
+        Column(Modifier.weight(1f)) {
             Text(
                 text = server.name,
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Medium,
-                color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer
-                else MaterialTheme.colorScheme.onSurface
+                color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
             )
             Text(
                 text = "${server.linkSpeed} Mbps • ${server.pricingTier}",
                 fontSize = 12.sp,
-                color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer
-                else MaterialTheme.colorScheme.onSurfaceVariant
+                color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
-
         if (isSelected) {
             Icon(
                 imageVector = Icons.Default.Star,
@@ -333,6 +368,185 @@ fun ServerListItem(
                 tint = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.size(20.dp)
             )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun CertificateSelectionDialog(
+    certificates: List<String>,
+    onCertificateSelected: (String) -> Unit,
+    onImportNewCertificate: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            shape = RoundedCornerShape(16.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp)
+            ) {
+                Text(
+                    text = "Select Certificate",
+                    style = MaterialTheme.typography.headlineSmall,
+                    modifier = Modifier.padding(bottom = 16.dp)
+                )
+
+                if (certificates.isEmpty()) {
+                    Text(
+                        text = "No certificates found. Import a certificate first.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(bottom = 16.dp)
+                    )
+                } else {
+                    Text(
+                        text = "Available Certificates:",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+
+                    LazyColumn(
+                        modifier = Modifier
+                            .weight(1f, false)
+                            .heightIn(max = 200.dp)
+                    ) {
+                        items(certificates) { cert ->
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp)
+                                    .clickable { onCertificateSelected(cert) },
+                                colors = CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                                )
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Check,
+                                        contentDescription = "Select",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = cert,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = onImportNewCertificate,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Add,
+                            contentDescription = "Import",
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Import New")
+                    }
+
+                    Button(
+                        onClick = onDismiss,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Cancel")
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ImportCertificateDialog(
+    onImport: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var certificateAlias by remember { mutableStateOf(TextFieldValue("")) }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            shape = RoundedCornerShape(16.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp)
+            ) {
+                Text(
+                    text = "Import Certificate",
+                    style = MaterialTheme.typography.headlineSmall,
+                    modifier = Modifier.padding(bottom = 16.dp)
+                )
+
+                Text(
+                    text = "Enter a name for your certificate:",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+
+                OutlinedTextField(
+                    value = certificateAlias,
+                    onValueChange = { certificateAlias = it },
+                    label = { Text("Certificate Name") },
+                    placeholder = { Text("e.g., My VPN Certificate") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Text(
+                    text = "Note: After clicking Import, you'll be prompted to install the certificate through Android's security system.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 16.dp)
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = onDismiss,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Cancel")
+                    }
+
+                    Button(
+                        onClick = { onImport(certificateAlias.text.trim()) },
+                        enabled = certificateAlias.text.trim().isNotEmpty(),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Import")
+                    }
+                }
+            }
         }
     }
 }

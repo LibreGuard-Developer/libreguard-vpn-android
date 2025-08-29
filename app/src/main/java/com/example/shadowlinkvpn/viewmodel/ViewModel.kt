@@ -1,5 +1,6 @@
 package com.example.shadowlinkvpn.viewmodel
 
+import android.app.Activity
 import android.app.Application
 import android.content.Context
 import android.content.Intent
@@ -23,6 +24,7 @@ import com.example.shadowlinkvpn.util.VpnConfigManager
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -32,6 +34,8 @@ import org.strongswan.android.data.VpnProfileSource
 import java.io.File
 import java.io.InputStreamReader
 import org.json.JSONObject
+import android.security.KeyChain
+import android.security.KeyChainAliasCallback
 
 private val _connectionState = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected)
 val connectionState: StateFlow<ConnectionState> = _connectionState
@@ -70,8 +74,24 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     private val _errorMessage = MutableStateFlow<String?>(null)
     val errorMessage: StateFlow<String?> = _errorMessage
 
+    private val _pendingKeyChainImport = MutableStateFlow<Intent?>(null)
+    val pendingKeyChainImport: StateFlow<Intent?> = _pendingKeyChainImport
+    private val _showCertPicker = MutableStateFlow(false)
+    val showCertPicker: StateFlow<Boolean> = _showCertPicker
+
+    // New certificate management state
+    private val _availableCertificates = MutableStateFlow<List<String>>(emptyList())
+    val availableCertificates: StateFlow<List<String>> = _availableCertificates
+
+    private val _showCertSelectionDialog = MutableStateFlow(false)
+    val showCertSelectionDialog: StateFlow<Boolean> = _showCertSelectionDialog
+
+    private val _showImportCertDialog = MutableStateFlow(false)
+    val showImportCertDialog: StateFlow<Boolean> = _showImportCertDialog
+
     private var authToken: String? = null
     private var activeVpnHandler: VpnProtocolHandler? = null
+    private var pendingProfile: VpnProfile? = null
     private val configManager by lazy { VpnConfigManager(getApplication()) }
 
     fun loadLocalServers(context: Context) {
@@ -242,65 +262,87 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // Update the connectStrongSwan method in VpnViewModel
+    // Certificate diagnostics logging helper
+    private fun logUserCert(alias: String?) {
+        try {
+            configManager.logUserCertDiagnostics(TAG, alias)
+        } catch (e: Exception) {
+            Log.w(TAG, "Cert diagnostics failed: ${e.message}")
+        }
+    }
+
+    // Modified connectStrongSwan implementing checklist gating
     private suspend fun connectStrongSwan(configContent: String, certificateName: String?, passphrase: String?) {
         try {
             val context = getApplication<Application>().applicationContext
-
-            Log.d(TAG, "Starting strongSwan connection with config content")
-
-            // Parse the server response directly to create a VpnProfile
+            Log.d(TAG, "[CertFlow] Starting strongSwan connection parse phase")
             val profile = configManager.parseServerResponseToProfile(configContent)
-            if (profile == null) {
-                throw Exception("Failed to parse server response into VpnProfile")
+                ?: throw Exception("Failed to parse server response into VpnProfile")
+            if (!passphrase.isNullOrBlank() && profile.password.isNullOrBlank()) {
+                profile.password = passphrase
+                Log.d(TAG, "[CertFlow] Applied external passphrase to profile")
             }
+            Log.d(TAG, "[CertFlow] Parsed profile name=${profile.name} gateway=${profile.gateway} vpnType=${profile.vpnType} userCertAlias=${profile.userCertificateAlias}")
+            withContext(Dispatchers.IO) { logUserCert(profile.userCertificateAlias) }
+            var alias = profile.userCertificateAlias
 
-            Log.d(TAG, "Created VpnProfile: ${profile.name}")
-            Log.d(TAG, "Gateway: ${profile.gateway}")
-            Log.d(TAG, "Remote ID: ${profile.remoteId}")
-            Log.d(TAG, "VPN Type: ${profile.vpnType}")
-
-            // Store the profile in the data source for strongSwan to access
-            val dataSource = VpnProfileSource(context)
-            dataSource.open()
-
-            try {
-                // Check if profile already exists and update, otherwise insert
-                val existingProfile = dataSource.getVpnProfile(profile.uuid.toString())
-                if (existingProfile != null) {
-                    dataSource.updateVpnProfile(profile)
-                    Log.d(TAG, "Updated existing VPN profile")
+            // NEW: If a previously mapped alias exists and is installed OK, prefer it and ignore freshly generated P12 alias
+            val mapped = withContext(Dispatchers.IO) { configManager.getMappedCertAlias(profile.gateway, profile.remoteId) }
+            if (!mapped.isNullOrBlank()) {
+                val mappedDiag = withContext(Dispatchers.IO) { configManager.diagnoseUserCertificate(mapped) }
+                if (mappedDiag.state == com.example.shadowlinkvpn.util.VpnConfigManager.UserCertState.INSTALLED_OK) {
+                    if (alias != mapped) {
+                        Log.d(TAG, "[CertFlow] Replacing provided alias $alias with mapped installed alias $mapped to avoid re-import")
+                        profile.userCertificateAlias = mapped
+                        alias = mapped
+                      }
                 } else {
-                    dataSource.insertProfile(profile)
-                    Log.d(TAG, "Inserted new VPN profile")
+                    Log.d(TAG, "[CertFlow] Mapped alias $mapped exists but state=${mappedDiag.state}; will proceed with provided alias $alias")
                 }
-            } finally {
-                dataSource.close()
             }
 
-            // Create the handler and connect
-            activeVpnHandler = VpnProtocolFactory.createHandler(VpnProtocol.IKEV2_IPSEC, context)
-
-            // Save config to file for the handler
-            val configFile = configManager.saveStrongSwanConfig(
-                profile.gateway ?: "",
-                profile.username ?: "",
-                profile.password ?: ""
-            )
-
-            // Connect using the strongSwan handler
-            val connected = withContext(Dispatchers.IO) {
-                activeVpnHandler?.connect(context, configFile.absolutePath) ?: false
+            // Try previously mapped alias if none or not installed (existing logic follows, updated to use possibly reassigned alias)
+            if (alias.isNullOrBlank() || withContext(Dispatchers.IO) { configManager.needsUserCertInstallation(alias) }) {
+                // If we didn't already switch to mapped (installed) alias, and current alias needs install, see if mapping can rescue
+                if (alias != mapped && !mapped.isNullOrBlank()) {
+                    val mappedDiag2 = withContext(Dispatchers.IO) { configManager.diagnoseUserCertificate(mapped) }
+                    if (mappedDiag2.state == com.example.shadowlinkvpn.util.VpnConfigManager.UserCertState.INSTALLED_OK) {
+                        Log.d(TAG, "[CertFlow] Late rescue: using mapped alias $mapped instead of $alias")
+                        profile.userCertificateAlias = mapped
+                        alias = mapped
+                      }
+                }
             }
 
-            if (connected) {
-                _isConnected.value = true
-                _errorMessage.value = "Connected using IKEv2/IPSec to ${profile.gateway}"
-                Log.d(TAG, "Successfully initiated IKEv2/IPSec connection")
-            } else {
-                throw Exception("Failed to initiate IKEv2/IPSec connection")
+            if (alias.isNullOrBlank()) {
+                pendingProfile = profile
+                _showCertPicker.value = true
+                _errorMessage.value = "Select installed client certificate"
+                return
             }
-
+            val needsInstall = withContext(Dispatchers.IO) { configManager.needsUserCertInstallation(alias) }
+            if (needsInstall) {
+                Log.w(TAG, "[CertFlow] User certificate alias $alias not installed yet; requesting installation or manual pick")
+                val installIntent = withContext(Dispatchers.IO) { configManager.getInstallIntentIfPending(alias) }
+                if (installIntent != null) {
+                    pendingProfile = profile
+                    _pendingKeyChainImport.value = installIntent
+                    _errorMessage.value = "Client certificate installation required. Please approve KeyChain dialog."
+                    return
+                } else {
+                    pendingProfile = profile
+                    _showCertPicker.value = true
+                    _errorMessage.value = "Certificate alias not found. Pick installed certificate."
+                    return
+                }
+            }
+            val diag = withContext(Dispatchers.IO) { configManager.diagnoseUserCertificate(alias) }
+            when (diag.state) {
+                com.example.shadowlinkvpn.util.VpnConfigManager.UserCertState.INSTALLED_OK -> Log.d(TAG, "[CertFlow] Pre-flight KeyChain OK: chain=${diag.chainSize} hasKey=${diag.hasPrivateKey}")
+                com.example.shadowlinkvpn.util.VpnConfigManager.UserCertState.INSTALLED_NO_KEY -> { _errorMessage.value = "Installed certificate has no private key. Pick another certificate."; _showCertPicker.value = true; pendingProfile = profile; return }
+                else -> { _errorMessage.value = "Certificate not installed yet. Pick certificate or reinstall."; pendingProfile = profile; _showCertPicker.value = true; return }
+            }
+            completeStrongSwanConnection(profile)
         } catch (e: Exception) {
             Log.e(TAG, "IKEv2/IPSec connection error", e)
             _isConnected.value = false
@@ -309,6 +351,129 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun launchCertPicker(activity: Activity) {
+        val prof = pendingProfile ?: run {
+            _errorMessage.value = "No pending profile for cert selection"
+            return
+        }
+        try {
+            _showCertPicker.value = false
+            KeyChain.choosePrivateKeyAlias(activity, KeyChainAliasCallback { chosenAlias ->
+                if (chosenAlias == null) {
+                    Log.w(TAG, "[CertFlow] User cancelled cert picker")
+                    _errorMessage.value = "Certificate selection cancelled"
+                    _showCertPicker.value = true
+                    return@KeyChainAliasCallback
+                }
+                Log.d(TAG, "[CertFlow] User selected certificate alias=$chosenAlias")
+                viewModelScope.launch {
+                    withContext(Dispatchers.IO) { logUserCert(chosenAlias) }
+                    prof.userCertificateAlias = chosenAlias
+                    val diag = withContext(Dispatchers.IO) { configManager.diagnoseUserCertificate(chosenAlias) }
+                    if (diag.state == com.example.shadowlinkvpn.util.VpnConfigManager.UserCertState.INSTALLED_OK) {
+                        withContext(Dispatchers.IO) { configManager.saveMappedCertAlias(prof.gateway, prof.remoteId, chosenAlias) }
+                        _errorMessage.value = "Certificate selected: $chosenAlias"
+                        completeStrongSwanConnection(prof)
+                        pendingProfile = null
+                    } else {
+                        _errorMessage.value = "Selected certificate not usable (state=${diag.state}). Try another."; _showCertPicker.value = true
+                    }
+                }
+            }, null, null, null, -1, prof.userCertificateAlias)
+        } catch (e: Exception) {
+            Log.e(TAG, "[CertFlow] Failed to launch cert picker", e)
+            _errorMessage.value = "Failed to launch cert picker: ${e.localizedMessage}"
+        }
+    }
+
+    // Certificate installation resume logic
+    fun resumeAfterCertificateInstall() {
+        val prof = pendingProfile
+        if (prof == null) {
+            _errorMessage.value = "No pending profile to resume"
+            return
+        }
+        viewModelScope.launch {
+            Log.d(TAG, "[CertFlow] Resume after certificate install for alias=${prof.userCertificateAlias}")
+            withContext(Dispatchers.IO) { logUserCert(prof.userCertificateAlias) }
+            val alias = prof.userCertificateAlias
+            if (alias != null) {
+                // Poll for the certificate to become available (installation is async)
+                var diag = withContext(Dispatchers.IO) { configManager.diagnoseUserCertificate(alias) }
+                var attempts = 0
+                while (diag.state != com.example.shadowlinkvpn.util.VpnConfigManager.UserCertState.INSTALLED_OK && attempts < 10) {
+                    attempts++
+                    Log.d(TAG, "[CertFlow] Waiting for KeyChain to expose cert alias=$alias attempt=$attempts state=${diag.state}")
+                    delay(500)
+                    diag = withContext(Dispatchers.IO) { configManager.diagnoseUserCertificate(alias) }
+                }
+                if (diag.state != com.example.shadowlinkvpn.util.VpnConfigManager.UserCertState.INSTALLED_OK) {
+                    _errorMessage.value = "Certificate not yet available (state=${diag.state}). Pick certificate manually.";
+                    _showCertPicker.value = true
+                    return@launch
+                }
+                withContext(Dispatchers.IO) { configManager.clearPendingInstall(alias) }
+                Log.d(TAG, "[CertFlow] Certificate installed and accessible; proceeding to connect")
+            } else {
+                _showCertPicker.value = true
+                _errorMessage.value = "No alias present; select installed certificate"
+                return@launch
+            }
+            _pendingKeyChainImport.value = null
+            completeStrongSwanConnection(prof)
+            pendingProfile = null
+        }
+    }
+
+    /** Public alias from UI after user accepts KeyChain install */
+    fun completeCertificateInstallation() { resumeAfterCertificateInstall() }
+
+    /** User canceled certificate installation */
+    fun cancelCertificateInstallation() {
+        pendingProfile?.userCertificateAlias?.let { alias ->
+            configManager.cleanupInstallIntentData(alias)
+        }
+        pendingProfile = null
+        _pendingKeyChainImport.value = null
+        _showCertPicker.value = false
+        _errorMessage.value = "Certificate installation cancelled"
+    }
+
+    private suspend fun completeStrongSwanConnection(profile: VpnProfile) {
+        val context = getApplication<Application>().applicationContext
+        val dataSource = VpnProfileSource(context)
+        dataSource.open()
+        try {
+            val existingProfile = dataSource.getVpnProfile(profile.getUUID().toString())
+            if (existingProfile != null) {
+                dataSource.updateVpnProfile(profile)
+                Log.d(TAG, "Updated existing VPN profile")
+            } else {
+                dataSource.insertProfile(profile)
+                Log.d(TAG, "Inserted new VPN profile")
+            }
+        } finally {
+            dataSource.close()
+        }
+        // Persist mapping if alias present
+        profile.userCertificateAlias?.let { alias ->
+            withContext(Dispatchers.IO) { configManager.saveMappedCertAlias(profile.gateway, profile.remoteId, alias) }
+        }
+        activeVpnHandler = VpnProtocolFactory.createHandler(VpnProtocol.IKEV2_IPSEC, context)
+        val connected = withContext(Dispatchers.IO) {
+            (activeVpnHandler as? StrongSwanHandler)?.connect(context, profile) ?: false
+        }
+
+        if (connected) {
+            _isConnected.value = true
+            _errorMessage.value = "Connected using IKEv2/IPSec to ${profile.gateway}"
+            Log.d(TAG, "Successfully initiated IKEv2/IPSec connection")
+        } else {
+            throw Exception("Failed to initiate IKEv2/IPSec connection")
+        }
+    }
+
+    // Update the connectOpenVpn method if needed
     private suspend fun connectOpenVpn(config: String) {
         try {
             val context = getApplication<Application>().applicationContext
@@ -520,4 +685,142 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // Certificate management functions
+    fun loadAvailableCertificates() {
+        viewModelScope.launch {
+            try {
+                val context = getApplication<Application>().applicationContext
+                val certificates = withContext(Dispatchers.IO) {
+                    // Get all available certificates from KeyChain
+                    getAllUserCertificates()
+                }
+                _availableCertificates.value = certificates
+                Log.d(TAG, "[CertFlow] Loaded ${certificates.size} available certificates")
+            } catch (e: Exception) {
+                Log.e(TAG, "[CertFlow] Failed to load available certificates", e)
+                _availableCertificates.value = emptyList()
+            }
+        }
+    }
+
+    private suspend fun getAllUserCertificates(): List<String> {
+        return withContext(Dispatchers.IO) {
+            try {
+                val context = getApplication<Application>().applicationContext
+                // Use reflection to get all aliases from KeyChain
+                val keyChainClass = Class.forName("android.security.KeyChain")
+                val method = keyChainClass.getDeclaredMethod("getAliases", android.content.Context::class.java)
+                method.isAccessible = true
+
+                @Suppress("UNCHECKED_CAST")
+                val aliases = method.invoke(null, context) as? Array<String>
+
+                // Filter out system certificates and return only user certificates
+                aliases?.filter { alias ->
+                    try {
+                        val chain = KeyChain.getCertificateChain(context, alias)
+                        val key = KeyChain.getPrivateKey(context, alias)
+                        chain != null && chain.isNotEmpty() && key != null
+                    } catch (e: Exception) {
+                        false
+                    }
+                }?.toList() ?: emptyList()
+            } catch (e: Exception) {
+                Log.w(TAG, "[CertFlow] Failed to get certificate aliases via reflection, trying alternative method", e)
+                // Fallback: return empty list - user will need to import
+                emptyList()
+            }
+        }
+    }
+
+    fun showCertificateSelectionDialog() {
+        _showCertPicker.value = false
+        _showCertSelectionDialog.value = true
+    }
+
+    fun dismissCertSelectionDialog() {
+        _showCertSelectionDialog.value = false
+    }
+
+    fun showImportCertificateDialog() {
+        _showCertSelectionDialog.value = false
+        _showImportCertDialog.value = true
+    }
+
+    fun dismissImportCertDialog() {
+        _showImportCertDialog.value = false
+        _showCertSelectionDialog.value = true // Go back to selection dialog
+    }
+
+    fun selectCertificate(alias: String) {
+        val prof = pendingProfile ?: run {
+            _errorMessage.value = "No pending profile for certificate selection"
+            return
+        }
+
+        viewModelScope.launch {
+            Log.d(TAG, "[CertFlow] User selected certificate alias: $alias")
+            _showCertSelectionDialog.value = false
+
+            // Validate the selected certificate
+            val diag = withContext(Dispatchers.IO) {
+                configManager.diagnoseUserCertificate(alias)
+            }
+
+            if (diag.state == com.example.shadowlinkvpn.util.VpnConfigManager.UserCertState.INSTALLED_OK) {
+                prof.userCertificateAlias = alias
+
+                // Save the mapping for future use
+                withContext(Dispatchers.IO) {
+                    configManager.saveMappedCertAlias(prof.gateway, prof.remoteId, alias)
+                }
+
+                _errorMessage.value = "Certificate selected: $alias"
+
+                // Continue with the connection
+                completeStrongSwanConnection(prof)
+                pendingProfile = null
+            } else {
+                _errorMessage.value = "Selected certificate not usable (state=${diag.state}). Try another."
+                _showCertSelectionDialog.value = true
+            }
+        }
+    }
+
+    fun importCertificateWithAlias(userAlias: String) {
+        val prof = pendingProfile ?: run {
+            _errorMessage.value = "No pending profile for certificate import"
+            return
+        }
+
+        viewModelScope.launch {
+            _showImportCertDialog.value = false
+
+            // Check if we have a P12 certificate from the profile that we can import
+            val p12Alias = prof.userCertificateAlias
+            if (p12Alias != null) {
+                Log.d(TAG, "[CertFlow] Attempting to import P12 certificate with user alias: $userAlias")
+
+                // Get the install intent for the P12 certificate
+                val installIntent = withContext(Dispatchers.IO) {
+                    configManager.getInstallIntentIfPending(p12Alias)
+                }
+
+                if (installIntent != null) {
+                    // Update the profile to use the user-provided alias
+                    prof.userCertificateAlias = userAlias
+                    pendingProfile = prof
+
+                    _pendingKeyChainImport.value = installIntent
+                    _errorMessage.value = "Installing certificate: $userAlias. Please approve the KeyChain dialog."
+                } else {
+                    _errorMessage.value = "No certificate data available for import"
+                    _showCertSelectionDialog.value = true
+                }
+            } else {
+                _errorMessage.value = "No certificate data found in profile"
+                _showCertSelectionDialog.value = true
+            }
+        }
+    }
 }
