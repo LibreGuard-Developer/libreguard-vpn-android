@@ -21,6 +21,8 @@ import com.example.shadowlinkvpn.service.vpn.VpnProtocolHandler
 import com.example.shadowlinkvpn.service.vpn.WireGuardHandler
 import com.example.shadowlinkvpn.ui.screens.VpnServer
 import com.example.shadowlinkvpn.util.VpnConfigManager
+import com.example.shadowlinkvpn.service.data.DataUsageManager
+import com.example.shadowlinkvpn.service.data.DataUsageInfo
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.Dispatchers
@@ -104,9 +106,29 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         getApplication<Application>().getSharedPreferences("vpn_state_prefs", Context.MODE_PRIVATE)
     }
 
+    // Data usage tracking
+    private val dataUsageManager by lazy { DataUsageManager(getApplication()) }
+
+    private val _dataUsageInfo = MutableStateFlow(DataUsageInfo())
+    val dataUsageInfo: StateFlow<DataUsageInfo> = _dataUsageInfo
+
     init {
         // Load persisted auth token and connection state immediately on startup
         loadPersistedAuthToken()
+
+        // Start observing data usage
+        startDataUsageObservation()
+    }
+
+    /**
+     * Start observing data usage changes
+     */
+    private fun startDataUsageObservation() {
+        viewModelScope.launch {
+            dataUsageManager.dataUsage.collect { dataUsage ->
+                _dataUsageInfo.value = dataUsage
+            }
+        }
     }
 
     /**
@@ -401,16 +423,19 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 disconnect()
             }
 
+            // Clear user data properly - this preserves the user's total data usage
+            dataUsageManager.clearUser()
+
             // Clear auth token and all related state
             authToken = null
             _remoteServers.value = emptyList()
             _selectedServer.value = null
             _errorMessage.value = "Logged out successfully"
 
-            // Clear all persisted state including auth token
-            clearAllPersistedState()
+            // Clear only session-related persisted state, preserving user data
+            clearPersistedState()
 
-            Log.d(TAG, "User logged out successfully")
+            Log.d(TAG, "User logged out successfully - data usage preserved for future login")
         }
     }
 
@@ -458,8 +483,91 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         // Save token immediately for persistence
         sharedPrefs.edit().putString("auth_token", token).apply()
         Log.d(TAG, "Auth token set and persisted")
+
+        // CRITICAL FIX: Create stable user ID that persists across login sessions
+        // Instead of using token hash (which changes), extract user info from token or create persistent ID
+        val userId = getStableUserId(token)
+        dataUsageManager.setUserId(userId)
+        Log.d(TAG, "Set stable user ID: $userId")
+
         // Automatically load remote servers when token is set, but don't fail if it doesn't work
         loadRemoteServersWithFallback()
+    }
+
+    /**
+     * Get or create a stable user ID that persists across login sessions
+     */
+    private fun getStableUserId(token: String): String {
+        return try {
+            // Method 1: Try to extract user ID from JWT token
+            val userIdFromToken = extractUserIdFromJWT(token)
+            if (userIdFromToken != null) {
+                Log.d(TAG, "Extracted user ID from JWT: $userIdFromToken")
+                return userIdFromToken
+            }
+
+            // Method 2: Create/retrieve persistent user ID based on token prefix
+            // Use first part of token (which is usually stable) to create consistent ID
+            val tokenPrefix = if (token.length > 20) {
+                token.substring(0, 20) // Use first 20 chars which are usually stable
+            } else {
+                token
+            }
+
+            val stableKey = "user_id_for_prefix_${tokenPrefix.hashCode()}"
+            val existingUserId = sharedPrefs.getString(stableKey, null)
+
+            if (existingUserId != null) {
+                Log.d(TAG, "Found existing stable user ID: $existingUserId")
+                return existingUserId
+            }
+
+            // Method 3: Create new persistent user ID
+            val newUserId = "user_${System.currentTimeMillis()}_${(0..999999).random()}"
+            sharedPrefs.edit().putString(stableKey, newUserId).apply()
+            Log.d(TAG, "Created new stable user ID: $newUserId")
+
+            return newUserId
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to get stable user ID, falling back to simple hash", e)
+            // Fallback to token hash (original broken behavior)
+            return token.hashCode().toString()
+        }
+    }
+
+    /**
+     * Extract user ID from JWT token if possible
+     */
+    private fun extractUserIdFromJWT(token: String): String? {
+        return try {
+            // JWT tokens have format: header.payload.signature
+            val parts = token.split(".")
+            if (parts.size != 3) return null
+
+            // Decode the payload (second part)
+            val payload = parts[1]
+            val decodedBytes = android.util.Base64.decode(payload, android.util.Base64.URL_SAFE or android.util.Base64.NO_PADDING)
+            val payloadJson = String(decodedBytes)
+
+            // Parse JSON to extract user ID
+            val jsonObj = org.json.JSONObject(payloadJson)
+
+            // Try common JWT user ID field names
+            val possibleUserFields = listOf("sub", "user_id", "userId", "id", "email", "username")
+            for (field in possibleUserFields) {
+                val userId = jsonObj.optString(field)
+                if (userId.isNotEmpty()) {
+                    Log.d(TAG, "Found user ID in JWT field '$field': $userId")
+                    return userId
+                }
+            }
+
+            return null
+        } catch (e: Exception) {
+            Log.v(TAG, "Could not extract user ID from JWT: ${e.message}")
+            return null
+        }
     }
 
     fun selectServer(server: VpnServer) {
@@ -787,6 +895,10 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             _errorMessage.value = "Connected using IKEv2/IPSec to ${profile.gateway}"
             Log.d(TAG, "Successfully initiated IKEv2/IPSec connection")
 
+            // Start data usage monitoring when VPN connects
+            dataUsageManager.startMonitoring()
+            Log.d(TAG, "Started data usage monitoring")
+
             // Save connection state for persistence
             saveConnectionState()
         } else {
@@ -811,6 +923,10 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 _isConnecting.value = false
                 _errorMessage.value = "Connected using OpenVPN"
                 Log.d(TAG, "Successfully connected using OpenVPN")
+
+                // Start data usage monitoring when VPN connects
+                dataUsageManager.startMonitoring()
+                Log.d(TAG, "Started data usage monitoring")
 
                 // Save connection state for persistence
                 saveConnectionState()
@@ -841,6 +957,10 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 _isConnecting.value = false
                 _errorMessage.value = "Connected using WireGuard"
                 Log.d(TAG, "Successfully connected using WireGuard")
+
+                // Start data usage monitoring when VPN connects
+                dataUsageManager.startMonitoring()
+                Log.d(TAG, "Started data usage monitoring")
 
                 // Save connection state for persistence
                 saveConnectionState()
@@ -994,6 +1114,10 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 Log.e(TAG, "Error during disconnect process", e)
                 _errorMessage.value = "Disconnect error: ${e.localizedMessage}"
             } finally {
+                // Stop data usage monitoring when VPN disconnects
+                dataUsageManager.stopMonitoring()
+                Log.d(TAG, "Stopped data usage monitoring")
+
                 // Always clean up state regardless of disconnect success
                 activeVpnHandler = null
                 _isConnected.value = false

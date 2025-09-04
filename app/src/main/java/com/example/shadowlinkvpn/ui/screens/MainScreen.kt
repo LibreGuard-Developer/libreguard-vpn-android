@@ -31,6 +31,9 @@ import android.app.Activity
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.window.Dialog
+// Add data usage imports
+import com.example.shadowlinkvpn.ui.components.DataUsageProgressBar
+import com.example.shadowlinkvpn.ui.components.CompactDataUsageIndicator
 
 // Keep your existing VpnServer data class
 data class VpnServer(
@@ -72,6 +75,9 @@ fun MainScreen(authToken: String, vpnViewModel: VpnViewModel? = null, onLogout: 
     val showCertSelectionDialog by viewModel.showCertSelectionDialog.collectAsState()
     val showImportCertDialog by viewModel.showImportCertDialog.collectAsState()
     val isInstallingCertificate by viewModel.isInstallingCertificate.collectAsState()
+
+    // Data usage state
+    val dataUsageInfo by viewModel.dataUsageInfo.collectAsState()
 
     // State for logout confirmation dialog
     var showLogoutDialog by remember { mutableStateOf(false) }
@@ -184,24 +190,44 @@ fun MainScreen(authToken: String, vpnViewModel: VpnViewModel? = null, onLogout: 
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
             ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    horizontalArrangement = Arrangement.Start,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = connectionStatus,
-                        fontSize = 24.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = statusColor
+                    // Left side - Connection status
+                    Column(
+                        horizontalAlignment = Alignment.Start
+                    ) {
+                        Text(
+                            text = connectionStatus,
+                            fontSize = 24.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = statusColor
+                        )
+
+                        if (selectedServer != null) {
+                            Text(
+                                text = "${getFlagEmoji(selectedServer!!.country)} ${selectedServer!!.name}",
+                                fontSize = 16.sp,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.width(12.dp))
+
+                    // Compact data usage indicator placed immediately to the right of the status to reduce vertical space and move it left
+                    CompactDataUsageIndicator(
+                        dataUsage = dataUsageInfo,
+                        modifier = Modifier
+                            .padding(start = 4.dp)
                     )
 
-                    if (selectedServer != null) {
-                        Text(
-                            text = "${getFlagEmoji(selectedServer!!.country)} ${selectedServer!!.name}",
-                            fontSize = 16.sp,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                    }
+                    // Fill the rest so the logout button (anchored in box) stays at the top-right
+                    Spacer(modifier = Modifier.weight(1f))
                 }
             }
 
