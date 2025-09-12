@@ -1,14 +1,20 @@
 package com.example.shadowlinkvpn.network
 
+import okhttp3.ResponseBody
 import retrofit2.Response
 import retrofit2.http.Body
 import retrofit2.http.GET
 import retrofit2.http.Header
 import retrofit2.http.POST
+import retrofit2.http.Streaming
 
 data class VpnConfigRequest(
     val serverId: Int, // Changed to Int to match your API
     val protocol: String // "IKEV2", "OPENVPN", "WIREGUARD"
+)
+
+data class OpenVpnDownloadRequest(
+    val serverId: Int
 )
 
 data class VpnConfigResponse(
@@ -51,4 +57,11 @@ interface ApiService {
         @Header("Authorization") authorization: String,
         @Body request: VpnConfigRequest
     ): Response<VpnConfigResponse>
+
+    @POST("api/vpn/config/openvpn/download")
+    @Streaming
+    suspend fun downloadOpenVpnConfig(
+        @Header("Authorization") authorization: String,
+        @Body request: OpenVpnDownloadRequest
+    ): Response<ResponseBody>
 }

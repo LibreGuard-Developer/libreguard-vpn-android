@@ -39,6 +39,8 @@ import java.io.InputStreamReader
 import org.json.JSONObject
 import android.security.KeyChain
 import android.security.KeyChainAliasCallback
+import com.example.shadowlinkvpn.network.OpenVpnDownloadRequest
+import okhttp3.ResponseBody
 
 private val _connectionState = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected)
 val connectionState: StateFlow<ConnectionState> = _connectionState
@@ -608,10 +610,21 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
         viewModelScope.launch {
             try {
-                // Request VPN config using remote server ID
+                val selected = _selectedProtocol.value
+                if (selected == VpnProtocol.OPENVPN) {
+                    // Use download endpoint and cached config
+                    val ok = connectOpenVpnViaDownload(remoteServer.id)
+                    if (!ok) {
+                        _errorMessage.value = "Failed to connect using OpenVPN"
+                    }
+                    _isConnecting.value = false
+                    return@launch
+                }
+
+                // Existing path for IKEV2 and WIREGUARD
                 val request = VpnConfigRequest(
                     serverId = remoteServer.id,
-                    protocol = _selectedProtocol.value.apiName
+                    protocol = selected.apiName
                 )
 
                 val response = RetrofitClient.instance.getVpnConfig("Bearer $token", request)
@@ -622,9 +635,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                     val passphrase = response.body()?.passphrase
 
                     if (configContent != null) {
-                        Log.d(TAG, "Config received for ${_selectedProtocol.value.displayName}")
+                        Log.d(TAG, "Config received for ${selected.displayName}")
                         _errorMessage.value = "Config received: ${certificateName ?: "VPN config"}"
-                        connectWithConfig(configContent, server, _selectedProtocol.value, certificateName, passphrase)
+                        connectWithConfig(configContent, server, selected, certificateName, passphrase)
                     } else {
                         _errorMessage.value = "No config content received"
                     }
@@ -636,9 +649,80 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 Log.e(TAG, "Error connecting to VPN", e)
                 _errorMessage.value = "Connection error: ${e.localizedMessage}"
             } finally {
-                _isConnecting.value = false
+                if (_selectedProtocol.value != VpnProtocol.OPENVPN) {
+                    _isConnecting.value = false
+                }
             }
         }
+    }
+
+    private suspend fun connectOpenVpnViaDownload(serverId: Int): Boolean {
+        return withContext(Dispatchers.IO) {
+            val context = getApplication<Application>().applicationContext
+            try {
+                val token = authToken ?: return@withContext false
+                val cacheFile = File(context.filesDir, "openvpn_config_${serverId}.ovpn")
+
+                // Ensure handler
+                activeVpnHandler = VpnProtocolFactory.createHandler(VpnProtocol.OPENVPN, context)
+                val initialized = activeVpnHandler?.initialize(context) ?: false
+                if (!initialized) throw Exception("Failed to initialize OpenVPN handler")
+
+                // Try cached config first
+                if (cacheFile.exists() && cacheFile.length() > 0) {
+                    Log.d(TAG, "Using cached OpenVPN config: ${cacheFile.absolutePath}")
+                    val ok = (activeVpnHandler as? OpenVpnHandler)?.connect(context, cacheFile.absolutePath) == true
+                    if (ok) {
+                        onOpenVpnConnected()
+                        return@withContext true
+                    } else {
+                        Log.w(TAG, "Cached OpenVPN config failed. Will re-download and retry")
+                    }
+                }
+
+                // Download latest config
+                val resp = RetrofitClient.instance.downloadOpenVpnConfig(
+                    authorization = "Bearer $token",
+                    request = OpenVpnDownloadRequest(serverId)
+                )
+
+                if (!resp.isSuccessful) {
+                    Log.e(TAG, "OpenVPN config download failed: ${resp.code()} ${resp.message()}")
+                    return@withContext false
+                }
+
+                val body: ResponseBody = resp.body() ?: return@withContext false
+                body.byteStream().use { input ->
+                    cacheFile.outputStream().use { output ->
+                        input.copyTo(output)
+                    }
+                }
+                Log.d(TAG, "Saved OpenVPN config to ${cacheFile.absolutePath}")
+
+                // Connect with fresh config
+                val ok = (activeVpnHandler as? OpenVpnHandler)?.connect(context, cacheFile.absolutePath) == true
+                if (ok) {
+                    onOpenVpnConnected()
+                    true
+                } else {
+                    Log.e(TAG, "Failed to connect with freshly downloaded OpenVPN config")
+                    false
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "OpenVPN download/connect error", e)
+                false
+            }
+        }
+    }
+
+    private fun onOpenVpnConnected() {
+        _isConnected.value = true
+        _isConnecting.value = false
+        _errorMessage.value = "Connected using OpenVPN"
+        Log.d(TAG, "Successfully connected using OpenVPN")
+        dataUsageManager.startMonitoring()
+        Log.d(TAG, "Started data usage monitoring")
+        saveConnectionState()
     }
 
     private fun connectWithConfig(
