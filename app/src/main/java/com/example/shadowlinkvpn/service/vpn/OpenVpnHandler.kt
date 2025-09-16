@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.os.IBinder
+import android.os.ParcelFileDescriptor
 import android.util.Log
 import de.blinkt.openvpn.LaunchVPN
 import de.blinkt.openvpn.VpnProfile
@@ -32,6 +33,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
+import java.net.NetworkInterface
 
 class OpenVpnHandler(
     private val appContext: Context
@@ -42,16 +44,36 @@ class OpenVpnHandler(
     private val _state = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected)
     override val connectionState: StateFlow<ConnectionState> = _state
 
+    // Track current connect attempt to interpret transient states
+    @Volatile private var connectStartAt: Long = 0L
+    @Volatile private var connectingActive: Boolean = false
+    @Volatile private var lastStateName: String = ""
+
     // ICS OpenVPN state listener
     private val vpnStatusListener = object : StateListener {
         override fun updateState(state: String, logmessage: String, localizedResId: Int, level: de.blinkt.openvpn.core.ConnectionStatus, intent: Intent?) {
-            when (state.uppercase()) {
-                "CONNECTED" -> _state.value = ConnectionState.Connected
-                "CONNECTING", "WAIT", "RESOLVE", "TCP_CONNECT", "GET_CONFIG", "ASSIGN_IP", "ADD_ROUTES", "AUTH", "AUTH_PENDING", "RECONNECTING" -> _state.value = ConnectionState.Connecting
-                "DISCONNECTED", "EXITING" -> _state.value = ConnectionState.Disconnected
+            val now = System.currentTimeMillis()
+            lastStateName = state.uppercase()
+            when (lastStateName) {
+                "CONNECTED" -> {
+                    connectingActive = false
+                    _state.value = ConnectionState.Connected
+                }
+                "CONNECTING", "WAIT", "RESOLVE", "TCP_CONNECT", "GET_CONFIG", "ASSIGN_IP", "ADD_ROUTES", "AUTH", "AUTH_PENDING", "RECONNECTING", "USER_INPUT", "EXITING" -> {
+                    _state.value = ConnectionState.Connecting
+                }
+                "DISCONNECTED", "NOPROCESS" -> {
+                    val elapsed = if (connectStartAt > 0) now - connectStartAt else 0L
+                    if (connectingActive && elapsed > 2000L) {
+                        connectingActive = false
+                        _state.value = ConnectionState.Error("OpenVPN process not running")
+                    } else {
+                        _state.value = ConnectionState.Disconnected
+                    }
+                }
                 else -> {
-                    // Map error-like states
                     if (level == de.blinkt.openvpn.core.ConnectionStatus.LEVEL_AUTH_FAILED) {
+                        connectingActive = false
                         _state.value = ConnectionState.Error("Authentication failed")
                     }
                 }
@@ -71,13 +93,29 @@ class OpenVpnHandler(
 
     private val statusCallbacks = object : IStatusCallbacks.Stub() {
         override fun updateStateString(state: String?, logmessage: String?, localizedResId: Int, level: IcsConnectionStatus?, intent: Intent?) {
-            val st = state ?: ""
+            val st = (state ?: "").uppercase()
+            lastStateName = st
             val lvl = level ?: IcsConnectionStatus.LEVEL_NOTCONNECTED
-            when (st.uppercase()) {
-                "CONNECTED" -> _state.value = ConnectionState.Connected
-                "CONNECTING", "WAIT", "RESOLVE", "TCP_CONNECT", "GET_CONFIG", "ASSIGN_IP", "ADD_ROUTES", "AUTH", "AUTH_PENDING", "RECONNECTING" -> _state.value = ConnectionState.Connecting
-                "DISCONNECTED", "EXITING" -> _state.value = ConnectionState.Disconnected
-                else -> if (lvl == IcsConnectionStatus.LEVEL_AUTH_FAILED) _state.value = ConnectionState.Error("Authentication failed")
+            val now = System.currentTimeMillis()
+            when (st) {
+                "CONNECTED" -> {
+                    connectingActive = false
+                    _state.value = ConnectionState.Connected
+                }
+                "CONNECTING", "WAIT", "RESOLVE", "TCP_CONNECT", "GET_CONFIG", "ASSIGN_IP", "ADD_ROUTES", "AUTH", "AUTH_PENDING", "RECONNECTING", "USER_INPUT", "EXITING" -> _state.value = ConnectionState.Connecting
+                "DISCONNECTED", "NOPROCESS" -> {
+                    val elapsed = if (connectStartAt > 0) now - connectStartAt else 0L
+                    if (connectingActive && elapsed > 2000L) {
+                        connectingActive = false
+                        _state.value = ConnectionState.Error("OpenVPN process not running")
+                    } else {
+                        _state.value = ConnectionState.Disconnected
+                    }
+                }
+                else -> if (lvl == IcsConnectionStatus.LEVEL_AUTH_FAILED) {
+                    connectingActive = false
+                    _state.value = ConnectionState.Error("Authentication failed")
+                }
             }
             Log.d(tag, "[AIDL] state=$st level=$lvl msg=${logmessage ?: ""}")
         }
@@ -98,7 +136,10 @@ class OpenVpnHandler(
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
             statusService = IServiceStatus.Stub.asInterface(service)
             statusServiceBound = true
-            try { statusService?.registerStatusCallback(statusCallbacks) } catch (t: Throwable) { Log.w(tag, "registerStatusCallback failed: ${t.message}") }
+            try {
+                val pfd: ParcelFileDescriptor? = statusService?.registerStatusCallback(statusCallbacks)
+                try { pfd?.close() } catch (_: Throwable) {}
+            } catch (t: Throwable) { Log.w(tag, "registerStatusCallback failed: ${t.message}") }
         }
         override fun onServiceDisconnected(name: ComponentName?) {
             try { statusService?.unregisterStatusCallback(statusCallbacks) } catch (_: Throwable) {}
@@ -182,32 +223,31 @@ class OpenVpnHandler(
             ProfileManager.getInstance(context).saveProfileList(context)
 
             _state.value = ConnectionState.Connecting
+            connectStartAt = System.currentTimeMillis()
+            connectingActive = true
 
-            // Prefer LaunchVPN to ensure permission flow and prompts
-            val prep = android.net.VpnService.prepare(context)
-            val launch = Intent(context, LaunchVPN::class.java).apply {
-                putExtra(LaunchVPN.EXTRA_KEY, profile.uuidString)
-                putExtra(OpenVPNService.EXTRA_START_REASON, "ShadowLink start")
-                putExtra(LaunchVPN.EXTRA_HIDELOG, true)
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                action = Intent.ACTION_MAIN
-            }
-            if (prep != null) {
-                // Permission required; LaunchVPN will trigger the prompt and start on success
+            // Start VPN: if permission already granted, start service directly; else use LaunchVPN to prompt
+            val needsPermission = android.net.VpnService.prepare(context) != null
+            if (needsPermission) {
+                val launch = Intent(context, LaunchVPN::class.java).apply {
+                    putExtra(LaunchVPN.EXTRA_KEY, profile.getUUIDString())
+                    putExtra(OpenVPNService.EXTRA_START_REASON, "ShadowLink start")
+                    putExtra(LaunchVPN.EXTRA_HIDELOG, true)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    action = Intent.ACTION_MAIN
+                }
                 context.startActivity(launch)
             } else {
-                // Permission already granted; LaunchVPN will start connection immediately
-                context.startActivity(launch)
+                VPNLaunchHelper.startOpenVpn(profile, context.applicationContext, "ShadowLink start", true)
             }
 
-            // Wait until connected (or error/disconnected) to report success
+            // Wait until connected (or error) to report success
             val success = waitUntilConnectedOrFail()
-            if (!success) {
-                Log.w(tag, "OpenVPN did not reach CONNECTED state in time")
-            }
+            if (!success) Log.w(tag, "OpenVPN did not reach CONNECTED state in time")
             success
         } catch (t: Throwable) {
             Log.e(tag, "Failed to start OpenVPN", t)
+            connectingActive = false
             _state.value = ConnectionState.Error("OpenVPN start failed: ${t.localizedMessage}")
             _state.value = ConnectionState.Disconnected
             false
@@ -217,6 +257,8 @@ class OpenVpnHandler(
     override suspend fun disconnect(context: Context): Boolean = withContext(Dispatchers.IO) {
         try {
             _state.value = ConnectionState.Disconnecting
+            connectingActive = false
+            connectStartAt = 0L
             val stopped = stopVpnViaService(context)
             if (!stopped) {
                 Log.w(tag, "Service stopVPN returned false; forcing process stop")
@@ -235,11 +277,11 @@ class OpenVpnHandler(
             _state.value = ConnectionState.Disconnected
             false
         } finally {
-            // Clean up listener
+            // Keep status service bound to avoid races on next connect
             if (listenerRegistered.compareAndSet(true, false)) {
                 runCatching { VpnStatus.removeStateListener(vpnStatusListener) }
             }
-            unbindStatusService(context)
+            // Do not unbind here; keep callbacks active across reconnects
         }
     }
 
@@ -322,16 +364,41 @@ class OpenVpnHandler(
         }
     }
 
-    private suspend fun waitUntilConnectedOrFail(timeoutMs: Long = 30000L): Boolean {
+    private fun isTunUp(): Boolean {
+        return try {
+            val en = NetworkInterface.getNetworkInterfaces()
+            while (en.hasMoreElements()) {
+                val ni = en.nextElement()
+                if (ni.name.startsWith("tun") && ni.isUp) return true
+            }
+            false
+        } catch (_: Throwable) { false }
+    }
+
+    private suspend fun waitUntilConnectedOrFail(timeoutMs: Long = 45000L): Boolean {
         return try {
             withContext(Dispatchers.Default) {
                 kotlinx.coroutines.withTimeout(timeoutMs) {
-                    val terminal = connectionState.filter { it is ConnectionState.Connected || it is ConnectionState.Error || it is ConnectionState.Disconnected }.first()
-                    terminal is ConnectionState.Connected
+                    // Fast path via state flow
+                    val initialCheck = connectionState
+                        .filter { it is ConnectionState.Connected || it is ConnectionState.Error }
+                        .first()
+                    initialCheck is ConnectionState.Connected
                 }
             }
-        } catch (t: Throwable) {
-            false
+        } catch (_: Throwable) {
+            // Fallback polling on ASSIGN_IP/ADD_ROUTES or tun up within the same timeout
+            try {
+                withContext(Dispatchers.Default) {
+                    val start = System.currentTimeMillis()
+                    while (System.currentTimeMillis() - start < timeoutMs) {
+                        val st = lastStateName
+                        if (st == "ASSIGN_IP" || st == "ADD_ROUTES" || isTunUp()) return@withContext true
+                        kotlinx.coroutines.delay(300)
+                    }
+                    false
+                }
+            } catch (_: Throwable) { false }
         }
     }
 }
