@@ -17,7 +17,11 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        // Add JitPack to resolve dependencies like com.github.PhilJay:MPAndroidChart
+        maven(url = "https://jitpack.io")
     }
 }
 rootProject.name = "ShadowLinkVPN"
 include(":app")
+include(":ics-openvpn:main")
+project(":ics-openvpn:main").projectDir = File(rootDir, "ics-openvpn/main")

@@ -23,6 +23,10 @@ android {
         vectorDrawables {
             useSupportLibrary = true
         }
+
+        // Select variants from ics-openvpn (library has flavorDimensions: implementation, ovpnimpl)
+        missingDimensionStrategy("implementation", "skeleton")
+        missingDimensionStrategy("ovpnimpl", "ovpn23")
     }
 
     buildTypes {
@@ -104,22 +108,9 @@ dependencies {
     implementation(libs.androidx.tv.material)
     implementation(libs.androidx.foundation)
 
-    // OpenVPN libraries
-    implementation("co.pango:openvpn-aar:5.6.0-RC2")
-    implementation("co.pango:core-vpn:5.6.0-RC2")
-    implementation("co.pango:bolts-tasks:5.6.0-RC2")
-    runtimeOnly("co.pango:core-logger:5.6.0-RC2")
-    implementation("co.pango:core-interface:5.6.0-RC2")
-    runtimeOnly("co.pango:sdk-interface:5.6.0-RC2")
-    implementation("co.pango:core-credentials:5.6.0-RC2")
-    implementation("co.pango:sdk-core:5.6.0-RC2")
-    runtimeOnly("co.pango:sdk-network-layer:5.6.0-RC2")
-    runtimeOnly("co.pango:sdk-daemon:5.6.0-RC2")
-    runtimeOnly("co.pango:core-service:5.6.0-RC2")
-    implementation("co.pango:sdk:5.6.0-RC2")
-    implementation("co.pango:sdk-utils:5.6.0-RC2")
-    implementation("androidx.annotation:annotation:1.9.1")
-    implementation("co.pango:sdk-openvpn:5.6.0-RC2")
+    // Restore library dependency on ics-openvpn main module
+    implementation(project(":ics-openvpn:main"))
+    implementation("androidx.annotation:annotation:1.9.1") // fixes common errors
 
     // Testing
     testImplementation(libs.junit)
