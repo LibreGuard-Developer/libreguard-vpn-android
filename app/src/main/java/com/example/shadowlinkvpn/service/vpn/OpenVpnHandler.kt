@@ -1,18 +1,37 @@
 // Kotlin
 package com.example.shadowlinkvpn.service.vpn
 
+import android.content.ComponentName
 import android.content.Context
+import android.content.Intent
+import android.content.ServiceConnection
+import android.os.IBinder
 import android.util.Log
+import de.blinkt.openvpn.LaunchVPN
+import de.blinkt.openvpn.VpnProfile
+import de.blinkt.openvpn.core.ConfigParser
+import de.blinkt.openvpn.core.IOpenVPNServiceInternal
+import de.blinkt.openvpn.core.OpenVPNService
+import de.blinkt.openvpn.core.ProfileManager
+import de.blinkt.openvpn.core.VPNLaunchHelper
+import de.blinkt.openvpn.core.VpnStatus
+import de.blinkt.openvpn.core.VpnStatus.StateListener
+import de.blinkt.openvpn.core.IServiceStatus
+import de.blinkt.openvpn.core.IStatusCallbacks
+import de.blinkt.openvpn.core.LogItem
+import de.blinkt.openvpn.core.ConnectionStatus as IcsConnectionStatus
+import java.io.StringReader
+import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicBoolean
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.os.Build
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
-import java.io.ByteArrayInputStream
-import java.io.File
-import java.lang.reflect.Method
-import java.lang.reflect.Proxy
-import java.util.concurrent.atomic.AtomicReference
 
 class OpenVpnHandler(
     private val appContext: Context
@@ -23,193 +42,173 @@ class OpenVpnHandler(
     private val _state = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected)
     override val connectionState: StateFlow<ConnectionState> = _state
 
-    // Reflection cached members
-    private var startVpnOwner: Class<*>? = null
-    private var startVpnReceiver: Any? = null // for companion instance if needed
-    private var startVpnMethod: Method? = null
-    private var stopVpnOwner: Class<*>? = null
-    private var stopVpnReceiver: Any? = null
-    private var stopVpnMethod: Method? = null
-    private var addStateListenerMethod: Method? = null
-    private var removeStateListenerMethod: Method? = null
-    private var stateListenerInstance: Any? = null
+    // ICS OpenVPN state listener
+    private val vpnStatusListener = object : StateListener {
+        override fun updateState(state: String, logmessage: String, localizedResId: Int, level: de.blinkt.openvpn.core.ConnectionStatus, intent: Intent?) {
+            when (state.uppercase()) {
+                "CONNECTED" -> _state.value = ConnectionState.Connected
+                "CONNECTING", "WAIT", "RESOLVE", "TCP_CONNECT", "GET_CONFIG", "ASSIGN_IP", "ADD_ROUTES", "AUTH", "AUTH_PENDING", "RECONNECTING" -> _state.value = ConnectionState.Connecting
+                "DISCONNECTED", "EXITING" -> _state.value = ConnectionState.Disconnected
+                else -> {
+                    // Map error-like states
+                    if (level == de.blinkt.openvpn.core.ConnectionStatus.LEVEL_AUTH_FAILED) {
+                        _state.value = ConnectionState.Error("Authentication failed")
+                    }
+                }
+            }
+            Log.d(tag, "[ICS] state=$state level=$level msg=$logmessage")
+        }
+
+        override fun setConnectedVPN(uuid: String?) {
+            // no-op for our state machine; updateState handles transitions
+        }
+    }
+
+    // Cross-process status binding (OpenVPNStatusService)
+    @Volatile private var statusService: IServiceStatus? = null
+    private var statusServiceBound = false
+    private val statusLogs = CopyOnWriteArrayList<String>()
+
+    private val statusCallbacks = object : IStatusCallbacks.Stub() {
+        override fun updateStateString(state: String?, logmessage: String?, localizedResId: Int, level: IcsConnectionStatus?, intent: Intent?) {
+            val st = state ?: ""
+            val lvl = level ?: IcsConnectionStatus.LEVEL_NOTCONNECTED
+            when (st.uppercase()) {
+                "CONNECTED" -> _state.value = ConnectionState.Connected
+                "CONNECTING", "WAIT", "RESOLVE", "TCP_CONNECT", "GET_CONFIG", "ASSIGN_IP", "ADD_ROUTES", "AUTH", "AUTH_PENDING", "RECONNECTING" -> _state.value = ConnectionState.Connecting
+                "DISCONNECTED", "EXITING" -> _state.value = ConnectionState.Disconnected
+                else -> if (lvl == IcsConnectionStatus.LEVEL_AUTH_FAILED) _state.value = ConnectionState.Error("Authentication failed")
+            }
+            Log.d(tag, "[AIDL] state=$st level=$lvl msg=${logmessage ?: ""}")
+        }
+        override fun updateByteCount(in_: Long, out: Long) { /* ignore */ }
+        override fun newLogItem(logItem: LogItem?) {
+            if (logItem != null) {
+                try {
+                    statusLogs.add(logItem.getString(appContext))
+                    if (statusLogs.size > 500) statusLogs.removeAt(0)
+                } catch (_: Throwable) {}
+            }
+        }
+        override fun connectedVPN(uuid: String?) { /* ignore */ }
+        override fun notifyProfileVersionChanged(uuid: String?, version: Int) { /* ignore */ }
+    }
+
+    private val statusConn = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
+            statusService = IServiceStatus.Stub.asInterface(service)
+            statusServiceBound = true
+            try { statusService?.registerStatusCallback(statusCallbacks) } catch (t: Throwable) { Log.w(tag, "registerStatusCallback failed: ${t.message}") }
+        }
+        override fun onServiceDisconnected(name: ComponentName?) {
+            try { statusService?.unregisterStatusCallback(statusCallbacks) } catch (_: Throwable) {}
+            statusServiceBound = false
+            statusService = null
+        }
+    }
+
+    private fun bindStatusService(context: Context) {
+        if (statusServiceBound) return
+        val intent = Intent(context, de.blinkt.openvpn.core.OpenVPNStatusService::class.java)
+        try {
+            statusServiceBound = context.bindService(intent, statusConn, Context.BIND_AUTO_CREATE)
+            Log.d(tag, "Status service bind initiated: $statusServiceBound")
+        } catch (t: Throwable) {
+            Log.w(tag, "bindService(OpenVPNStatusService) failed: ${t.message}")
+        }
+    }
+
+    private fun unbindStatusService(context: Context) {
+        if (!statusServiceBound) return
+        try {
+            statusService?.unregisterStatusCallback(statusCallbacks)
+        } catch (_: Throwable) {}
+        try { context.unbindService(statusConn) } catch (_: Throwable) {}
+        statusServiceBound = false
+        statusService = null
+    }
+
+    private val listenerRegistered = AtomicBoolean(false)
 
     override suspend fun initialize(context: Context): Boolean = withContext(Dispatchers.IO) {
         try {
-            fun findCompanionInstance(klass: Class<*>): Any? {
-                return try {
-                    val field = klass.declaredFields.firstOrNull { it.name == "Companion" }
-                    field?.isAccessible = true
-                    field?.get(null)
-                } catch (_: Throwable) { null }
+            ensureOpenVpnNotificationChannels(context)
+            bindStatusService(context)
+            if (listenerRegistered.compareAndSet(false, true)) {
+                // Keep local process listener for completeness, but AIDL will deliver real updates
+                VpnStatus.addStateListener(vpnStatusListener)
             }
-
-            // Try OpenVpnApi first
-            runCatching {
-                val api = Class.forName("unified.vpn.sdk.OpenVpnApi")
-                val start = api.methods.firstOrNull { m ->
-                    m.name.equals("startVpn", true) && m.parameterTypes.size == 2 &&
-                        Context::class.java.isAssignableFrom(m.parameterTypes[0])
-                }
-                val stop = api.methods.firstOrNull { m ->
-                    m.name.equals("stopVpn", true) && m.parameterTypes.size == 1 &&
-                        Context::class.java.isAssignableFrom(m.parameterTypes[0])
-                }
-                if (start != null) {
-                    startVpnOwner = api
-                    startVpnReceiver = null
-                    startVpnMethod = start
-                }
-                if (stop != null) {
-                    stopVpnOwner = api
-                    stopVpnReceiver = null
-                    stopVpnMethod = stop
-                }
-            }
-
-            // Fallback to OpenVpnApi2 if needed
-            if (startVpnMethod == null || stopVpnMethod == null) {
-                runCatching {
-                    val api2 = Class.forName("unified.vpn.sdk.OpenVpnApi2")
-                    val companion = findCompanionInstance(api2)
-                    val start = (api2.methods + api2.declaredMethods).firstOrNull { m ->
-                        m.name.equals("startVpn", true) && m.parameterTypes.size == 2 &&
-                            Context::class.java.isAssignableFrom(m.parameterTypes[0])
-                    }
-                    val stop = (api2.methods + api2.declaredMethods).firstOrNull { m ->
-                        m.name.equals("stopVpn", true) && m.parameterTypes.size == 1 &&
-                            Context::class.java.isAssignableFrom(m.parameterTypes[0])
-                    }
-                    if (start != null) {
-                        startVpnOwner = api2
-                        startVpnReceiver = companion // may be null if static
-                        startVpnMethod = start
-                    }
-                    if (stop != null) {
-                        stopVpnOwner = api2
-                        stopVpnReceiver = companion
-                        stopVpnMethod = stop
-                    }
-                }.onFailure {
-                    Log.w(tag, "OpenVpnApi2 not available: ${it.message}")
-                }
-            }
-
-            if (startVpnMethod == null) {
-                Log.e(tag, "No suitable startVpn() found in unified.vpn.sdk")
-                return@withContext false
-            }
-
-            // Resolve status listener methods if available
-            runCatching {
-                val statusClass = Class.forName("unified.vpn.sdk.OpenVpnStatus")
-                addStateListenerMethod = statusClass.methods.firstOrNull { it.name == "addStateListener" && it.parameterTypes.size == 1 }
-                removeStateListenerMethod = statusClass.methods.firstOrNull { it.name == "removeStateListener" && it.parameterTypes.size == 1 }
-            }.onFailure {
-                Log.w(tag, "OpenVpnStatus not available or changed API: ${it.message}")
-            }
-
             true
-        } catch (e: Throwable) {
-            Log.e(tag, "Failed to initialize OpenVPN reflection", e)
+        } catch (t: Throwable) {
+            Log.e(tag, "Failed to initialize OpenVPN handler", t)
             false
         }
     }
 
     override suspend fun connect(context: Context, configPath: String): Boolean = withContext(Dispatchers.IO) {
         try {
-            val cfgFile = File(configPath)
-            if (!cfgFile.exists()) {
-                Log.e(tag, "Config file not found at $configPath")
-                _state.value = ConnectionState.Error("OpenVPN config not found")
-                _state.value = ConnectionState.Disconnected
-                return@withContext false
-            }
+            ensureOpenVpnNotificationChannels(context)
+            bindStatusService(context)
 
-            val configContent = cfgFile.readText()
-            Log.d(tag, "Starting OpenVPN with config ${cfgFile.name} (${configContent.length} chars)")
-
-            // Register a best-effort state listener to observe CONNECTED/DISCONNECTED
-            if (addStateListenerMethod != null && stateListenerInstance == null) {
-                try {
-                    val listenerParamType = addStateListenerMethod!!.parameterTypes.first()
-                    val listener = Proxy.newProxyInstance(
-                        listenerParamType.classLoader,
-                        arrayOf(listenerParamType)
-                    ) { _, _, args ->
-                        try {
-                            if (args != null && args.isNotEmpty()) {
-                                val stateObj = args[0]
-                                val stateStr = stateObj?.toString() ?: ""
-                                when {
-                                    stateStr.contains("CONNECTED", true) -> _state.value = ConnectionState.Connected
-                                    stateStr.contains("RECONNECTING", true) || stateStr.contains("CONNECTING", true) || stateStr.contains("WAIT", true) -> _state.value = ConnectionState.Connecting
-                                    stateStr.contains("NOPROCESS", true) || stateStr.contains("DISCONNECTED", true) || stateStr.contains("EXITING", true) -> _state.value = ConnectionState.Disconnected
-                                    stateStr.contains("AUTH", true) && stateStr.contains("FAILED", true) -> _state.value = ConnectionState.Error("Authentication failed")
-                                }
-                                if (args.size >= 2) {
-                                    (args[1] as? CharSequence)?.let { Log.d(tag, "[OVPN] $stateStr: $it") }
-                                }
-                            }
-                        } catch (t: Throwable) {
-                            Log.w(tag, "State listener invocation error: ${t.message}")
-                        }
-                        null
+            // Read config
+            val cfg = runCatching { context.filesDir.resolve(configPath).readText() }
+                .getOrElse {
+                    // If configPath is absolute, fallback to File(configPath)
+                    kotlin.runCatching { java.io.File(configPath).readText() }.getOrElse { e ->
+                        Log.e(tag, "OpenVPN config not found at $configPath", e)
+                        _state.value = ConnectionState.Error("OpenVPN config not found")
+                        _state.value = ConnectionState.Disconnected
+                        return@withContext false
                     }
-                    addStateListenerMethod!!.invoke(null, listener)
-                    stateListenerInstance = listener
-                } catch (e: Throwable) {
-                    Log.w(tag, "Unable to attach OpenVPN state listener: ${e.message}")
                 }
-            }
 
-            // Prepare parameters for startVpn according to method signature
-            val start = startVpnMethod ?: run {
-                Log.e(tag, "startVpn method not available")
-                _state.value = ConnectionState.Error("OpenVPN start API not found")
+            // Parse .ovpn into VpnProfile via ICS parser
+            val parser = ConfigParser()
+            parser.parseConfig(StringReader(cfg))
+            val profile = parser.convertProfile() ?: run {
+                Log.e(tag, "Failed to convert .ovpn to VpnProfile")
+                _state.value = ConnectionState.Error("Invalid OpenVPN profile")
                 _state.value = ConnectionState.Disconnected
                 return@withContext false
             }
 
-            val paramTypes = start.parameterTypes
-            val args: Array<Any> = when {
-                // (Context, String)
-                paramTypes.size == 2 && Context::class.java.isAssignableFrom(paramTypes[0]) &&
-                        (paramTypes[1] == String::class.java || CharSequence::class.java.isAssignableFrom(paramTypes[1])) -> arrayOf(context, configContent)
-                // (Context, File)
-                paramTypes.size == 2 && Context::class.java.isAssignableFrom(paramTypes[0]) &&
-                        File::class.java.isAssignableFrom(paramTypes[1]) -> arrayOf(context, cfgFile)
-                // (Context, InputStream)
-                paramTypes.size == 2 && Context::class.java.isAssignableFrom(paramTypes[0]) &&
-                        java.io.InputStream::class.java.isAssignableFrom(paramTypes[1]) -> arrayOf(context, ByteArrayInputStream(configContent.toByteArray()))
-                else -> {
-                    Log.e(tag, "Unsupported startVpn signature: ${paramTypes.joinToString { it.simpleName }}")
-                    _state.value = ConnectionState.Error("Unsupported OpenVPN start signature")
-                    _state.value = ConnectionState.Disconnected
-                    return@withContext false
-                }
-            }
+            // Give profile a readable name
+            profile.mName = profile.mName ?: "ShadowLink OpenVPN"
+            if (profile.mName.isBlank()) profile.mName = "ShadowLink OpenVPN"
 
-            // Invoke
-            start.invoke(startVpnReceiver, *args)
+            // Save as temporary profile to avoid polluting profile list
+            ProfileManager.setTemporaryProfile(context, profile)
+            ProfileManager.saveProfile(context, profile)
+            ProfileManager.getInstance(context).saveProfileList(context)
+
             _state.value = ConnectionState.Connecting
 
-            // Wait up to 15s for CONNECTED state, otherwise treat as failure
-            var attempts = 0
-            while (attempts < 30) { // 30 * 500ms = 15s
-                if (_state.value is ConnectionState.Connected) return@withContext true
-                if (_state.value is ConnectionState.Error) break
-                delay(500)
-                attempts++
+            // Prefer LaunchVPN to ensure permission flow and prompts
+            val prep = android.net.VpnService.prepare(context)
+            val launch = Intent(context, LaunchVPN::class.java).apply {
+                putExtra(LaunchVPN.EXTRA_KEY, profile.uuidString)
+                putExtra(OpenVPNService.EXTRA_START_REASON, "ShadowLink start")
+                putExtra(LaunchVPN.EXTRA_HIDELOG, true)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                action = Intent.ACTION_MAIN
+            }
+            if (prep != null) {
+                // Permission required; LaunchVPN will trigger the prompt and start on success
+                context.startActivity(launch)
+            } else {
+                // Permission already granted; LaunchVPN will start connection immediately
+                context.startActivity(launch)
             }
 
-            Log.w(tag, "OpenVPN did not reach CONNECTED within timeout")
-            runCatching { stopVpnMethod?.invoke(stopVpnReceiver, context) }
-            _state.value = ConnectionState.Disconnected
-            false
-        } catch (e: Throwable) {
-            Log.e(tag, "Failed to start OpenVPN", e)
-            _state.value = ConnectionState.Error("OpenVPN start failed: ${e.localizedMessage}")
+            // Wait until connected (or error/disconnected) to report success
+            val success = waitUntilConnectedOrFail()
+            if (!success) {
+                Log.w(tag, "OpenVPN did not reach CONNECTED state in time")
+            }
+            success
+        } catch (t: Throwable) {
+            Log.e(tag, "Failed to start OpenVPN", t)
+            _state.value = ConnectionState.Error("OpenVPN start failed: ${t.localizedMessage}")
             _state.value = ConnectionState.Disconnected
             false
         }
@@ -218,32 +217,121 @@ class OpenVpnHandler(
     override suspend fun disconnect(context: Context): Boolean = withContext(Dispatchers.IO) {
         try {
             _state.value = ConnectionState.Disconnecting
-            // Remove listener if present
-            runCatching {
-                if (removeStateListenerMethod != null && stateListenerInstance != null) {
-                    removeStateListenerMethod!!.invoke(null, stateListenerInstance)
-                    stateListenerInstance = null
+            val stopped = stopVpnViaService(context)
+            if (!stopped) {
+                Log.w(tag, "Service stopVPN returned false; forcing process stop")
+                // Fallback: send an explicit intent to the service to ensure it is running and will clean up
+                runCatching {
+                    val i = Intent(context, OpenVPNService::class.java)
+                    i.action = OpenVPNService.START_SERVICE
+                    context.startService(i)
                 }
             }
-            // Stop via reflected API
-            runCatching { stopVpnMethod?.invoke(stopVpnReceiver, context) }
             _state.value = ConnectionState.Disconnected
             true
-        } catch (e: Throwable) {
-            Log.e(tag, "Failed to stop OpenVPN", e)
-            _state.value = ConnectionState.Error("OpenVPN disconnect failed: ${e.localizedMessage}")
+        } catch (t: Throwable) {
+            Log.e(tag, "Failed to stop OpenVPN", t)
+            _state.value = ConnectionState.Error("OpenVPN disconnect failed: ${t.localizedMessage}")
             _state.value = ConnectionState.Disconnected
+            false
+        } finally {
+            // Clean up listener
+            if (listenerRegistered.compareAndSet(true, false)) {
+                runCatching { VpnStatus.removeStateListener(vpnStatusListener) }
+            }
+            unbindStatusService(context)
+        }
+    }
+
+    override suspend fun getConnectionLogs(context: Context): String? = withContext(Dispatchers.IO) {
+        // Prefer logs collected via AIDL callback
+        if (statusLogs.isNotEmpty()) return@withContext statusLogs.joinToString("\n")
+        // Fallback to local process buffer
+        try {
+            val items = VpnStatus.getlogbuffer()
+            buildString {
+                items.forEach { li ->
+                    append("[")
+                    append(li.getLogtime())
+                    append("] ")
+                    append(li.getString(context))
+                    append('\n')
+                }
+            }
+        } catch (t: Throwable) {
+            Log.e(tag, "Failed to get OpenVPN logs", t)
+            null
+        }
+    }
+
+    private suspend fun stopVpnViaService(context: Context): Boolean = withContext(Dispatchers.IO) {
+        var result = false
+        val bindIntent = Intent(context, OpenVPNService::class.java).apply {
+            action = OpenVPNService.START_SERVICE
+        }
+        val latch = java.util.concurrent.CountDownLatch(1)
+        val conn = object : ServiceConnection {
+            override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
+                try {
+                    val svc = IOpenVPNServiceInternal.Stub.asInterface(service)
+                    result = svc?.stopVPN(false) == true
+                } catch (t: Throwable) {
+                    Log.w(tag, "Error calling stopVPN", t)
+                } finally {
+                    try { context.unbindService(this) } catch (_: Throwable) {}
+                    latch.countDown()
+                }
+            }
+            override fun onServiceDisconnected(name: ComponentName?) {
+                latch.countDown()
+            }
+        }
+        return@withContext try {
+            val bound = context.bindService(bindIntent, conn, Context.BIND_AUTO_CREATE)
+            if (!bound) return@withContext false
+            // Wait a short time for binder call
+            if (!latch.await(2, java.util.concurrent.TimeUnit.SECONDS)) {
+                try { context.unbindService(conn) } catch (_: Throwable) {}
+            }
+            result
+        } catch (t: Throwable) {
+            Log.w(tag, "bindService stop failed: ${t.message}")
             false
         }
     }
 
-    override suspend fun getConnectionLogs(context: Context): String? {
+    private fun ensureOpenVpnNotificationChannels(context: Context) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        try {
+            val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            val existing = nm.notificationChannels.associateBy { it.id }
+
+            fun createIfMissing(id: String, name: String, importance: Int) {
+                if (existing[id] == null) {
+                    val ch = NotificationChannel(id, name, importance)
+                    nm.createNotificationChannel(ch)
+                    Log.d(tag, "Created notification channel: $id")
+                }
+            }
+
+            createIfMissing(OpenVPNService.NOTIFICATION_CHANNEL_BG_ID, "OpenVPN Background", NotificationManager.IMPORTANCE_MIN)
+            createIfMissing(OpenVPNService.NOTIFICATION_CHANNEL_NEWSTATUS_ID, "OpenVPN Status", NotificationManager.IMPORTANCE_LOW)
+            createIfMissing(OpenVPNService.NOTIFICATION_CHANNEL_USERREQ_ID, "OpenVPN User Requests", NotificationManager.IMPORTANCE_HIGH)
+        } catch (t: Throwable) {
+            Log.w(tag, "Failed to ensure OpenVPN notification channels: ${t.message}")
+        }
+    }
+
+    private suspend fun waitUntilConnectedOrFail(timeoutMs: Long = 30000L): Boolean {
         return try {
-            // No persistent logs exposed; advise to use Logcat
-            "OpenVPN via unified.vpn.sdk; see Logcat tag '$tag' for live logs."
-        } catch (e: Exception) {
-            Log.e(tag, "Failed to get logs", e)
-            null
+            withContext(Dispatchers.Default) {
+                kotlinx.coroutines.withTimeout(timeoutMs) {
+                    val terminal = connectionState.filter { it is ConnectionState.Connected || it is ConnectionState.Error || it is ConnectionState.Disconnected }.first()
+                    terminal is ConnectionState.Connected
+                }
+            }
+        } catch (t: Throwable) {
+            false
         }
     }
 }
