@@ -3,5 +3,11 @@
   <component name="VcsDirectoryMappings">
     <mapping directory="$PROJECT_DIR$" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/ics-openvpn" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/ics-openvpn/main/src/main/cpp/asio" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/ics-openvpn/main/src/main/cpp/lz4" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/ics-openvpn/main/src/main/cpp/mbedtls" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/ics-openvpn/main/src/main/cpp/openssl" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/ics-openvpn/main/src/main/cpp/openvpn" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/ics-openvpn/main/src/main/cpp/openvpn3" vcs="Git" />
   </component>
 </project>
