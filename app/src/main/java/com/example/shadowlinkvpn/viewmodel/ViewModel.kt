@@ -953,26 +953,67 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         profile.userCertificateAlias?.let { alias ->
             withContext(Dispatchers.IO) { configManager.saveMappedCertAlias(profile.gateway, profile.remoteId, alias) }
         }
+
         activeVpnHandler = VpnProtocolFactory.createHandler(VpnProtocol.IKEV2_IPSEC, context)
-        val connected = withContext(Dispatchers.IO) {
-            (activeVpnHandler as? StrongSwanHandler)?.connect(context, profile) ?: false
+
+        // Start observing connection state BEFORE initiating connection
+        val handler = activeVpnHandler as? StrongSwanHandler
+        if (handler != null) {
+            // Launch coroutine to observe state changes
+            viewModelScope.launch {
+                handler.connectionState.collect { state ->
+                    Log.d(TAG, "StrongSwan connection state changed: $state")
+                    when (state) {
+                        is ConnectionState.Connecting -> {
+                            _isConnecting.value = true
+                            _isConnected.value = false
+                            _errorMessage.value = "Connecting to ${profile.gateway}..."
+                        }
+                        is ConnectionState.Connected -> {
+                            _isConnected.value = true
+                            _isConnecting.value = false
+                            _errorMessage.value = "Connected using IKEv2/IPSec to ${profile.gateway}"
+                            Log.d(TAG, "Successfully connected via StateFlow")
+
+                            // Start data usage monitoring when VPN connects
+                            dataUsageManager.startMonitoring()
+                            Log.d(TAG, "Started data usage monitoring")
+
+                            // Save connection state for persistence
+                            saveConnectionState()
+                        }
+                        is ConnectionState.Disconnected -> {
+                            _isConnected.value = false
+                            _isConnecting.value = false
+                            if (_errorMessage.value?.contains("Connected") == true || _errorMessage.value?.contains("Connecting") == true) {
+                                _errorMessage.value = "Disconnected"
+                            }
+                            Log.d(TAG, "Disconnected via StateFlow")
+                        }
+                        is ConnectionState.Disconnecting -> {
+                            _isConnecting.value = false
+                            _errorMessage.value = "Disconnecting..."
+                        }
+                        is ConnectionState.Error -> {
+                            _isConnected.value = false
+                            _isConnecting.value = false
+                            _errorMessage.value = state.message
+                            Log.e(TAG, "Connection error via StateFlow: ${state.message}")
+                        }
+                    }
+                }
+            }
         }
 
-        if (connected) {
-            _isConnected.value = true
-            _isConnecting.value = false
-            _errorMessage.value = "Connected using IKEv2/IPSec to ${profile.gateway}"
-            Log.d(TAG, "Successfully initiated IKEv2/IPSec connection")
-
-            // Start data usage monitoring when VPN connects
-            dataUsageManager.startMonitoring()
-            Log.d(TAG, "Started data usage monitoring")
-
-            // Save connection state for persistence
-            saveConnectionState()
-        } else {
-            throw Exception("Failed to initiate IKEv2/IPSec connection")
+        // Initiate connection (return value is now just for logging)
+        val initiatedSuccessfully = withContext(Dispatchers.IO) {
+            handler?.connect(context, profile) ?: false
         }
+
+        Log.d(TAG, "Connection initiation returned: $initiatedSuccessfully")
+
+        // Don't set UI state here - let the StateFlow observer handle it
+        // This eliminates the race condition
     }
 
     suspend fun connectWireGuard(config: String) {

@@ -1,11 +1,14 @@
 package com.example.shadowlinkvpn.service.vpn
 
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.ServiceConnection
 import android.net.Uri
 import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
+import android.os.IBinder
 import android.os.ParcelFileDescriptor
 import android.util.Log
 import com.example.shadowlinkvpn.util.VpnConfigManager
@@ -20,8 +23,20 @@ import org.strongswan.android.data.VpnProfileDataSource
 import org.strongswan.android.data.VpnProfileSource
 import org.strongswan.android.data.VpnType
 import org.strongswan.android.logic.CharonVpnService
+import org.strongswan.android.logic.VpnStateService
+import org.strongswan.android.logic.imc.ImcState
+import org.strongswan.android.logic.StrongSwanApplication
 import java.io.File
 import java.io.FileInputStream
+import java.io.BufferedReader
+import java.io.InputStreamReader
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
 class StrongSwanHandler(
     private val appContext: Context
@@ -36,48 +51,223 @@ class StrongSwanHandler(
     @Volatile
     private var currentProfile: VpnProfile? = null
 
+    // Connection lock to prevent concurrent connection attempts
+    private val isConnecting = AtomicBoolean(false)
+
+    // State monitoring
+    private var vpnStateService: VpnStateService? = null
+    private var stateServiceBound = false
+    private val monitoringScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var logMonitorJob: Job? = null
+    private val authFailureCount = AtomicInteger(0)
+    private val isMonitoring = AtomicBoolean(false)
+    @Volatile private var lastLogPosition = 0L
+
+    private val stateServiceConnection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
+            try {
+                vpnStateService = (service as? VpnStateService.LocalBinder)?.service
+                Log.d(tag, "Connected to VpnStateService")
+
+                // Start monitoring for auth failures
+                if (_state.value is ConnectionState.Connecting || _state.value is ConnectionState.Connected) {
+                    startLogMonitoring()
+                }
+            } catch (e: Exception) {
+                Log.e(tag, "Failed to bind VpnStateService: ${e.message}")
+            }
+        }
+
+        override fun onServiceDisconnected(name: ComponentName?) {
+            vpnStateService = null
+            stateServiceBound = false
+            Log.d(tag, "Disconnected from VpnStateService")
+        }
+    }
+
     override suspend fun initialize(context: Context): Boolean {
         Log.d(tag, "Initializing StrongSwan handler")
+        bindVpnStateService(context)
         return true
     }
 
-    /**
-     * Set the current profile and update connection state accordingly
-     * This is used when restoring connection state after app restart
-     */
-    fun setCurrentProfile(profile: VpnProfile) {
-        currentProfile = profile
-
-        // Check if VPN is actually active and update our state accordingly
-        val isVpnActive = checkIfVpnIsActive()
-        if (isVpnActive) {
-            _state.value = ConnectionState.Connected
-            Log.d(tag, "Set current profile and detected active VPN connection - updated state to Connected")
-        } else {
-            _state.value = ConnectionState.Disconnected
-            Log.d(tag, "Set current profile but no active VPN detected - state remains Disconnected")
+    private fun bindVpnStateService(context: Context) {
+        if (stateServiceBound) return
+        try {
+            val intent = Intent(context, VpnStateService::class.java)
+            stateServiceBound = context.bindService(intent, stateServiceConnection, Context.BIND_AUTO_CREATE)
+            Log.d(tag, "VpnStateService bind initiated: $stateServiceBound")
+        } catch (e: Exception) {
+            Log.w(tag, "Failed to bind VpnStateService: ${e.message}")
         }
-
-        Log.d(tag, "Current profile set: ${profile.name}, Gateway: ${profile.gateway}, State: ${_state.value}")
     }
 
-    /**
-     * Check if VPN is actually active by examining network interfaces
-     */
-    private fun checkIfVpnIsActive(): Boolean {
-        return try {
-            val networkInterfaces = java.net.NetworkInterface.getNetworkInterfaces()
-            while (networkInterfaces.hasMoreElements()) {
-                val networkInterface = networkInterfaces.nextElement()
-                if (networkInterface.name.startsWith("tun") && networkInterface.isUp) {
-                    Log.d(tag, "Found active tun interface: ${networkInterface.name}")
-                    return true
+    private fun unbindVpnStateService(context: Context) {
+        if (!stateServiceBound) return
+        try {
+            context.unbindService(stateServiceConnection)
+            stateServiceBound = false
+            vpnStateService = null
+            Log.d(tag, "Unbound from VpnStateService")
+        } catch (e: Exception) {
+            Log.w(tag, "Failed to unbind VpnStateService: ${e.message}")
+        }
+    }
+
+    private fun startLogMonitoring() {
+        if (!isMonitoring.compareAndSet(false, true)) {
+            Log.d(tag, "Log monitoring already active")
+            return
+        }
+
+        authFailureCount.set(0)
+        lastLogPosition = 0L
+
+        logMonitorJob?.cancel()
+        logMonitorJob = monitoringScope.launch {
+            Log.d(tag, "Started log monitoring for auth failures")
+            try {
+                while (isMonitoring.get()) {
+                    checkForAuthFailures()
+                    delay(2000) // Check every 2 seconds
+                }
+            } catch (e: Exception) {
+                Log.e(tag, "Log monitoring error: ${e.message}")
+            } finally {
+                Log.d(tag, "Log monitoring stopped")
+            }
+        }
+    }
+
+    private fun stopLogMonitoring() {
+        isMonitoring.set(false)
+        logMonitorJob?.cancel()
+        logMonitorJob = null
+        authFailureCount.set(0)
+        Log.d(tag, "Stopped log monitoring")
+    }
+
+    override suspend fun getConnectionLogs(context: Context): String? {
+        return withContext(Dispatchers.IO) {
+            try {
+                val logFile = File(context.filesDir, "charon.log")
+                if (!logFile.exists()) {
+                    Log.w(tag, "charon.log does not exist")
+                    return@withContext null
+                }
+
+                // Read the entire log file
+                val logs = StringBuilder()
+                BufferedReader(InputStreamReader(FileInputStream(logFile))).use { reader ->
+                    var line: String?
+                    while (reader.readLine().also { line = it } != null) {
+                        logs.append(line).append("\n")
+                    }
+                }
+
+                val result = logs.toString()
+                Log.d(tag, "Retrieved ${result.length} characters from charon.log")
+                result
+            } catch (e: Exception) {
+                Log.e(tag, "Failed to read charon.log: ${e.message}")
+                null
+            }
+        }
+    }
+
+    private suspend fun checkForAuthFailures() {
+        try {
+            val logFile = File(appContext.filesDir, "charon.log")
+            if (!logFile.exists()) return
+
+            val currentLength = logFile.length()
+            if (currentLength < lastLogPosition) {
+                // Log file was rotated/truncated
+                lastLogPosition = 0L
+            }
+
+            if (currentLength == lastLogPosition) {
+                // No new content
+                return
+            }
+
+            // Read only new content
+            val newContent = StringBuilder()
+            BufferedReader(InputStreamReader(FileInputStream(logFile))).use { reader ->
+                reader.skip(lastLogPosition)
+                var line: String?
+                while (reader.readLine().also { line = it } != null) {
+                    newContent.append(line).append("\n")
                 }
             }
-            false
+            lastLogPosition = currentLength
+
+            val logs = newContent.toString()
+            if (logs.isEmpty()) return
+
+            // Check for authentication failures and certificate issues
+            val hasAuthFailed = logs.contains("AUTH_FAILED", ignoreCase = true) ||
+                               logs.contains("authentication failed", ignoreCase = true)
+            val hasCertStatusIssue = logs.contains("certificate status is not available", ignoreCase = true)
+            val hasEapTlsFailed = logs.contains("EAP_TLS method failed", ignoreCase = true)
+            val hasCertRevoked = logs.contains("certificate was revoked", ignoreCase = true) ||
+                                logs.contains("certificate has been revoked", ignoreCase = true)
+            val hasIkeAuthFailed = logs.contains("IKE_SA.*failed", ignoreCase = true)
+            val hasCertUnknown = logs.contains("certificate unknown", ignoreCase = true)
+
+            if (hasAuthFailed || hasCertStatusIssue || hasEapTlsFailed || hasCertRevoked || hasIkeAuthFailed || hasCertUnknown) {
+                authFailureCount.incrementAndGet()
+                Log.w(tag, "Detected auth failure signal (count: ${authFailureCount.get()}): " +
+                          "AUTH_FAILED=$hasAuthFailed, CERT_STATUS=$hasCertStatusIssue, " +
+                          "EAP_TLS_FAILED=$hasEapTlsFailed, CERT_REVOKED=$hasCertRevoked, CERT_UNKNOWN=$hasCertUnknown")
+
+                // CRITICAL: EAP_TLS failure with AUTH_FAILED means immediate connection failure
+                // Don't wait for threshold if we have clear authentication rejection
+                if ((hasEapTlsFailed && hasAuthFailed) || hasCertRevoked || hasCertUnknown) {
+                    Log.e(tag, "Critical authentication failure detected - forcing disconnect immediately")
+                    withContext(Dispatchers.Main) {
+                        handleAuthenticationFailure()
+                    }
+                } else if (authFailureCount.get() >= 2) {
+                    // For other auth failures, still use threshold
+                    Log.e(tag, "Authentication failure threshold reached - forcing disconnect")
+                    withContext(Dispatchers.Main) {
+                        handleAuthenticationFailure()
+                    }
+                }
+            }
+
+            // Also check if connection was actually established but then dropped
+            if (logs.contains("connection-closed", ignoreCase = true) ||
+                logs.contains("IKE_SA deleted", ignoreCase = true)) {
+                Log.w(tag, "Connection closed detected in logs")
+                if (_state.value is ConnectionState.Connected) {
+                    withContext(Dispatchers.Main) {
+                        _state.value = ConnectionState.Disconnected
+                    }
+                }
+            }
+
         } catch (e: Exception) {
-            Log.w(tag, "Failed to check network interfaces: ${e.message}")
-            false
+            Log.e(tag, "Error checking auth failures: ${e.message}")
+        }
+    }
+
+    private fun handleAuthenticationFailure() {
+        stopLogMonitoring()
+        _state.value = ConnectionState.Error("Authentication failed: Certificate revoked or invalid")
+
+        // Give UI a moment to show error, then transition to disconnected
+        monitoringScope.launch {
+            delay(500)
+            _state.value = ConnectionState.Disconnected
+
+            // Force cleanup
+            try {
+                disconnect(appContext)
+            } catch (e: Exception) {
+                Log.e(tag, "Error during forced disconnect: ${e.message}")
+            }
         }
     }
 
@@ -86,11 +276,32 @@ class StrongSwanHandler(
             try {
                 if (_state.value is ConnectionState.Connecting || _state.value is ConnectionState.Connected) {
                     Log.w(tag, "Already connecting or connected")
-                    return@withContext true
+                    return@withContext false
+                }
+
+                // Acquire the connection lock
+                if (!isConnecting.compareAndSet(false, true)) {
+                    Log.w(tag, "Connection attempt already in progress")
+                    return@withContext false
                 }
 
                 _state.value = ConnectionState.Connecting
                 Log.d(tag, "Starting IKEv2 connection with VpnProfile object")
+
+                // Reset auth failure tracking
+                authFailureCount.set(0)
+                lastLogPosition = 0L
+
+                // Clear the log file to ensure we only check new logs from this connection attempt
+                try {
+                    val logFile = File(appContext.filesDir, "charon.log")
+                    if (logFile.exists()) {
+                        logFile.delete()
+                        Log.d(tag, "Cleared old charon.log before new connection attempt")
+                    }
+                } catch (e: Exception) {
+                    Log.w(tag, "Failed to clear log file: ${e.message}")
+                }
 
                 currentProfile = profile
                 Log.d(tag, "Using VpnProfile: ${profile.name}, Gateway: ${profile.gateway}, Type: ${profile.vpnType}")
@@ -206,6 +417,11 @@ class StrongSwanHandler(
 
                 dataSource.close()
 
+                // Ensure VpnStateService is bound before starting connection
+                if (!stateServiceBound) {
+                    bindVpnStateService(appContext)
+                    delay(500) // Give it time to bind
+                }
 
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     appContext.startForegroundService(intent)
@@ -213,15 +429,122 @@ class StrongSwanHandler(
                     appContext.startService(intent)
                 }
 
-                Log.d(tag, "CharonVpnService started, waiting for connection...")
-                true
+                Log.d(tag, "CharonVpnService started, waiting for connection result...")
+
+                // DON'T start background monitoring yet - we'll check synchronously
+                // This prevents race conditions with state updates
+
+                // Wait for connection to establish or fail
+                // We need to wait longer for auth to complete before checking TUN
+                var connectionEstablished = false
+                var authFailureDetected = false
+
+                // Phase 1: Wait for authentication to complete (first 4 seconds)
+                // During this phase, DON'T check TUN interface - it's unreliable
+                for (i in 1..8) {
+                    delay(500) // Check every 500ms for faster failure detection
+
+                    // Check logs for authentication failures
+                    val logs = getConnectionLogs(context) ?: ""
+
+                    // Check for critical auth failures
+                    if (logs.contains("certificate unknown", ignoreCase = true) ||
+                        logs.contains("certificate was revoked", ignoreCase = true) ||
+                        logs.contains("certificate has been revoked", ignoreCase = true)) {
+                        authFailureDetected = true
+                        Log.e(tag, "Certificate validation failure detected in logs (check ${i}/8)")
+                        break
+                    }
+
+                    // Check for EAP/TLS failures
+                    if (logs.contains("EAP_TLS method failed", ignoreCase = true) &&
+                        logs.contains("AUTH_FAILED", ignoreCase = true)) {
+                        authFailureDetected = true
+                        Log.e(tag, "EAP_TLS authentication failure detected (check ${i}/8)")
+                        break
+                    }
+
+                    // Check for successful IKE_SA establishment (indicates auth success)
+                    if (logs.contains("IKE_SA.*established", ignoreCase = true) ||
+                        logs.contains("CHILD_SA.*established", ignoreCase = true)) {
+                        Log.d(tag, "IKE_SA/CHILD_SA established detected in logs (check ${i}/8)")
+                        // Now check for TUN interface
+                        if (checkIfVpnIsActive()) {
+                            connectionEstablished = true
+                            Log.d(tag, "TUN interface confirmed after successful auth (check ${i}/8)")
+                            break
+                        }
+                    }
+
+                    Log.v(tag, "Auth phase check ${i}/8: Waiting for authentication to complete...")
+                }
+
+                // Phase 2: If no clear result yet, do a final verification (2 more seconds)
+                if (!authFailureDetected && !connectionEstablished) {
+                    Log.d(tag, "Auth phase complete, performing final verification...")
+                    delay(1000)
+
+                    val finalLogs = getConnectionLogs(context) ?: ""
+
+                    // Final check for any auth failures
+                    if (finalLogs.contains("AUTH_FAILED", ignoreCase = true) ||
+                        finalLogs.contains("authentication failed", ignoreCase = true) ||
+                        finalLogs.contains("certificate unknown", ignoreCase = true) ||
+                        finalLogs.contains("EAP_TLS method failed", ignoreCase = true)) {
+                        authFailureDetected = true
+                        Log.e(tag, "Authentication failure found in final log check")
+                    } else {
+                        // Only trust TUN interface after auth phase is complete
+                        connectionEstablished = checkIfVpnIsActive()
+                        if (connectionEstablished) {
+                            Log.d(tag, "TUN interface verified in final check")
+                        } else {
+                            Log.e(tag, "No TUN interface found in final check")
+                        }
+                    }
+                }
+
+                // Evaluate final connection status
+                if (authFailureDetected) {
+                    Log.e(tag, "Connection failed: Authentication error detected")
+                    _state.value = ConnectionState.Error("Authentication failed: Certificate revoked or invalid")
+
+                    // Cleanup after brief delay
+                    delay(500)
+                    disconnect(context)
+                    _state.value = ConnectionState.Disconnected
+                    currentProfile = null
+                    return@withContext false
+
+                } else if (connectionEstablished) {
+                    _state.value = ConnectionState.Connected
+                    Log.d(tag, "Connection established successfully")
+
+                    // NOW start background monitoring to detect disconnections
+                    startLogMonitoring()
+                    return@withContext true
+
+                } else {
+                    Log.e(tag, "Connection timeout: Unable to establish VPN tunnel")
+                    _state.value = ConnectionState.Error("Connection timeout: Unable to establish VPN tunnel")
+
+                    delay(500)
+                    disconnect(context)
+                    _state.value = ConnectionState.Disconnected
+                    currentProfile = null
+                    return@withContext false
+                }
 
             } catch (ex: Exception) {
                 Log.e(tag, "Connect failed", ex)
+                stopLogMonitoring()
                 _state.value = ConnectionState.Error("Connect failed: ${ex.message}")
                 _state.value = ConnectionState.Disconnected
                 currentProfile = null
                 false
+            } finally {
+                // Release the connection lock
+                isConnecting.set(false)
             }
         }
     }
@@ -307,6 +630,9 @@ class StrongSwanHandler(
     override suspend fun disconnect(context: Context): Boolean {
         return withContext(Dispatchers.IO) {
             try {
+                // Stop log monitoring first
+                stopLogMonitoring()
+
                 if (_state.value is ConnectionState.Disconnected || _state.value is ConnectionState.Disconnecting) {
                     Log.w(tag, "Already disconnected or disconnecting")
                     return@withContext true
@@ -383,14 +709,6 @@ class StrongSwanHandler(
                     Log.w(tag, "Failed to clear state files: ${e.message}")
                 }
 
-                // Method 5: Force kill any strongSwan processes (requires root, likely to fail)
-                try {
-                    Runtime.getRuntime().exec("pkill -f charon")
-                    Log.d(tag, "Attempted to kill charon process")
-                } catch (e: Exception) {
-                    Log.v(tag, "Process kill failed (expected): ${e.message}")
-                }
-
                 // Give some time for the disconnect actions to take effect
                 delay(1000)
 
@@ -406,44 +724,61 @@ class StrongSwanHandler(
                 _state.value = ConnectionState.Disconnected
                 currentProfile = null
                 false
+            } finally {
+                stopLogMonitoring()
             }
         }
     }
 
-    override suspend fun getConnectionLogs(context: Context): String? {
-        return withContext(Dispatchers.IO) {
-            try {
-                Log.d(tag, "Retrieving connection logs")
+    /**
+     * Set the current profile and update connection state accordingly
+     * This is used when restoring connection state after app restart
+     */
+    fun setCurrentProfile(profile: VpnProfile) {
+        currentProfile = profile
 
-                val uri: Uri = LogContentProvider.createContentUri() ?: run {
-                    Log.w(tag, "LogContentProvider returned null URI")
-                    return@withContext "LogContentProvider not available"
-                }
-
-                context.contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
-                    val logs = readAll(pfd)
-                    Log.d(tag, "Retrieved ${logs.length} characters of logs")
-                    return@withContext logs
-                } ?: run {
-                    Log.w(tag, "Could not open log file descriptor")
-                    return@withContext "Could not access log file"
-                }
-
-            } catch (ex: Exception) {
-                Log.e(tag, "Failed to read logs", ex)
-                "Failed to read logs: ${ex.message}"
-            }
+        // Check if VPN is actually active and update our state accordingly
+        val isVpnActive = checkIfVpnIsActive()
+        if (isVpnActive) {
+            _state.value = ConnectionState.Connected
+            Log.d(tag, "Set current profile and detected active VPN connection - updated state to Connected")
+            // Start monitoring since we have an active connection
+            startLogMonitoring()
+        } else {
+            _state.value = ConnectionState.Disconnected
+            Log.d(tag, "Set current profile but no active VPN detected - state remains Disconnected")
         }
+
+        Log.d(tag, "Current profile set: ${profile.name}, Gateway: ${profile.gateway}, State: ${_state.value}")
     }
 
-    private fun readAll(pfd: ParcelFileDescriptor): String {
+    /**
+     * Check if VPN is actually active by examining network interfaces
+     */
+    private fun checkIfVpnIsActive(): Boolean {
         return try {
-            FileInputStream(pfd.fileDescriptor).use { fis ->
-                String(fis.readBytes(), Charsets.UTF_8)
+            val networkInterfaces = java.net.NetworkInterface.getNetworkInterfaces()
+            while (networkInterfaces.hasMoreElements()) {
+                val networkInterface = networkInterfaces.nextElement()
+                if (networkInterface.name.startsWith("tun") && networkInterface.isUp) {
+                    Log.d(tag, "Found active tun interface: ${networkInterface.name}")
+                    return true
+                }
             }
+            false
         } catch (e: Exception) {
-            Log.e(tag, "Error reading log file", e)
-            "Error reading log file: ${e.message}"
+            Log.w(tag, "Failed to check network interfaces: ${e.message}")
+            false
+        }
+    }
+
+    fun cleanup() {
+        try {
+            stopLogMonitoring()
+            monitoringScope.cancel()
+            unbindVpnStateService(appContext)
+        } catch (e: Exception) {
+            Log.e(tag, "Error during cleanup: ${e.message}")
         }
     }
 }
