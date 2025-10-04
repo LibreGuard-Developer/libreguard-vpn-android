@@ -24,6 +24,7 @@ import de.blinkt.openvpn.core.ConnectionStatus as IcsConnectionStatus
 import java.io.StringReader
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.os.Build
@@ -48,37 +49,14 @@ class OpenVpnHandler(
     @Volatile private var connectStartAt: Long = 0L
     @Volatile private var connectingActive: Boolean = false
     @Volatile private var lastStateName: String = ""
+    @Volatile private var hadConnected: Boolean = false
+    @Volatile private var reconnectStartAt: Long = 0L
+    private val connectRetryCount = AtomicInteger(0)
 
     // ICS OpenVPN state listener
     private val vpnStatusListener = object : StateListener {
         override fun updateState(state: String, logmessage: String, localizedResId: Int, level: de.blinkt.openvpn.core.ConnectionStatus, intent: Intent?) {
-            val now = System.currentTimeMillis()
-            lastStateName = state.uppercase()
-            when (lastStateName) {
-                "CONNECTED" -> {
-                    connectingActive = false
-                    _state.value = ConnectionState.Connected
-                }
-                "CONNECTING", "WAIT", "RESOLVE", "TCP_CONNECT", "GET_CONFIG", "ASSIGN_IP", "ADD_ROUTES", "AUTH", "AUTH_PENDING", "RECONNECTING", "USER_INPUT", "EXITING" -> {
-                    _state.value = ConnectionState.Connecting
-                }
-                "DISCONNECTED", "NOPROCESS" -> {
-                    val elapsed = if (connectStartAt > 0) now - connectStartAt else 0L
-                    if (connectingActive && elapsed > 2000L) {
-                        connectingActive = false
-                        _state.value = ConnectionState.Error("OpenVPN process not running")
-                    } else {
-                        _state.value = ConnectionState.Disconnected
-                    }
-                }
-                else -> {
-                    if (level == de.blinkt.openvpn.core.ConnectionStatus.LEVEL_AUTH_FAILED) {
-                        connectingActive = false
-                        _state.value = ConnectionState.Error("Authentication failed")
-                    }
-                }
-            }
-            Log.d(tag, "[ICS] state=$state level=$level msg=$logmessage")
+            handleStateUpdate(state, logmessage, level)
         }
 
         override fun setConnectedVPN(uuid: String?) {
@@ -93,31 +71,7 @@ class OpenVpnHandler(
 
     private val statusCallbacks = object : IStatusCallbacks.Stub() {
         override fun updateStateString(state: String?, logmessage: String?, localizedResId: Int, level: IcsConnectionStatus?, intent: Intent?) {
-            val st = (state ?: "").uppercase()
-            lastStateName = st
-            val lvl = level ?: IcsConnectionStatus.LEVEL_NOTCONNECTED
-            val now = System.currentTimeMillis()
-            when (st) {
-                "CONNECTED" -> {
-                    connectingActive = false
-                    _state.value = ConnectionState.Connected
-                }
-                "CONNECTING", "WAIT", "RESOLVE", "TCP_CONNECT", "GET_CONFIG", "ASSIGN_IP", "ADD_ROUTES", "AUTH", "AUTH_PENDING", "RECONNECTING", "USER_INPUT", "EXITING" -> _state.value = ConnectionState.Connecting
-                "DISCONNECTED", "NOPROCESS" -> {
-                    val elapsed = if (connectStartAt > 0) now - connectStartAt else 0L
-                    if (connectingActive && elapsed > 2000L) {
-                        connectingActive = false
-                        _state.value = ConnectionState.Error("OpenVPN process not running")
-                    } else {
-                        _state.value = ConnectionState.Disconnected
-                    }
-                }
-                else -> if (lvl == IcsConnectionStatus.LEVEL_AUTH_FAILED) {
-                    connectingActive = false
-                    _state.value = ConnectionState.Error("Authentication failed")
-                }
-            }
-            Log.d(tag, "[AIDL] state=$st level=$lvl msg=${logmessage ?: ""}")
+            handleStateUpdate(state ?: "", logmessage ?: "", level ?: IcsConnectionStatus.LEVEL_NOTCONNECTED)
         }
         override fun updateByteCount(in_: Long, out: Long) { /* ignore */ }
         override fun newLogItem(logItem: LogItem?) {
@@ -191,6 +145,11 @@ class OpenVpnHandler(
             ensureOpenVpnNotificationChannels(context)
             bindStatusService(context)
 
+            // Reset connection markers and counters
+            hadConnected = false
+            reconnectStartAt = 0L
+            connectRetryCount.set(0)
+
             // Read config
             val cfg = runCatching { context.filesDir.resolve(configPath).readText() }
                 .getOrElse {
@@ -259,6 +218,8 @@ class OpenVpnHandler(
             _state.value = ConnectionState.Disconnecting
             connectingActive = false
             connectStartAt = 0L
+            reconnectStartAt = 0L
+            connectRetryCount.set(0)
             val stopped = stopVpnViaService(context)
             if (!stopped) {
                 Log.w(tag, "Service stopVPN returned false; forcing process stop")
@@ -373,6 +334,72 @@ class OpenVpnHandler(
             }
             false
         } catch (_: Throwable) { false }
+    }
+
+    private fun handleStateUpdate(stateRaw: String, logmessage: String, level: IcsConnectionStatus) {
+        val now = System.currentTimeMillis()
+        val state = stateRaw.uppercase()
+        lastStateName = state
+
+        when (state) {
+            "CONNECTED" -> {
+                connectingActive = false
+                hadConnected = true
+                reconnectStartAt = 0L
+                connectRetryCount.set(0)
+                _state.value = ConnectionState.Connected
+            }
+            "CONNECTING", "WAIT", "RESOLVE", "TCP_CONNECT", "GET_CONFIG", "ASSIGN_IP", "ADD_ROUTES", "AUTH", "AUTH_PENDING", "USER_INPUT" -> {
+                _state.value = ConnectionState.Connecting
+            }
+            "RECONNECTING", "CONNECTRETRY" -> {
+                // Entered reconnect loop
+                _state.value = ConnectionState.Connecting
+                if (reconnectStartAt == 0L) reconnectStartAt = now
+                // Increase retry count on explicit CONNECTRETRY or on server reset hints
+                if (state == "CONNECTRETRY") {
+                    connectRetryCount.incrementAndGet()
+                }
+                if (logmessage.contains("server-pushed-connection-reset", ignoreCase = true)) {
+                    connectRetryCount.incrementAndGet()
+                }
+                // If we previously had a stable connection and reconnecting persists beyond threshold, treat as error
+                val retryExceeded = connectRetryCount.get() >= 3
+                val timeExceeded = (now - reconnectStartAt) > 10_000
+                val noTun = !isTunUp()
+                if (hadConnected && (retryExceeded || timeExceeded) && noTun) {
+                    connectingActive = false
+                    _state.value = ConnectionState.Error("OpenVPN: connection reset/refused by server")
+                }
+            }
+            "EXITING" -> {
+                // Exiting usually means disconnection
+                connectingActive = false
+                if (hadConnected) {
+                    _state.value = ConnectionState.Disconnected
+                } else {
+                    _state.value = ConnectionState.Error("OpenVPN exited")
+                }
+            }
+            "DISCONNECTED", "NOPROCESS" -> {
+                val elapsed = if (connectStartAt > 0) now - connectStartAt else 0L
+                connectingActive = false
+                if (hadConnected) {
+                    _state.value = ConnectionState.Disconnected
+                } else if (elapsed > 2000L) {
+                    _state.value = ConnectionState.Error("OpenVPN process not running")
+                } else {
+                    _state.value = ConnectionState.Disconnected
+                }
+            }
+            else -> {
+                if (level == IcsConnectionStatus.LEVEL_AUTH_FAILED || logmessage.contains("AUTH_FAILED", true)) {
+                    connectingActive = false
+                    _state.value = ConnectionState.Error("Authentication failed")
+                }
+            }
+        }
+        Log.d(tag, "[AIDL] state=$state level=$level msg=$logmessage")
     }
 
     private suspend fun waitUntilConnectedOrFail(timeoutMs: Long = 45000L): Boolean {

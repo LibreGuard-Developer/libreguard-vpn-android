@@ -26,6 +26,7 @@ import com.example.shadowlinkvpn.service.data.DataUsageInfo
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -99,6 +100,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     val isInstallingCertificate: StateFlow<Boolean> = _isInstallingCertificate
 
     private var authToken: String? = null
+    private var currentUserId: String? = null
     private var activeVpnHandler: VpnProtocolHandler? = null
     private var pendingProfile: VpnProfile? = null
     private val configManager by lazy { VpnConfigManager(getApplication()) }
@@ -113,6 +115,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _dataUsageInfo = MutableStateFlow(DataUsageInfo())
     val dataUsageInfo: StateFlow<DataUsageInfo> = _dataUsageInfo
+
+    // Track OpenVPN state collection
+    private var openVpnStateJob: Job? = null
 
     init {
         // Load persisted auth token and connection state immediately on startup
@@ -141,6 +146,8 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             val savedAuthToken = sharedPrefs.getString("auth_token", null)
             if (!savedAuthToken.isNullOrBlank()) {
                 authToken = savedAuthToken
+                // Restore stable user id for scoping caches
+                currentUserId = sharedPrefs.getString("current_user_id", null)
                 Log.d(TAG, "Restored auth token from persistent storage on init")
             }
         } catch (e: Exception) {
@@ -428,8 +435,16 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             // Clear user data properly - this preserves the user's total data usage
             dataUsageManager.clearUser()
 
+            // Clear user-scoped cached VPN configs
+            try {
+                clearUserScopedVpnCaches()
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed clearing user-scoped caches on logout: ${e.message}")
+            }
+
             // Clear auth token and all related state
             authToken = null
+            currentUserId = null
             _remoteServers.value = emptyList()
             _selectedServer.value = null
             _errorMessage.value = "Logged out successfully"
@@ -489,11 +504,50 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         // CRITICAL FIX: Create stable user ID that persists across login sessions
         // Instead of using token hash (which changes), extract user info from token or create persistent ID
         val userId = getStableUserId(token)
+        currentUserId = userId
+        sharedPrefs.edit().putString("current_user_id", userId).apply()
         dataUsageManager.setUserId(userId)
         Log.d(TAG, "Set stable user ID: $userId")
 
+        // Clean legacy, non-scoped OpenVPN caches to avoid cross-user leakage
+        try {
+            cleanupLegacyOpenVpnCache()
+        } catch (e: Exception) {
+            Log.w(TAG, "Legacy OpenVPN cache cleanup failed: ${e.message}")
+        }
+
         // Automatically load remote servers when token is set, but don't fail if it doesn't work
         loadRemoteServersWithFallback()
+    }
+
+    // Provide a user-scoped cache directory per protocol
+    private fun getUserScopedDir(context: Context, protocol: VpnProtocol): File {
+        val uid = currentUserId ?: "anon"
+        val dir = File(context.filesDir, "vpn_cache/${protocol.name.lowercase()}/$uid")
+        if (!dir.exists()) dir.mkdirs()
+        return dir
+    }
+
+    private fun clearUserScopedVpnCaches() {
+        val context = getApplication<Application>().applicationContext
+        val base = File(context.filesDir, "vpn_cache")
+        // Only delete current user's scoped caches to avoid wiping other users
+        currentUserId?.let { uid ->
+            val userDir = File(base, "openvpn/$uid")
+            userDir.deleteRecursively()
+            val wgDir = File(base, "wireguard/$uid")
+            wgDir.deleteRecursively()
+        }
+    }
+
+    private fun cleanupLegacyOpenVpnCache() {
+        val context = getApplication<Application>().applicationContext
+        // Old cache files were at filesDir/openvpn_config_*.ovpn and openvpn_config.ovpn
+        context.filesDir.listFiles()?.forEach { f ->
+            if (f.name == "openvpn_config.ovpn" || f.name.startsWith("openvpn_config_") && f.name.endsWith(".ovpn")) {
+                runCatching { f.delete() }
+            }
+        }
     }
 
     /**
@@ -553,7 +607,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             val payloadJson = String(decodedBytes)
 
             // Parse JSON to extract user ID
-            val jsonObj = org.json.JSONObject(payloadJson)
+            val jsonObj = JSONObject(payloadJson)
 
             // Try common JWT user ID field names
             val possibleUserFields = listOf("sub", "user_id", "userId", "id", "email", "username")
@@ -656,75 +710,6 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private suspend fun connectOpenVpnViaDownload(serverId: Int): Boolean {
-        return withContext(Dispatchers.IO) {
-            val context = getApplication<Application>().applicationContext
-            try {
-                val token = authToken ?: return@withContext false
-                val cacheFile = File(context.filesDir, "openvpn_config_${serverId}.ovpn")
-
-                // Ensure handler
-                activeVpnHandler = VpnProtocolFactory.createHandler(VpnProtocol.OPENVPN, context)
-                val initialized = activeVpnHandler?.initialize(context) ?: false
-                if (!initialized) throw Exception("Failed to initialize OpenVPN handler")
-
-                // Try cached config first
-                if (cacheFile.exists() && cacheFile.length() > 0) {
-                    Log.d(TAG, "Using cached OpenVPN config: ${cacheFile.absolutePath}")
-                    val ok = (activeVpnHandler as? OpenVpnHandler)?.connect(context, cacheFile.absolutePath) == true
-                    if (ok) {
-                        onOpenVpnConnected()
-                        return@withContext true
-                    } else {
-                        Log.w(TAG, "Cached OpenVPN config failed. Will re-download and retry")
-                    }
-                }
-
-                // Download latest config
-                val resp = RetrofitClient.instance.downloadOpenVpnConfig(
-                    authorization = "Bearer $token",
-                    request = OpenVpnDownloadRequest(serverId)
-                )
-
-                if (!resp.isSuccessful) {
-                    Log.e(TAG, "OpenVPN config download failed: ${resp.code()} ${resp.message()}")
-                    return@withContext false
-                }
-
-                val body: ResponseBody = resp.body() ?: return@withContext false
-                body.byteStream().use { input ->
-                    cacheFile.outputStream().use { output ->
-                        input.copyTo(output)
-                    }
-                }
-                Log.d(TAG, "Saved OpenVPN config to ${cacheFile.absolutePath}")
-
-                // Connect with fresh config
-                val ok = (activeVpnHandler as? OpenVpnHandler)?.connect(context, cacheFile.absolutePath) == true
-                if (ok) {
-                    onOpenVpnConnected()
-                    true
-                } else {
-                    Log.e(TAG, "Failed to connect with freshly downloaded OpenVPN config")
-                    false
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "OpenVPN download/connect error", e)
-                false
-            }
-        }
-    }
-
-    private fun onOpenVpnConnected() {
-        _isConnected.value = true
-        _isConnecting.value = false
-        _errorMessage.value = "Connected using OpenVPN"
-        Log.d(TAG, "Successfully connected using OpenVPN")
-        dataUsageManager.startMonitoring()
-        Log.d(TAG, "Started data usage monitoring")
-        saveConnectionState()
-    }
-
     private fun connectWithConfig(
         configContent: String,
         server: VpnServer,
@@ -795,7 +780,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             val mapped = withContext(Dispatchers.IO) { configManager.getMappedCertAlias(profile.gateway, profile.remoteId) }
             if (!mapped.isNullOrBlank()) {
                 val mappedDiag = withContext(Dispatchers.IO) { configManager.diagnoseUserCertificate(mapped) }
-                if (mappedDiag.state == com.example.shadowlinkvpn.util.VpnConfigManager.UserCertState.INSTALLED_OK) {
+                if (mappedDiag.state == VpnConfigManager.UserCertState.INSTALLED_OK) {
                     if (alias != mapped) {
                         Log.d(TAG, "[CertFlow] Replacing provided alias $alias with mapped installed alias $mapped to avoid re-import")
                         profile.userCertificateAlias = mapped
@@ -811,7 +796,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 // If we didn't already switch to mapped (installed) alias, and current alias needs install, see if mapping can rescue
                 if (alias != mapped && !mapped.isNullOrBlank()) {
                     val mappedDiag2 = withContext(Dispatchers.IO) { configManager.diagnoseUserCertificate(mapped) }
-                    if (mappedDiag2.state == com.example.shadowlinkvpn.util.VpnConfigManager.UserCertState.INSTALLED_OK) {
+                    if (mappedDiag2.state == VpnConfigManager.UserCertState.INSTALLED_OK) {
                         Log.d(TAG, "[CertFlow] Late rescue: using mapped alias $mapped instead of $alias")
                         profile.userCertificateAlias = mapped
                         alias = mapped
@@ -843,8 +828,8 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             }
             val diag = withContext(Dispatchers.IO) { configManager.diagnoseUserCertificate(alias) }
             when (diag.state) {
-                com.example.shadowlinkvpn.util.VpnConfigManager.UserCertState.INSTALLED_OK -> Log.d(TAG, "[CertFlow] Pre-flight KeyChain OK: chain=${diag.chainSize} hasKey=${diag.hasPrivateKey}")
-                com.example.shadowlinkvpn.util.VpnConfigManager.UserCertState.INSTALLED_NO_KEY -> { _errorMessage.value = "Installed certificate has no private key. Pick another certificate."; _showCertPicker.value = true; pendingProfile = profile; return }
+                VpnConfigManager.UserCertState.INSTALLED_OK -> Log.d(TAG, "[CertFlow] Pre-flight KeyChain OK: chain=${diag.chainSize} hasKey=${diag.hasPrivateKey}")
+                VpnConfigManager.UserCertState.INSTALLED_NO_KEY -> { _errorMessage.value = "Installed certificate has no private key. Pick another certificate."; _showCertPicker.value = true; pendingProfile = profile; return }
                 else -> { _errorMessage.value = "Certificate not installed yet. Pick certificate or reinstall."; pendingProfile = profile; _showCertPicker.value = true; return }
             }
             completeStrongSwanConnection(profile)
@@ -875,7 +860,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                     withContext(Dispatchers.IO) { logUserCert(chosenAlias) }
                     prof.userCertificateAlias = chosenAlias
                     val diag = withContext(Dispatchers.IO) { configManager.diagnoseUserCertificate(chosenAlias) }
-                    if (diag.state == com.example.shadowlinkvpn.util.VpnConfigManager.UserCertState.INSTALLED_OK) {
+                    if (diag.state == VpnConfigManager.UserCertState.INSTALLED_OK) {
                         withContext(Dispatchers.IO) { configManager.saveMappedCertAlias(prof.gateway, prof.remoteId, chosenAlias) }
                         _errorMessage.value = "Certificate selected: $chosenAlias"
                         completeStrongSwanConnection(prof)
@@ -906,13 +891,13 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 // Poll for the certificate to become available (installation is async)
                 var diag = withContext(Dispatchers.IO) { configManager.diagnoseUserCertificate(alias) }
                 var attempts = 0
-                while (diag.state != com.example.shadowlinkvpn.util.VpnConfigManager.UserCertState.INSTALLED_OK && attempts < 10) {
+                while (diag.state != VpnConfigManager.UserCertState.INSTALLED_OK && attempts < 10) {
                     attempts++
                     Log.d(TAG, "[CertFlow] Waiting for KeyChain to expose cert alias=$alias attempt=$attempts state=${diag.state}")
                     delay(500)
                     diag = withContext(Dispatchers.IO) { configManager.diagnoseUserCertificate(alias) }
                 }
-                if (diag.state != com.example.shadowlinkvpn.util.VpnConfigManager.UserCertState.INSTALLED_OK) {
+                if (diag.state != VpnConfigManager.UserCertState.INSTALLED_OK) {
                     _errorMessage.value = "Certificate not yet available (state=${diag.state}). Pick certificate manually.";
                     _showCertPicker.value = true
                     return@launch
@@ -990,41 +975,6 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // Update the connectOpenVpn method if needed
-    private suspend fun connectOpenVpn(config: String) {
-        try {
-            val context = getApplication<Application>().applicationContext
-            val configFile = saveOpenVpnConfig(context, config)
-
-            activeVpnHandler = VpnProtocolFactory.createHandler(VpnProtocol.OPENVPN, context)
-
-            val connected = withContext(Dispatchers.IO) {
-                (activeVpnHandler as? OpenVpnHandler)?.connect(context, configFile.absolutePath) ?: false
-            }
-
-            if (connected) {
-                _isConnected.value = true
-                _isConnecting.value = false
-                _errorMessage.value = "Connected using OpenVPN"
-                Log.d(TAG, "Successfully connected using OpenVPN")
-
-                // Start data usage monitoring when VPN connects
-                dataUsageManager.startMonitoring()
-                Log.d(TAG, "Started data usage monitoring")
-
-                // Save connection state for persistence
-                saveConnectionState()
-            } else {
-                throw Exception("Failed to connect using OpenVPN")
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "OpenVPN connection error", e)
-            _isConnected.value = false
-            _errorMessage.value = "OpenVPN connection failed: ${e.localizedMessage}"
-            activeVpnHandler = null
-        }
-    }
-
     suspend fun connectWireGuard(config: String) {
         try {
             val context = getApplication<Application>().applicationContext
@@ -1059,11 +1009,168 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private suspend fun connectOpenVpnViaDownload(serverId: Int): Boolean {
+        return withContext(Dispatchers.IO) {
+            val context = getApplication<Application>().applicationContext
+            try {
+                val token = authToken ?: return@withContext false
+                val cacheDir = getUserScopedDir(context, VpnProtocol.OPENVPN)
+                val cacheFile = File(cacheDir, "openvpn_${serverId}.ovpn")
+
+                // Ensure handler
+                activeVpnHandler = VpnProtocolFactory.createHandler(VpnProtocol.OPENVPN, context)
+                val initialized = activeVpnHandler?.initialize(context) ?: false
+                if (!initialized) throw Exception("Failed to initialize OpenVPN handler")
+
+                // Start observing handler state to keep UI in sync, including revocation cases
+                observeActiveHandlerState()
+
+                // Try cached config first
+                if (cacheFile.exists() && cacheFile.length() > 0) {
+                    Log.d(TAG, "Using cached OpenVPN config: ${cacheFile.absolutePath}")
+                    val ok = (activeVpnHandler as? OpenVpnHandler)?.connect(context, cacheFile.absolutePath) == true
+                    if (ok) {
+                        onOpenVpnConnected()
+                        return@withContext true
+                    } else {
+                        Log.w(TAG, "Cached OpenVPN config failed. Will re-download and retry")
+                    }
+                }
+
+                // Download latest config
+                val resp = RetrofitClient.instance.downloadOpenVpnConfig(
+                    authorization = "Bearer $token",
+                    request = OpenVpnDownloadRequest(serverId)
+                )
+
+                if (!resp.isSuccessful) {
+                    Log.e(TAG, "OpenVPN config download failed: ${resp.code()} ${resp.message()}")
+                    return@withContext false
+                }
+
+                val body: ResponseBody = resp.body() ?: return@withContext false
+                body.byteStream().use { input ->
+                    cacheFile.outputStream().use { output ->
+                        input.copyTo(output)
+                    }
+                }
+                Log.d(TAG, "Saved OpenVPN config to ${cacheFile.absolutePath}")
+
+                // Connect with fresh config
+                val ok = (activeVpnHandler as? OpenVpnHandler)?.connect(context, cacheFile.absolutePath) == true
+                if (ok) {
+                    onOpenVpnConnected()
+                    true
+                } else {
+                    Log.e(TAG, "Failed to connect with freshly downloaded OpenVPN config")
+                    false
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "OpenVPN download/connect error", e)
+                false
+            }
+        }
+    }
+
+    private fun onOpenVpnConnected() {
+        _isConnected.value = true
+        _isConnecting.value = false
+        _errorMessage.value = "Connected using OpenVPN"
+        Log.d(TAG, "Successfully connected using OpenVPN")
+        dataUsageManager.startMonitoring()
+        Log.d(TAG, "Started data usage monitoring")
+        saveConnectionState()
+    }
+
+    // Observe active handler state (especially for OpenVPN) and reflect in UI
+    private fun observeActiveHandlerState() {
+        openVpnStateJob?.cancel()
+        val handler = activeVpnHandler ?: return
+        openVpnStateJob = viewModelScope.launch {
+            try {
+                handler.connectionState.collect { st ->
+                    when (st) {
+                        is ConnectionState.Connected -> {
+                            _isConnected.value = true
+                            _isConnecting.value = false
+                        }
+                        is ConnectionState.Connecting -> {
+                            _isConnecting.value = true
+                            _isConnected.value = false
+                        }
+                        is ConnectionState.Disconnecting -> {
+                            _isConnecting.value = true
+                        }
+                        is ConnectionState.Disconnected -> {
+                            // If previously connected, stop monitoring and clear persisted state
+                            if (_isConnected.value) {
+                                dataUsageManager.stopMonitoring()
+                                clearPersistedState()
+                            }
+                            _isConnecting.value = false
+                            _isConnected.value = false
+                        }
+                        is ConnectionState.Error -> {
+                            _errorMessage.value = st.message
+                            // Treat as disconnected in UI
+                            if (_isConnected.value) {
+                                dataUsageManager.stopMonitoring()
+                                clearPersistedState()
+                            }
+                            _isConnecting.value = false
+                            _isConnected.value = false
+                        }
+                    }
+                }
+            } catch (t: Throwable) {
+                Log.w(TAG, "Handler state observe error: ${t.message}")
+            }
+        }
+    }
+
+    private suspend fun connectOpenVpn(config: String) {
+        try {
+            val context = getApplication<Application>().applicationContext
+            val configFile = saveOpenVpnConfig(context, config)
+
+            activeVpnHandler = VpnProtocolFactory.createHandler(VpnProtocol.OPENVPN, context)
+
+            // Start observing state before connect
+            observeActiveHandlerState()
+
+            val connected = withContext(Dispatchers.IO) {
+                (activeVpnHandler as? OpenVpnHandler)?.connect(context, configFile.absolutePath) ?: false
+            }
+
+            if (connected) {
+                _isConnected.value = true
+                _isConnecting.value = false
+                _errorMessage.value = "Connected using OpenVPN"
+                Log.d(TAG, "Successfully connected using OpenVPN")
+
+                // Start data usage monitoring when VPN connects
+                dataUsageManager.startMonitoring()
+                Log.d(TAG, "Started data usage monitoring")
+
+                // Save connection state for persistence
+                saveConnectionState()
+            } else {
+                throw Exception("Failed to connect using OpenVPN")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "OpenVPN connection error", e)
+            _isConnected.value = false
+            _errorMessage.value = "OpenVPN connection failed: ${e.localizedMessage}"
+            activeVpnHandler = null
+        }
+    }
+
     /**
-     * Save OpenVPN config to file
+     * Save OpenVPN config to user-scoped file
      */
     private fun saveOpenVpnConfig(context: Context, config: String): File {
-        val configFile = File(context.filesDir, "openvpn_config.ovpn")
+        val dir = getUserScopedDir(context, VpnProtocol.OPENVPN)
+        val configFile = File(dir, "openvpn_current.ovpn")
         configFile.writeText(config)
         return configFile
     }
@@ -1072,7 +1179,8 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
      * Save WireGuard config to file
      */
     private fun saveWireguardConfig(context: Context, config: String): File {
-        val configFile = File(context.filesDir, "wireguard_config.conf")
+        val dir = getUserScopedDir(context, VpnProtocol.WIREGUARD)
+        val configFile = File(dir, "wireguard_current.conf")
         configFile.writeText(config)
         return configFile
     }
@@ -1082,6 +1190,10 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 val context = getApplication<Application>().applicationContext
                 Log.d(TAG, "Starting disconnect process - activeHandler exists: ${activeVpnHandler != null}")
+
+                // Cancel OpenVPN state observer
+                openVpnStateJob?.cancel()
+                openVpnStateJob = null
 
                 // If we don't have an active handler but connection state shows connected,
                 // try to create one to handle the disconnect properly
@@ -1226,28 +1338,6 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     // Check if VPN permission is granted
     suspend fun prepareVpn(context: Context): Intent? = withContext(Dispatchers.IO) {
         VpnService.prepare(context)
-    }
-
-    // Check current VPN connection status
-    suspend fun checkVpnStatus(): Boolean = withContext(Dispatchers.IO) {
-        return@withContext try {
-            val context = getApplication<Application>().applicationContext
-
-            // Method 1: Check if our VPN service is running
-            val vpnService = VpnService.prepare(context)
-            val isVpnServiceReady = vpnService == null // null means VPN permission is granted and might be active
-
-            // Method 2: Check if we have an active VPN handler
-            val hasActiveHandler = activeVpnHandler != null
-
-            Log.d(TAG, "VPN status check: vpnServiceReady=$isVpnServiceReady, hasActiveHandler=$hasActiveHandler")
-
-            // Consider VPN active if service is ready (permission granted) and no preparation needed
-            isVpnServiceReady && hasActiveHandler
-        } catch (e: Exception) {
-            Log.e(TAG, "Error checking VPN status", e)
-            false
-        }
     }
 
     // Check current VPN connection status - improved version that doesn't require activeVpnHandler
