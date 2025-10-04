@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
     <domain-config cleartextTrafficPermitted="true">
-        <domain includeSubdomains="true">thundergradvpnca.ddns.net</domain>
+        <domain includeSubdomains="true">shadowlink-vpn-ca-proxy1.ddns.net</domain>
     </domain-config>
 </network-security-config>
