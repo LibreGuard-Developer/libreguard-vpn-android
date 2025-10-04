@@ -105,6 +105,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     private var pendingProfile: VpnProfile? = null
     private val configManager by lazy { VpnConfigManager(getApplication()) }
 
+    // Track the StateFlow observer job to prevent stacking observers
+    private var stateObserverJob: Job? = null
+
     // Add SharedPreferences for state persistence
     private val sharedPrefs by lazy {
         getApplication<Application>().getSharedPreferences("vpn_state_prefs", Context.MODE_PRIVATE)
@@ -642,6 +645,16 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         val server = _selectedServer.value
         val token = authToken
 
+        // Guard: ignore requests while connecting or already connected
+        if (_isConnecting.value) {
+            _errorMessage.value = "Already connecting..."
+            return
+        }
+        if (_isConnected.value) {
+            _errorMessage.value = "Already connected"
+            return
+        }
+
         if (server == null) {
             _errorMessage.value = "Please select a server"
             return
@@ -694,18 +707,22 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                         connectWithConfig(configContent, server, selected, certificateName, passphrase)
                     } else {
                         _errorMessage.value = "No config content received"
+                        // Since we couldn't even start, allow retry
+                        _isConnecting.value = false
                     }
                 } else {
                     val errorBody = response.body()
                     _errorMessage.value = errorBody?.message ?: "Failed to get VPN config: ${response.code()}"
+                    _isConnecting.value = false
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error connecting to VPN", e)
                 _errorMessage.value = "Connection error: ${e.localizedMessage}"
+                _isConnecting.value = false
             } finally {
-                if (_selectedProtocol.value != VpnProtocol.OPENVPN) {
-                    _isConnecting.value = false
-                }
+                // IMPORTANT: Do not set _isConnecting=false here for IKEv2/WireGuard when we handed off to handler
+                // The handler's StateFlow observer will update _isConnecting when it transitions to Connected/Error/Disconnected
+                // For OpenVPN we handled it in the early return above
             }
         }
     }
@@ -774,33 +791,25 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             }
             Log.d(TAG, "[CertFlow] Parsed profile name=${profile.name} gateway=${profile.gateway} vpnType=${profile.vpnType} userCertAlias=${profile.userCertificateAlias}")
             withContext(Dispatchers.IO) { logUserCert(profile.userCertificateAlias) }
+
+            // Start with the alias provided by the server/profile (if any). We do NOT override a provided alias with an old mapping.
             var alias = profile.userCertificateAlias
 
-            // NEW: If a previously mapped alias exists and is installed OK, prefer it and ignore freshly generated P12 alias
-            val mapped = withContext(Dispatchers.IO) { configManager.getMappedCertAlias(profile.gateway, profile.remoteId) }
-            if (!mapped.isNullOrBlank()) {
-                val mappedDiag = withContext(Dispatchers.IO) { configManager.diagnoseUserCertificate(mapped) }
-                if (mappedDiag.state == VpnConfigManager.UserCertState.INSTALLED_OK) {
-                    if (alias != mapped) {
-                        Log.d(TAG, "[CertFlow] Replacing provided alias $alias with mapped installed alias $mapped to avoid re-import")
-                        profile.userCertificateAlias = mapped
-                        alias = mapped
-                      }
-                } else {
-                    Log.d(TAG, "[CertFlow] Mapped alias $mapped exists but state=${mappedDiag.state}; will proceed with provided alias $alias")
+            // If no alias provided, try a per-user mapping based on gateway+remoteId+username
+            if (alias.isNullOrBlank()) {
+                val remoteKey = perUserRemoteId(profile.remoteId, profile.username)
+                val mapped = withContext(Dispatchers.IO) {
+                    configManager.getMappedCertAlias(profile.gateway, remoteKey)
                 }
-            }
-
-            // Try previously mapped alias if none or not installed (existing logic follows, updated to use possibly reassigned alias)
-            if (alias.isNullOrBlank() || withContext(Dispatchers.IO) { configManager.needsUserCertInstallation(alias) }) {
-                // If we didn't already switch to mapped (installed) alias, and current alias needs install, see if mapping can rescue
-                if (alias != mapped && !mapped.isNullOrBlank()) {
-                    val mappedDiag2 = withContext(Dispatchers.IO) { configManager.diagnoseUserCertificate(mapped) }
-                    if (mappedDiag2.state == VpnConfigManager.UserCertState.INSTALLED_OK) {
-                        Log.d(TAG, "[CertFlow] Late rescue: using mapped alias $mapped instead of $alias")
+                if (!mapped.isNullOrBlank()) {
+                    val mappedDiag = withContext(Dispatchers.IO) { configManager.diagnoseUserCertificate(mapped) }
+                    if (mappedDiag.state == VpnConfigManager.UserCertState.INSTALLED_OK) {
+                        Log.d(TAG, "[CertFlow] Using mapped installed alias for this user: $mapped")
                         profile.userCertificateAlias = mapped
                         alias = mapped
-                      }
+                    } else {
+                        Log.d(TAG, "[CertFlow] Mapped alias exists but not usable (state=${mappedDiag.state}); will proceed without it")
+                    }
                 }
             }
 
@@ -810,6 +819,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 _errorMessage.value = "Select installed client certificate"
                 return
             }
+
             val needsInstall = withContext(Dispatchers.IO) { configManager.needsUserCertInstallation(alias) }
             if (needsInstall) {
                 Log.w(TAG, "[CertFlow] User certificate alias $alias not installed yet; requesting installation or manual pick")
@@ -826,6 +836,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                     return
                 }
             }
+
             val diag = withContext(Dispatchers.IO) { configManager.diagnoseUserCertificate(alias) }
             when (diag.state) {
                 VpnConfigManager.UserCertState.INSTALLED_OK -> Log.d(TAG, "[CertFlow] Pre-flight KeyChain OK: chain=${diag.chainSize} hasKey=${diag.hasPrivateKey}")
@@ -861,7 +872,8 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                     prof.userCertificateAlias = chosenAlias
                     val diag = withContext(Dispatchers.IO) { configManager.diagnoseUserCertificate(chosenAlias) }
                     if (diag.state == VpnConfigManager.UserCertState.INSTALLED_OK) {
-                        withContext(Dispatchers.IO) { configManager.saveMappedCertAlias(prof.gateway, prof.remoteId, chosenAlias) }
+                        val remoteKey = perUserRemoteId(prof.remoteId, prof.username)
+                        withContext(Dispatchers.IO) { configManager.saveMappedCertAlias(prof.gateway, remoteKey, chosenAlias) }
                         _errorMessage.value = "Certificate selected: $chosenAlias"
                         completeStrongSwanConnection(prof)
                         pendingProfile = null
@@ -949,69 +961,104 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         } finally {
             dataSource.close()
         }
-        // Persist mapping if alias present
-        profile.userCertificateAlias?.let { alias ->
-            withContext(Dispatchers.IO) { configManager.saveMappedCertAlias(profile.gateway, profile.remoteId, alias) }
+        // Persist mapping if alias present (per-user)
+        val chosenAlias = profile.userCertificateAlias
+        if (chosenAlias != null) {
+            val remoteKey = perUserRemoteId(profile.remoteId, profile.username)
+            withContext(Dispatchers.IO) {
+                configManager.saveMappedCertAlias(profile.gateway, remoteKey, chosenAlias)
+            }
         }
-
+        
+        // CRITICAL: Cancel any existing state observer to prevent stacking
+        stateObserverJob?.cancel()
+        stateObserverJob = null
+        
         activeVpnHandler = VpnProtocolFactory.createHandler(VpnProtocol.IKEV2_IPSEC, context)
-
+        
         // Start observing connection state BEFORE initiating connection
         val handler = activeVpnHandler as? StrongSwanHandler
         if (handler != null) {
-            // Launch coroutine to observe state changes
-            viewModelScope.launch {
-                handler.connectionState.collect { state ->
-                    Log.d(TAG, "StrongSwan connection state changed: $state")
-                    when (state) {
-                        is ConnectionState.Connecting -> {
-                            _isConnecting.value = true
-                            _isConnected.value = false
-                            _errorMessage.value = "Connecting to ${profile.gateway}..."
-                        }
-                        is ConnectionState.Connected -> {
-                            _isConnected.value = true
-                            _isConnecting.value = false
-                            _errorMessage.value = "Connected using IKEv2/IPSec to ${profile.gateway}"
-                            Log.d(TAG, "Successfully connected via StateFlow")
-
-                            // Start data usage monitoring when VPN connects
-                            dataUsageManager.startMonitoring()
-                            Log.d(TAG, "Started data usage monitoring")
-
-                            // Save connection state for persistence
-                            saveConnectionState()
-                        }
-                        is ConnectionState.Disconnected -> {
-                            _isConnected.value = false
-                            _isConnecting.value = false
-                            if (_errorMessage.value?.contains("Connected") == true || _errorMessage.value?.contains("Connecting") == true) {
-                                _errorMessage.value = "Disconnected"
+            // Launch a SINGLE coroutine to observe state changes and store the job
+            stateObserverJob = viewModelScope.launch {
+                try {
+                    handler.connectionState.collect { state ->
+                        Log.d(TAG, "StrongSwan connection state changed: $state")
+                        when (state) {
+                            is ConnectionState.Connecting -> {
+                                _isConnecting.value = true
+                                _isConnected.value = false
+                                _errorMessage.value = "Connecting to ${profile.gateway}..."
                             }
-                            Log.d(TAG, "Disconnected via StateFlow")
-                        }
-                        is ConnectionState.Disconnecting -> {
-                            _isConnecting.value = false
-                            _errorMessage.value = "Disconnecting..."
-                        }
-                        is ConnectionState.Error -> {
-                            _isConnected.value = false
-                            _isConnecting.value = false
-                            _errorMessage.value = state.message
-                            Log.e(TAG, "Connection error via StateFlow: ${state.message}")
+                            is ConnectionState.Connected -> {
+                                // CRITICAL: Only accept Connected if we're currently in Connecting state
+                                // This prevents race conditions from stale state updates
+                                if (_isConnecting.value) {
+                                    _isConnected.value = true
+                                    _isConnecting.value = false
+                                    _errorMessage.value = "Connected using IKEv2/IPSec to ${profile.gateway}"
+                                    Log.d(TAG, "Successfully connected via StateFlow")
+
+                                    // Start data usage monitoring when VPN connects
+                                    dataUsageManager.startMonitoring()
+                                    Log.d(TAG, "Started data usage monitoring")
+
+                                    // Save connection state for persistence
+                                    saveConnectionState()
+                                } else {
+                                    Log.w(TAG, "Ignoring Connected state - not in Connecting state (possible stale update)")
+                                }
+                            }
+                            is ConnectionState.Disconnected -> {
+                                _isConnected.value = false
+                                _isConnecting.value = false
+                                if (_errorMessage.value?.contains("Connected") == true || _errorMessage.value?.contains("Connecting") == true) {
+                                    _errorMessage.value = "Disconnected"
+                                }
+                                Log.d(TAG, "Disconnected via StateFlow")
+                                
+                                // Stop monitoring and cancel observer when disconnected
+                                dataUsageManager.stopMonitoring()
+                                stateObserverJob?.cancel()
+                                stateObserverJob = null
+                            }
+                            is ConnectionState.Disconnecting -> {
+                                _isConnecting.value = false
+                                _errorMessage.value = "Disconnecting..."
+                            }
+                            is ConnectionState.Error -> {
+                                _isConnected.value = false
+                                _isConnecting.value = false
+                                _errorMessage.value = state.message
+                                Log.e(TAG, "Connection error via StateFlow: ${state.message}")
+                                
+                                // Stop monitoring and cancel observer on error
+                                dataUsageManager.stopMonitoring()
+                                stateObserverJob?.cancel()
+                                stateObserverJob = null
+                            }
                         }
                     }
+                } catch (e: Exception) {
+                    Log.e(TAG, "StateFlow observer error: ${e.message}")
                 }
             }
         }
-
+        
         // Initiate connection (return value is now just for logging)
         val initiatedSuccessfully = withContext(Dispatchers.IO) {
             handler?.connect(context, profile) ?: false
         }
-
+        
         Log.d(TAG, "Connection initiation returned: $initiatedSuccessfully")
-
+        
+        // If connection initiation failed immediately, cancel the observer
+        if (!initiatedSuccessfully) {
+            Log.d(TAG, "Connection initiation failed - canceling state observer")
+            stateObserverJob?.cancel()
+            stateObserverJob = null
+        }
+        
         // Don't set UI state here - let the StateFlow observer handle it
         // This eliminates the race condition
     }
@@ -1489,5 +1536,13 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         // Implementation for certificate import
         Log.d(TAG, "Importing certificate with alias: $alias")
         _showImportCertDialog.value = false
+    }
+
+    // Build a per-user mapping key by combining remoteId and username
+    private fun perUserRemoteId(remoteId: String?, username: String?): String? {
+        val r = remoteId?.takeIf { it.isNotBlank() }
+        val u = username?.takeIf { it.isNotBlank() }?.let { "user:$it" }
+        if (r == null && u == null) return null
+        return listOfNotNull(r, u).joinToString("|")
     }
 }

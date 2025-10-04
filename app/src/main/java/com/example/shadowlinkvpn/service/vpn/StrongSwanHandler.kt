@@ -59,6 +59,7 @@ class StrongSwanHandler(
     private var stateServiceBound = false
     private val monitoringScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var logMonitorJob: Job? = null
+    private var tunMonitorJob: Job? = null
     private val authFailureCount = AtomicInteger(0)
     private val isMonitoring = AtomicBoolean(false)
     @Volatile private var lastLogPosition = 0L
@@ -137,6 +138,9 @@ class StrongSwanHandler(
                 Log.d(tag, "Log monitoring stopped")
             }
         }
+
+        // NEW: Start periodic TUN interface monitoring
+        startTunMonitoring()
     }
 
     private fun stopLogMonitoring() {
@@ -144,7 +148,46 @@ class StrongSwanHandler(
         logMonitorJob?.cancel()
         logMonitorJob = null
         authFailureCount.set(0)
+        stopTunMonitoring()
         Log.d(tag, "Stopped log monitoring")
+    }
+
+    /**
+     * Start periodic TUN interface monitoring to detect server-side disconnections
+     */
+    private fun startTunMonitoring() {
+        tunMonitorJob?.cancel()
+        tunMonitorJob = monitoringScope.launch {
+            Log.d(tag, "Started periodic TUN interface monitoring")
+            try {
+                while (isMonitoring.get() && _state.value is ConnectionState.Connected) {
+                    delay(3000) // Check every 3 seconds
+
+                    // Check if TUN interface is still active
+                    val tunActive = checkIfVpnIsActive()
+
+                    if (!tunActive && _state.value is ConnectionState.Connected) {
+                        Log.e(tag, "TUN interface disappeared - VPN connection lost")
+                        withContext(Dispatchers.Main) {
+                            _state.value = ConnectionState.Disconnected
+                        }
+                        break
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(tag, "TUN monitoring error: ${e.message}")
+            } finally {
+                Log.d(tag, "TUN monitoring stopped")
+            }
+        }
+    }
+
+    /**
+     * Stop periodic TUN interface monitoring
+     */
+    private fun stopTunMonitoring() {
+        tunMonitorJob?.cancel()
+        tunMonitorJob = null
     }
 
     override suspend fun getConnectionLogs(context: Context): String? {
@@ -215,6 +258,20 @@ class StrongSwanHandler(
             val hasIkeAuthFailed = logs.contains("IKE_SA.*failed", ignoreCase = true)
             val hasCertUnknown = logs.contains("certificate unknown", ignoreCase = true)
 
+            // NEW: Detect network/unreachable failures
+            val hasPeerNotResponding = logs.contains("peer not responding", ignoreCase = true) ||
+                                       logs.contains("giving up after", ignoreCase = true) ||
+                                       logs.contains("UNREACHABLE", ignoreCase = true) ||
+                                       logs.contains("establishing IKE_SA failed", ignoreCase = true)
+
+            if (hasPeerNotResponding) {
+                Log.e(tag, "Detected connectivity failure (peer not responding / unreachable) - forcing disconnect")
+                withContext(Dispatchers.Main) {
+                    handleConnectionFailure("Remote peer not responding")
+                }
+                return
+            }
+
             if (hasAuthFailed || hasCertStatusIssue || hasEapTlsFailed || hasCertRevoked || hasIkeAuthFailed || hasCertUnknown) {
                 authFailureCount.incrementAndGet()
                 Log.w(tag, "Detected auth failure signal (count: ${authFailureCount.get()}): " +
@@ -271,17 +328,42 @@ class StrongSwanHandler(
         }
     }
 
+    private fun handleConnectionFailure(message: String) {
+        stopLogMonitoring()
+        _state.value = ConnectionState.Error(message)
+        monitoringScope.launch {
+            delay(300)
+            _state.value = ConnectionState.Disconnected
+            try {
+                disconnect(appContext)
+            } catch (e: Exception) {
+                Log.e(tag, "Error during forced disconnect: ${e.message}")
+            }
+        }
+    }
+
     suspend fun connect(context: Context, profile: VpnProfile): Boolean {
         return withContext(Dispatchers.IO) {
             try {
-                if (_state.value is ConnectionState.Connecting || _state.value is ConnectionState.Connected) {
-                    Log.w(tag, "Already connecting or connected")
+                // CRITICAL: Check state BEFORE trying to acquire lock
+                // This ensures we reject attempts even if lock is available
+                val currentState = _state.value
+                if (currentState is ConnectionState.Connecting || currentState is ConnectionState.Connected) {
+                    Log.w(tag, "Already connecting or connected (state=$currentState)")
                     return@withContext false
                 }
 
                 // Acquire the connection lock
                 if (!isConnecting.compareAndSet(false, true)) {
-                    Log.w(tag, "Connection attempt already in progress")
+                    Log.w(tag, "Connection attempt already in progress (lock held)")
+                    return@withContext false
+                }
+
+                // Double-check state after acquiring lock (prevent race condition)
+                val stateAfterLock = _state.value
+                if (stateAfterLock is ConnectionState.Connecting || stateAfterLock is ConnectionState.Connected) {
+                    Log.w(tag, "State changed to $stateAfterLock after acquiring lock, aborting")
+                    isConnecting.set(false)
                     return@withContext false
                 }
 
@@ -306,42 +388,30 @@ class StrongSwanHandler(
                 currentProfile = profile
                 Log.d(tag, "Using VpnProfile: ${profile.name}, Gateway: ${profile.gateway}, Type: ${profile.vpnType}")
 
-                // Start CharonVpnService with the profile
+                // Start CharonVpnService with the profile; pass only present extras
                 val intent = Intent(appContext, CharonVpnService::class.java).apply {
                     val bundle = Bundle().apply {
                         putString("uuid", profile.getUUID().toString())
-                        putString("password", "<redacted>")
-                        putString("remoteId", "DE-IKEV2-1")
-                        // Always pass password if available - StrongSwan needs it for certificate decryption
-                        if (!profile.password.isNullOrBlank()) {
-                            putString("password", profile.password)
-                            Log.d(tag, "Set password for VPN connection: ${profile.password}")
-                        } else {
-                            Log.w(tag, "No password available for VPN connection")
-                        }
+                        // Only pass credentials if present; avoid logging secrets
+                        profile.password?.takeIf { it.isNotBlank() }?.let { putString("password", it) }
+                        profile.remoteId?.takeIf { it.isNotBlank() }?.let { putString("remoteId", it) }
 
                         // Authentication type logging
-                        if (profile.vpnType == VpnType.IKEV2_EAP_TLS || profile.vpnType == VpnType.IKEV2_CERT) {
-                            Log.d(tag, "Using certificate-based authentication (${profile.vpnType})")
-                        } else {
-                            Log.d(tag, "Using password-based / EAP authentication")
-                        }
+                        Log.d(tag, "Auth mode: ${profile.vpnType}")
 
                         // If we have a P12 certificate alias, add it
                         profile.userCertificateAlias?.let { alias ->
-                            // Use original strongSwan extra key expected by CharonVpnService
                             putString("certificate_alias", alias)
                             Log.d(tag, "Added certificate alias (certificate_alias): $alias")
                         }
 
-                        // Add username if available
-                        if (!profile.username.isNullOrBlank()) {
-                            putString("username", profile.username)
-                            Log.d(tag, "Set username for VPN connection: ${profile.username}")
+                        // Add username if available (EAP identity)
+                        profile.username?.takeIf { it.isNotBlank() }?.let {
+                            putString("username", it)
+                            Log.d(tag, "Set username for VPN connection: ${it}")
                         }
                     }
                     putExtras(bundle)
-                    Log.d(tag, "Password Just before starting VPN Service ${profile.password}")
                     Log.d(tag, "Starting CharonVpnService with profile UUID: ${profile.getUUID()}")
                     Log.d(tag, "VPN Type: ${profile.vpnType}, Gateway: ${profile.gateway}")
                     Log.d(tag, "Certificate alias: ${profile.userCertificateAlias}")
@@ -351,69 +421,46 @@ class StrongSwanHandler(
                 val dataSource = VpnProfileSource(appContext)
                 dataSource.open()
 
-                // Clean up profile values to prevent configuration parsing errors
-                profile.remoteId = "DE-IKEV2-1"
-                profile.gateway = "217.154.229.53"
-                profile.name = "IKEV2_client49 VPN"
-                // Preserve username (EAP identity) for EAP/EAP-TLS instead of nulling it
-                // profile.username was previously nulled which can break identity based auth
-                // Do not overwrite if already set
-                if (profile.username.isNullOrBlank()) {
-                    Log.d(tag, "No explicit username set; leaving as-is (null)")
-                } else {
-                    Log.d(tag, "Preserving username/EAP identity: ${profile.username}")
-                }
-                profile.password = "<redacted>"
+                // Clean up profile values minimally; do NOT overwrite server/user-specific fields
+                profile.gateway = profile.gateway?.trim()?.replace("\n", "")?.replace("\r", "")
+                profile.name = profile.name?.trim()?.replace("\n", "")?.replace("\r", "")
+                profile.username = profile.username?.trim()?.replace("\n", "")?.replace("\r", "")
+                profile.remoteId = profile.remoteId?.trim()?.replace("\n", "")?.replace("\r", "")
 
                 // Avoid assigning null to proposal fields; empty string prevents SettingsWriter newline issues
                 profile.ikeProposal = profile.ikeProposal ?: ""
                 profile.espProposal = profile.espProposal ?: ""
-                // Do not force-null certificateAlias/dnsServers; leave existing values if present
-                // profile.certificateAlias = null
-                // profile.dnsServers = null
-                profile.splitTunneling = 0
-                profile.mtu = 1400  // Set a safe MTU value
-                profile.natKeepAlive = 20
-                profile.port = 500
-
-                // Clear any flags that might cause issues
-                // DO NOT blindly zero out flags; keep existing behavior unless a specific bit must be cleared.
-                // (Previously: profile.flags = 0) Removing this to preserve strongSwan expectations.
+                profile.splitTunneling = profile.splitTunneling // leave as provided
+                // Optionally set a safe MTU if not set
+                if (profile.mtu == 0) profile.mtu = 1400
 
                 // Ensure password is preserved when saving to database
-                Log.d(tag, "Profile password before database operations: ${profile.password}")
+                Log.d(tag, "Profile fields ready; saving to database (alias=${profile.userCertificateAlias})")
 
                 val existingProfile = dataSource.getVpnProfile(profile.getUUID().toString())
                 if (existingProfile == null) {
-                    Log.d(tag, "Inserting new profile with password: ${profile.password}")
                     dataSource.insertProfile(profile)
+                    Log.d(tag, "Inserted VPN profile ${profile.name}")
                 } else {
-                    Log.d(tag, "Updating existing profile, preserving password: ${profile.password}")
-                    // Ensure password is preserved during update and clean values
-                    existingProfile.password = "<redacted>"
+                    // Merge critical fields
+                    existingProfile.password = profile.password
                     existingProfile.userCertificateAlias = profile.userCertificateAlias
                     existingProfile.vpnType = profile.vpnType
-                    existingProfile.gateway = profile.gateway?.trim()?.replace("\n", "")?.replace("\r", "") ?: ""
-                    existingProfile.name = profile.name?.trim()?.replace("\n", "")?.replace("\r", "") ?: "ShadowLink VPN"
-                    existingProfile.username = profile.username?.trim()?.replace("\n", "")?.replace("\r", "")
-                    existingProfile.remoteId = "DE-IKEV2-1"
-
-                    // Clear any potentially problematic fields that might cause config parsing issues
-                    existingProfile.ikeProposal = existingProfile.ikeProposal ?: ""
-                    existingProfile.espProposal = existingProfile.espProposal ?: ""
-                    // existingProfile.certificateAlias = null  // keep original if set
-                    // existingProfile.dnsServers = null       // keep original if set
-                    existingProfile.splitTunneling = 0
-                    // Preserve existing flags instead of resetting to 0
-
+                    existingProfile.gateway = profile.gateway
+                    existingProfile.name = profile.name
+                    existingProfile.username = profile.username
+                    existingProfile.remoteId = profile.remoteId
+                    existingProfile.ikeProposal = profile.ikeProposal
+                    existingProfile.espProposal = profile.espProposal
+                    existingProfile.splitTunneling = profile.splitTunneling
+                    if (existingProfile.mtu == 0 && profile.mtu != 0) existingProfile.mtu = profile.mtu
                     dataSource.updateVpnProfile(existingProfile)
+                    Log.d(tag, "Updated existing VPN profile ${existingProfile.name}")
                 }
 
-                // Verify password was saved correctly
+                // Verify key fields after database save
                 val savedProfile = dataSource.getVpnProfile(profile.getUUID().toString())
-                Log.d(tag, "Profile password after database save: ${savedProfile?.password}")
-                Log.d(tag, "Profile gateway after database save: ${savedProfile?.gateway}")
-                Log.d(tag, "Profile remoteId after database save: ${savedProfile?.remoteId}")
+                Log.d(tag, "Saved profile alias=${savedProfile?.userCertificateAlias} gateway=${savedProfile?.gateway} remoteId=${savedProfile?.remoteId}")
 
                 dataSource.close()
 
@@ -438,40 +485,54 @@ class StrongSwanHandler(
                 // We need to wait longer for auth to complete before checking TUN
                 var connectionEstablished = false
                 var authFailureDetected = false
+                var peerUnreachableDetected = false
+                var ikeEstablished = false
+                var childEstablished = false
 
                 // Phase 1: Wait for authentication to complete (first 4 seconds)
-                // During this phase, DON'T check TUN interface - it's unreliable
+                // During this phase, DON'T treat plain TUN presence as success
                 for (i in 1..8) {
                     delay(500) // Check every 500ms for faster failure detection
 
-                    // Check logs for authentication failures
+                    // Check logs for authentication and connectivity failures
                     val logs = getConnectionLogs(context) ?: ""
 
-                    // Check for critical auth failures
+                    // Connectivity failures
+                    if (logs.contains("peer not responding", ignoreCase = true) ||
+                        logs.contains("giving up after", ignoreCase = true) ||
+                        logs.contains("UNREACHABLE", ignoreCase = true) ||
+                        logs.contains("establishing IKE_SA failed", ignoreCase = true)) {
+                        peerUnreachableDetected = true
+                        Log.e(tag, "Connectivity failure detected in logs (check ${i}/8)")
+                        break
+                    }
+
+                    // Auth failures
                     if (logs.contains("certificate unknown", ignoreCase = true) ||
                         logs.contains("certificate was revoked", ignoreCase = true) ||
-                        logs.contains("certificate has been revoked", ignoreCase = true)) {
-                        authFailureDetected = true
-                        Log.e(tag, "Certificate validation failure detected in logs (check ${i}/8)")
-                        break
-                    }
-
-                    // Check for EAP/TLS failures
-                    if (logs.contains("EAP_TLS method failed", ignoreCase = true) &&
+                        logs.contains("certificate has been revoked", ignoreCase = true) ||
+                        (logs.contains("EAP_TLS method failed", ignoreCase = true) && logs.contains("AUTH_FAILED", ignoreCase = true)) ||
                         logs.contains("AUTH_FAILED", ignoreCase = true)) {
                         authFailureDetected = true
-                        Log.e(tag, "EAP_TLS authentication failure detected (check ${i}/8)")
+                        Log.e(tag, "Authentication failure detected in logs (check ${i}/8)")
                         break
                     }
 
-                    // Check for successful IKE_SA establishment (indicates auth success)
-                    if (logs.contains("IKE_SA.*established", ignoreCase = true) ||
-                        logs.contains("CHILD_SA.*established", ignoreCase = true)) {
-                        Log.d(tag, "IKE_SA/CHILD_SA established detected in logs (check ${i}/8)")
-                        // Now check for TUN interface
+                    // Success signals
+                    if (!ikeEstablished && logs.contains("IKE_SA", ignoreCase = true) && logs.contains("established", ignoreCase = true)) {
+                        ikeEstablished = true
+                        Log.d(tag, "IKE_SA established detected (check ${i}/8)")
+                    }
+                    if (!childEstablished && logs.contains("CHILD_SA", ignoreCase = true) && logs.contains("established", ignoreCase = true)) {
+                        childEstablished = true
+                        Log.d(tag, "CHILD_SA established detected (check ${i}/8)")
+                    }
+
+                    if (ikeEstablished && childEstablished) {
+                        // Verify TUN is active as a secondary confirmation
                         if (checkIfVpnIsActive()) {
                             connectionEstablished = true
-                            Log.d(tag, "TUN interface confirmed after successful auth (check ${i}/8)")
+                            Log.d(tag, "IKE/CHILD established and TUN confirmed (check ${i}/8)")
                             break
                         }
                     }
@@ -480,38 +541,108 @@ class StrongSwanHandler(
                 }
 
                 // Phase 2: If no clear result yet, do a final verification (2 more seconds)
-                if (!authFailureDetected && !connectionEstablished) {
+                if (!authFailureDetected && !peerUnreachableDetected && !connectionEstablished) {
                     Log.d(tag, "Auth phase complete, performing final verification...")
                     delay(1000)
 
                     val finalLogs = getConnectionLogs(context) ?: ""
 
+                    // Connectivity failures
+                    if (finalLogs.contains("peer not responding", ignoreCase = true) ||
+                        finalLogs.contains("giving up after", ignoreCase = true) ||
+                        finalLogs.contains("UNREACHABLE", ignoreCase = true) ||
+                        finalLogs.contains("establishing IKE_SA failed", ignoreCase = true)) {
+                        peerUnreachableDetected = true
+                        Log.e(tag, "Connectivity failure found in final log check")
+                    }
+
                     // Final check for any auth failures
-                    if (finalLogs.contains("AUTH_FAILED", ignoreCase = true) ||
+                    if (!peerUnreachableDetected && (finalLogs.contains("AUTH_FAILED", ignoreCase = true) ||
                         finalLogs.contains("authentication failed", ignoreCase = true) ||
                         finalLogs.contains("certificate unknown", ignoreCase = true) ||
-                        finalLogs.contains("EAP_TLS method failed", ignoreCase = true)) {
+                        finalLogs.contains("EAP_TLS method failed", ignoreCase = true))) {
                         authFailureDetected = true
                         Log.e(tag, "Authentication failure found in final log check")
-                    } else {
-                        // Only trust TUN interface after auth phase is complete
-                        connectionEstablished = checkIfVpnIsActive()
-                        if (connectionEstablished) {
-                            Log.d(tag, "TUN interface verified in final check")
+                    } else if (!peerUnreachableDetected && !authFailureDetected) {
+                        // Re-evaluate establishment flags in final logs
+                        if (!ikeEstablished && finalLogs.contains("IKE_SA", ignoreCase = true) && finalLogs.contains("established", ignoreCase = true)) {
+                            ikeEstablished = true
+                        }
+                        if (!childEstablished && finalLogs.contains("CHILD_SA", ignoreCase = true) && finalLogs.contains("established", ignoreCase = true)) {
+                            childEstablished = true
+                        }
+                        if (ikeEstablished && childEstablished && checkIfVpnIsActive()) {
+                            connectionEstablished = true
+                            Log.d(tag, "IKE/CHILD established and TUN confirmed in final check")
                         } else {
-                            Log.e(tag, "No TUN interface found in final check")
+                            Log.e(tag, "Success criteria not met in final check (IKE=$ikeEstablished CHILD=$childEstablished TUN=${checkIfVpnIsActive()})")
                         }
                     }
                 }
 
                 // Evaluate final connection status
-                if (authFailureDetected) {
-                    Log.e(tag, "Connection failed: Authentication error detected")
-                    _state.value = ConnectionState.Error("Authentication failed: Certificate revoked or invalid")
+                if (peerUnreachableDetected) {
+                    _state.value = ConnectionState.Error("Remote peer not responding")
+                    Log.d(tag, "Forcing aggressive VPN cleanup due to auth failure")
 
-                    // Cleanup after brief delay
+                    // Method 1: Send disconnect action BEFORE calling disconnect()
+                    try {
+                        val disconnectIntent = Intent(appContext, CharonVpnService::class.java).apply {
+                            action = "org.strongswan.android.logic.CharonVpnService.DISCONNECT"
+                        }
+                        appContext.startService(disconnectIntent)
+                        Log.d(tag, "Sent immediate disconnect intent to CharonVpnService")
+                    } catch (e: Exception) {
+                        Log.w(tag, "Failed to send disconnect intent: ${e.message}")
+                    }
+
+                    // Method 2: Stop the service directly
+                    try {
+                        val stopIntent = Intent(appContext, CharonVpnService::class.java)
+                        appContext.stopService(stopIntent)
+                        Log.d(tag, "Sent stop service intent to CharonVpnService")
+                    } catch (e: Exception) {
+                        Log.w(tag, "Failed to stop service: ${e.message}")
+                    }
+
+                    // Give services time to respond
                     delay(500)
-                    disconnect(context)
+
+                    // Method 3: Now call full disconnect procedure
+                    try {
+                        disconnect(context)
+                    } catch (e: Exception) {
+                        Log.e(tag, "Error during disconnect: ${e.message}")
+                    }
+
+                    // Method 4: Wait and verify TUN interface is down
+                    delay(500)
+                    val tunStillActive = checkIfVpnIsActive()
+                    if (tunStillActive) {
+                        Log.e(tag, "TUN interface still active after disconnect attempts, forcing additional cleanup")
+
+                        // Try alternative disconnect approaches
+                        try {
+                            // Send multiple disconnect signals
+                            repeat(3) {
+                                val intent = Intent().apply {
+                                    setClassName("org.strongswan.android", "org.strongswan.android.logic.CharonVpnService")
+                                    action = "org.strongswan.android.logic.CharonVpnService.DISCONNECT"
+                                }
+                                appContext.startService(intent)
+                                delay(200)
+                            }
+
+                            // Force stop service
+                            val forceStop = Intent(appContext, CharonVpnService::class.java)
+                            appContext.stopService(forceStop)
+
+                            Log.d(tag, "Sent additional disconnect signals")
+                        } catch (e: Exception) {
+                            Log.e(tag, "Failed additional cleanup: ${e.message}")
+                        }
+                    }
+
                     _state.value = ConnectionState.Disconnected
                     currentProfile = null
                     return@withContext false
