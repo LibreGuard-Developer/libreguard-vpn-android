@@ -392,9 +392,14 @@ class StrongSwanHandler(
                 val intent = Intent(appContext, CharonVpnService::class.java).apply {
                     val bundle = Bundle().apply {
                         putString("uuid", profile.getUUID().toString())
-                        // Only pass credentials if present; avoid logging secrets
-                        profile.password?.takeIf { it.isNotBlank() }?.let { putString("password", it) }
-                        profile.remoteId?.takeIf { it.isNotBlank() }?.let { putString("remoteId", it) }
+                        // Only pass credentials for EAP/EAP-TLS variants
+                        if (profile.vpnType == VpnType.IKEV2_EAP || profile.vpnType == VpnType.IKEV2_EAP_TLS || profile.vpnType == VpnType.IKEV2_CERT_EAP) {
+                            profile.password?.takeIf { it.isNotBlank() }?.let { putString("password", it) }
+                            profile.remoteId?.takeIf { it.isNotBlank() }?.let { putString("remoteId", it) }
+                        } else {
+                            // In certificate-only mode, do not pass EAP credentials to avoid prompts
+                            profile.remoteId?.takeIf { it.isNotBlank() }?.let { putString("remoteId", it) }
+                        }
 
                         // Authentication type logging
                         Log.d(tag, "Auth mode: ${profile.vpnType}")
@@ -405,10 +410,12 @@ class StrongSwanHandler(
                             Log.d(tag, "Added certificate alias (certificate_alias): $alias")
                         }
 
-                        // Add username if available (EAP identity)
-                        profile.username?.takeIf { it.isNotBlank() }?.let {
-                            putString("username", it)
-                            Log.d(tag, "Set username for VPN connection: ${it}")
+                        // Add username only for EAP variants
+                        if (profile.vpnType == VpnType.IKEV2_EAP || profile.vpnType == VpnType.IKEV2_EAP_TLS || profile.vpnType == VpnType.IKEV2_CERT_EAP) {
+                            profile.username?.takeIf { it.isNotBlank() }?.let {
+                                putString("username", it)
+                                Log.d(tag, "Set username for VPN connection: ${it}")
+                            }
                         }
                     }
                     putExtras(bundle)
@@ -741,12 +748,19 @@ class StrongSwanHandler(
                 }
             }
             val gateway = map["right"] ?: map["righthost"] ?: map["rightaddress"]
+            val leftauth = map["leftauth"]?.lowercase() ?: ""
+            val rightauth = map["rightauth"]?.lowercase() ?: ""
             val profile = VpnProfile().apply {
                 name = map["conn"].takeUnless { it.isNullOrBlank() } ?: "ShadowLink Config"
                 this.gateway = gateway ?: ""
                 remoteId = map["rightid"] ?: this.gateway
                 username = map["leftid"] ?: map["eap_identity"]
-                vpnType = if ((map["leftauth"] ?: "").contains("tls", true)) VpnType.IKEV2_EAP_TLS else VpnType.IKEV2_EAP
+                vpnType = when {
+                    leftauth.contains("pubkey") || rightauth.contains("pubkey") || leftauth.contains("rsasig") || rightauth.contains("rsasig") -> VpnType.IKEV2_CERT
+                    leftauth.contains("tls") || rightauth.contains("tls") -> VpnType.IKEV2_EAP_TLS
+                    leftauth.contains("eap") || rightauth.contains("eap") -> VpnType.IKEV2_EAP
+                    else -> VpnType.IKEV2_CERT
+                }
             }
             if (profile.gateway.isBlank()) {
                 Log.w(tag, ".conf parse produced empty gateway")

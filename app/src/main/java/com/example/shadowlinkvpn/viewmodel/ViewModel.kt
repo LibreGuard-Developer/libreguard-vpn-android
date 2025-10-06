@@ -286,7 +286,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                         this.username = username
                         this.password = password
                         // Set other necessary fields
-                        this.vpnType = VpnType.IKEV2_EAP_TLS
+                        this.vpnType = VpnType.IKEV2_CERT
                         this.splitTunneling = 0
                         this.mtu = 1400
                         this.natKeepAlive = 20

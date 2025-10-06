@@ -27,6 +27,7 @@ data class VpnConfiguration(
         json.put("server", serverAddress)
         json.put("name", "ShadowLink VPN Connection")
         json.put("uuid", java.util.UUID.randomUUID().toString())
+        json.put("type", "ikev2-cert") // Force certificate-only auth
 
         // Remote server configuration
         val remoteObj = org.json.JSONObject()
