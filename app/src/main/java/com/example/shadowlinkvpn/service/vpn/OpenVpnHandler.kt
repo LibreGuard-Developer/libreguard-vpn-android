@@ -59,6 +59,10 @@ class OpenVpnHandler(
     @Volatile private var reconnectStartAt: Long = 0L
     private val connectRetryCount = AtomicInteger(0)
 
+    // Reconnect/connecting watchdog
+    private val RECONNECT_TIMEOUT_MS = 20_000L
+    @Volatile private var connectingSinceMs: Long = 0L
+
     // Track last status callback time and level for staleness/health detection
     @Volatile private var lastStatusUpdateAt: Long = 0L
     @Volatile private var lastLibLevel: IcsConnectionStatus = IcsConnectionStatus.LEVEL_NOTCONNECTED
@@ -360,24 +364,38 @@ class OpenVpnHandler(
                 try {
                     delay(5_000)
                     val current = _state.value
+
+                    // 1) Reconnect/Connecting timeout: if we are stuck in connecting-ish states for > 20s after a prior connection, fail
+                    val now = System.currentTimeMillis()
+                    val isConnectingish = when (lastStateName) {
+                        "CONNECTING", "WAIT", "RESOLVE", "TCP_CONNECT", "GET_CONFIG", "ASSIGN_IP", "ADD_ROUTES", "AUTH", "AUTH_PENDING", "USER_INPUT", "RECONNECTING", "CONNECTRETRY" -> true
+                        else -> false
+                    }
+                    if (hadConnected && isConnectingish && connectingSinceMs > 0L && (now - connectingSinceMs) > RECONNECT_TIMEOUT_MS) {
+                        Log.w(tag, "Connecting watchdog exceeded ${RECONNECT_TIMEOUT_MS}ms; failing connection (state=$lastStateName)")
+                        connectingActive = false
+                        connectingSinceMs = 0L
+                        // Ensure the OpenVPN service stops trying
+                        runCatching {
+                            withContext(Dispatchers.IO) { stopVpnViaService(appContext) }
+                        }
+                        _state.value = ConnectionState.Disconnected
+                        // Skip remainder of loop this tick
+                        continue
+                    }
+
+                    // 2) Healthy connected watchdog: avoid false positives; rely on libConnected + tun + binder
                     if (current is ConnectionState.Connected) {
                         val tunUp = isTunUp()
-                        // Healthy if OpenVPN's last state/level is connected AND tun is up AND binder alive
                         val libConnected = (lastStateName == "CONNECTED" || lastLibLevel == IcsConnectionStatus.LEVEL_CONNECTED)
                         var binderHealthy = true
-                        try {
-                            statusService?.lastConnectedVPN
-                        } catch (_: Throwable) {
-                            binderHealthy = false
-                        }
+                        try { statusService?.lastConnectedVPN } catch (_: Throwable) { binderHealthy = false }
                         val staleCallbacks = (System.currentTimeMillis() - lastStatusUpdateAt) > 30_000
 
                         val healthy = libConnected && tunUp && binderHealthy
                         if (!healthy) {
-                            // Only consider stale callbacks as a factor if already unhealthy
                             consecutiveUnhealthy++
                             Log.w(tag, "Watchdog flagged unhealthy VPN state (state=$lastStateName, level=$lastLibLevel, tunUp=$tunUp, binder=$binderHealthy, stale=$staleCallbacks, count=$consecutiveUnhealthy)")
-                            // Require two consecutive failures (~10s) to avoid false positives
                             if (consecutiveUnhealthy >= 2) {
                                 connectingActive = false
                                 _state.value = ConnectionState.Disconnected
@@ -401,6 +419,7 @@ class OpenVpnHandler(
         lastStatusUpdateAt = now
         lastLibLevel = level
         val state = stateRaw.uppercase()
+        val prevState = lastStateName
         lastStateName = state
 
         when (state) {
@@ -410,23 +429,21 @@ class OpenVpnHandler(
                 reconnectStartAt = 0L
                 connectRetryCount.set(0)
                 lastConnectedAt = now
+                connectingSinceMs = 0L
                 _state.value = ConnectionState.Connected
             }
             "CONNECTING", "WAIT", "RESOLVE", "TCP_CONNECT", "GET_CONFIG", "ASSIGN_IP", "ADD_ROUTES", "AUTH", "AUTH_PENDING", "USER_INPUT" -> {
+                // Start/connect timer if not already set (especially important after a prior CONNECTED)
+                if (connectingSinceMs == 0L || prevState == "CONNECTED") connectingSinceMs = now
                 _state.value = ConnectionState.Connecting
             }
             "RECONNECTING", "CONNECTRETRY" -> {
-                // Entered reconnect loop
                 _state.value = ConnectionState.Connecting
                 if (reconnectStartAt == 0L) reconnectStartAt = now
-                // Increase retry count on explicit CONNECTRETRY or on server reset hints
-                if (state == "CONNECTRETRY") {
-                    connectRetryCount.incrementAndGet()
-                }
-                if (logmessage.contains("server-pushed-connection-reset", ignoreCase = true)) {
-                    connectRetryCount.incrementAndGet()
-                }
-                // If we previously had a stable connection and reconnecting persists beyond threshold, treat as error
+                // Start/connect timer for reconnect
+                if (connectingSinceMs == 0L || prevState == "CONNECTED") connectingSinceMs = now
+                if (state == "CONNECTRETRY") connectRetryCount.incrementAndGet()
+                if (logmessage.contains("server-pushed-connection-reset", ignoreCase = true)) connectRetryCount.incrementAndGet()
                 val retryExceeded = connectRetryCount.get() >= 3
                 val timeExceeded = (now - reconnectStartAt) > 10_000
                 val noTun = !isTunUp()
@@ -436,8 +453,8 @@ class OpenVpnHandler(
                 }
             }
             "EXITING" -> {
-                // Exiting usually means disconnection
                 connectingActive = false
+                connectingSinceMs = 0L
                 if (hadConnected) {
                     _state.value = ConnectionState.Disconnected
                 } else {
@@ -447,6 +464,7 @@ class OpenVpnHandler(
             "DISCONNECTED", "NOPROCESS" -> {
                 val elapsed = if (connectStartAt > 0) now - connectStartAt else 0L
                 connectingActive = false
+                connectingSinceMs = 0L
                 if (hadConnected) {
                     _state.value = ConnectionState.Disconnected
                 } else if (elapsed > 2000L) {
@@ -458,6 +476,7 @@ class OpenVpnHandler(
             else -> {
                 if (level == IcsConnectionStatus.LEVEL_AUTH_FAILED || logmessage.contains("AUTH_FAILED", true)) {
                     connectingActive = false
+                    connectingSinceMs = 0L
                     _state.value = ConnectionState.Error("Authentication failed")
                 }
             }
