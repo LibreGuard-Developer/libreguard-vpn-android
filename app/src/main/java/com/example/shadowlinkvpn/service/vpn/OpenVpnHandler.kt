@@ -35,6 +35,12 @@ import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import java.net.NetworkInterface
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 
 class OpenVpnHandler(
     private val appContext: Context
@@ -52,6 +58,15 @@ class OpenVpnHandler(
     @Volatile private var hadConnected: Boolean = false
     @Volatile private var reconnectStartAt: Long = 0L
     private val connectRetryCount = AtomicInteger(0)
+
+    // Track last status callback time and level for staleness/health detection
+    @Volatile private var lastStatusUpdateAt: Long = 0L
+    @Volatile private var lastLibLevel: IcsConnectionStatus = IcsConnectionStatus.LEVEL_NOTCONNECTED
+    @Volatile private var lastConnectedAt: Long = 0L
+
+    // Watchdog coroutine to periodically verify connection health without network pings
+    private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+    private var watchdogJob: Job? = null
 
     // ICS OpenVPN state listener
     private val vpnStatusListener = object : StateListener {
@@ -133,6 +148,7 @@ class OpenVpnHandler(
                 // Keep local process listener for completeness, but AIDL will deliver real updates
                 VpnStatus.addStateListener(vpnStatusListener)
             }
+            startWatchdog()
             true
         } catch (t: Throwable) {
             Log.e(tag, "Failed to initialize OpenVPN handler", t)
@@ -336,8 +352,54 @@ class OpenVpnHandler(
         } catch (_: Throwable) { false }
     }
 
+    private fun startWatchdog() {
+        if (watchdogJob?.isActive == true) return
+        watchdogJob = scope.launch {
+            var consecutiveUnhealthy = 0
+            while (isActive) {
+                try {
+                    delay(5_000)
+                    val current = _state.value
+                    if (current is ConnectionState.Connected) {
+                        val tunUp = isTunUp()
+                        // Healthy if OpenVPN's last state/level is connected AND tun is up AND binder alive
+                        val libConnected = (lastStateName == "CONNECTED" || lastLibLevel == IcsConnectionStatus.LEVEL_CONNECTED)
+                        var binderHealthy = true
+                        try {
+                            statusService?.lastConnectedVPN
+                        } catch (_: Throwable) {
+                            binderHealthy = false
+                        }
+                        val staleCallbacks = (System.currentTimeMillis() - lastStatusUpdateAt) > 30_000
+
+                        val healthy = libConnected && tunUp && binderHealthy
+                        if (!healthy) {
+                            // Only consider stale callbacks as a factor if already unhealthy
+                            consecutiveUnhealthy++
+                            Log.w(tag, "Watchdog flagged unhealthy VPN state (state=$lastStateName, level=$lastLibLevel, tunUp=$tunUp, binder=$binderHealthy, stale=$staleCallbacks, count=$consecutiveUnhealthy)")
+                            // Require two consecutive failures (~10s) to avoid false positives
+                            if (consecutiveUnhealthy >= 2) {
+                                connectingActive = false
+                                _state.value = ConnectionState.Disconnected
+                                consecutiveUnhealthy = 0
+                            }
+                        } else {
+                            consecutiveUnhealthy = 0
+                        }
+                    } else {
+                        consecutiveUnhealthy = 0
+                    }
+                } catch (_: Throwable) {
+                    // Keep watchdog alive
+                }
+            }
+        }
+    }
+
     private fun handleStateUpdate(stateRaw: String, logmessage: String, level: IcsConnectionStatus) {
         val now = System.currentTimeMillis()
+        lastStatusUpdateAt = now
+        lastLibLevel = level
         val state = stateRaw.uppercase()
         lastStateName = state
 
@@ -347,6 +409,7 @@ class OpenVpnHandler(
                 hadConnected = true
                 reconnectStartAt = 0L
                 connectRetryCount.set(0)
+                lastConnectedAt = now
                 _state.value = ConnectionState.Connected
             }
             "CONNECTING", "WAIT", "RESOLVE", "TCP_CONNECT", "GET_CONFIG", "ASSIGN_IP", "ADD_ROUTES", "AUTH", "AUTH_PENDING", "USER_INPUT" -> {
