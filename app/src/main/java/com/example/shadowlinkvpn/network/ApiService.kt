@@ -7,6 +7,7 @@ import retrofit2.http.GET
 import retrofit2.http.Header
 import retrofit2.http.POST
 import retrofit2.http.Streaming
+import retrofit2.http.Path
 
 data class VpnConfigRequest(
     val serverId: Int, // Changed to Int to match your API
@@ -45,6 +46,26 @@ data class RemoteVpnServer(
     val pricingTier: String
 )
 
+// New models for certificate request & job polling
+// Request a certificate issuance job
+data class CertificateRequest(
+    val vpnType: String, // "OPENVPN" | "IKEV2"
+    val serverId: Int
+)
+
+// Response for creating a certificate job
+// status is typically "Pending" immediately after request
+// requestedName is the expected certificate name/alias if provided by backend
+data class CertificateJobResponse(
+    val jobId: String,
+    val requestedName: String?,
+    val status: String,
+    val message: String? = null
+)
+
+// Polling response (can reuse the same structure)
+typealias CertificateJobStatusResponse = CertificateJobResponse
+
 interface ApiService {
     @POST("api/login")
     suspend fun login(@Body request: AuthRequest): Response<AuthResponse>
@@ -64,4 +85,18 @@ interface ApiService {
         @Header("Authorization") authorization: String,
         @Body request: OpenVpnDownloadRequest
     ): Response<ResponseBody>
+
+    // Request certificate issuance if none exists
+    @POST("api/certificates/request")
+    suspend fun requestCertificate(
+        @Header("Authorization") authorization: String,
+        @Body request: CertificateRequest
+    ): Response<CertificateJobResponse>
+
+    // Poll job status until Success/Failed
+    @GET("api/certificates/jobs/{jobId}")
+    suspend fun getCertificateJobStatus(
+        @Header("Authorization") authorization: String,
+        @Path("jobId") jobId: String
+    ): Response<CertificateJobStatusResponse>
 }

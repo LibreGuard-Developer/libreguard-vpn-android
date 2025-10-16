@@ -42,6 +42,7 @@ import android.security.KeyChain
 import android.security.KeyChainAliasCallback
 import com.example.shadowlinkvpn.network.OpenVpnDownloadRequest
 import okhttp3.ResponseBody
+import com.example.shadowlinkvpn.network.CertificateRequest
 
 private val _connectionState = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected)
 val connectionState: StateFlow<ConnectionState> = _connectionState
@@ -118,6 +119,10 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _dataUsageInfo = MutableStateFlow(DataUsageInfo())
     val dataUsageInfo: StateFlow<DataUsageInfo> = _dataUsageInfo
+
+    // Polling configuration for certificate issuance
+    private val certPollIntervalMs = 2000L
+    private val certMaxWaitMs = 120000L // 2 minutes
 
     // Track OpenVPN state collection
     private var openVpnStateJob: Job? = null
@@ -694,7 +699,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                     protocol = selected.apiName
                 )
 
-                val response = RetrofitClient.instance.getVpnConfig("Bearer $token", request)
+                var response = RetrofitClient.instance.getVpnConfig("Bearer $token", request)
 
                 if (response.isSuccessful && response.body()?.success == true) {
                     val configContent = response.body()?.configContent
@@ -710,6 +715,31 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                         // Since we couldn't even start, allow retry
                         _isConnecting.value = false
                     }
+                } else if (response.code() == 404 && selected == VpnProtocol.IKEV2_IPSEC) {
+                    _errorMessage.value = "No certificate found. Requesting one now…"
+                    val issued = ensureCertificateIssued(selected, remoteServer.id, token)
+                    if (issued) {
+                        _errorMessage.value = "Certificate issued. Fetching configuration…"
+                        response = RetrofitClient.instance.getVpnConfig("Bearer $token", request)
+                        if (response.isSuccessful && response.body()?.success == true) {
+                            val body = response.body()!!
+                            val configContent = body.configContent
+                            val certificateName = body.certificateName
+                            val passphrase = body.passphrase
+                            if (!configContent.isNullOrBlank()) {
+                                connectWithConfig(configContent, server, selected, certificateName, passphrase)
+                            } else {
+                                _errorMessage.value = "Configuration still empty after certificate issuance"
+                                _isConnecting.value = false
+                            }
+                        } else {
+                            _errorMessage.value = response.body()?.message
+                                ?: "Failed to get VPN config after certificate issuance: ${response.code()}"
+                            _isConnecting.value = false
+                        }
+                    } else {
+                        _isConnecting.value = false
+                    }
                 } else {
                     val errorBody = response.body()
                     _errorMessage.value = errorBody?.message ?: "Failed to get VPN config: ${response.code()}"
@@ -723,6 +753,92 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 // IMPORTANT: Do not set _isConnecting=false here for IKEv2/WireGuard when we handed off to handler
                 // The handler's StateFlow observer will update _isConnecting when it transitions to Connected/Error/Disconnected
                 // For OpenVPN we handled it in the early return above
+            }
+        }
+    }
+
+    // Request issuance and wait for completion. Returns true when certificate is ready.
+    private suspend fun ensureCertificateIssued(protocol: VpnProtocol, serverId: Int, token: String): Boolean {
+        return withContext(Dispatchers.IO) {
+            try {
+                val vpnType = when (protocol) {
+                    VpnProtocol.IKEV2_IPSEC -> "IKEV2"
+                    VpnProtocol.OPENVPN -> "OPENVPN"
+                    else -> return@withContext false
+                }
+                // Submit request
+                val reqResp = RetrofitClient.instance.requestCertificate(
+                    authorization = "Bearer $token",
+                    request = CertificateRequest(vpnType = vpnType, serverId = serverId)
+                )
+
+                if (reqResp.code() == 403) {
+                    _errorMessage.value = "Access denied. Your account may be disabled."
+                    return@withContext false
+                }
+
+                if (reqResp.code() == 409) {
+                    // A certificate already exists per backend rules. Proceed to retry config.
+                    Log.w(TAG, "Certificate request rejected due to existing active certificate (409). Will retry fetching config.")
+                    return@withContext true
+                }
+
+                if (!reqResp.isSuccessful) {
+                    _errorMessage.value = reqResp.body()?.message
+                        ?: "Failed to request certificate: ${reqResp.code()}"
+                    return@withContext false
+                }
+
+                val job = reqResp.body()
+                if (job == null) {
+                    _errorMessage.value = "Empty response from certificate request"
+                    return@withContext false
+                }
+
+                // If backend returns Success immediately
+                if (job.status.equals("Success", ignoreCase = true)) {
+                    return@withContext true
+                }
+
+                val start = System.currentTimeMillis()
+                _errorMessage.value = "Certificate request queued. Issuing…"
+                while (System.currentTimeMillis() - start < certMaxWaitMs) {
+                    delay(certPollIntervalMs)
+                    val poll = RetrofitClient.instance.getCertificateJobStatus(
+                        authorization = "Bearer $token",
+                        jobId = job.jobId
+                    )
+                    if (!poll.isSuccessful) {
+                        // Stop polling on forbidden or not found
+                        if (poll.code() == 403) {
+                            _errorMessage.value = "Access denied while polling certificate job."
+                            return@withContext false
+                        }
+                        if (poll.code() == 404) {
+                            _errorMessage.value = "Certificate job not found."
+                            return@withContext false
+                        }
+                        // transient errors -> continue
+                        continue
+                    }
+                    val status = poll.body()?.status ?: ""
+                    when (status.lowercase()) {
+                        "success" -> return@withContext true
+                        "failed", "rejected", "error" -> {
+                            _errorMessage.value = poll.body()?.message ?: "Certificate issuance failed"
+                            return@withContext false
+                        }
+                        else -> {
+                            // pending/queued/running -> keep waiting
+                        }
+                    }
+                }
+                _errorMessage.value = "Timed out waiting for certificate issuance"
+                false
+            } catch (t: Throwable) {
+                Log.e(TAG, "ensureCertificateIssued error", t)
+                _errorMessage.value = "Certificate request error: ${t.localizedMessage}"
+                false
             }
         }
     }
@@ -807,9 +923,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                         Log.d(TAG, "[CertFlow] Using mapped installed alias for this user: $mapped")
                         profile.userCertificateAlias = mapped
                         alias = mapped
-                    } else {
+                      } else {
                         Log.d(TAG, "[CertFlow] Mapped alias exists but not usable (state=${mappedDiag.state}); will proceed without it")
-                    }
+                      }
                 }
             }
 
@@ -1126,14 +1242,35 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 }
 
                 // Download latest config
-                val resp = RetrofitClient.instance.downloadOpenVpnConfig(
+                var resp = RetrofitClient.instance.downloadOpenVpnConfig(
                     authorization = "Bearer $token",
                     request = OpenVpnDownloadRequest(serverId)
                 )
 
                 if (!resp.isSuccessful) {
-                    Log.e(TAG, "OpenVPN config download failed: ${resp.code()} ${resp.message()}")
-                    return@withContext false
+                    if (resp.code() == 404) {
+                        _errorMessage.value = "No certificate found for OpenVPN. Requesting one now…"
+                        val issued = ensureCertificateIssued(VpnProtocol.OPENVPN, serverId, token)
+                        if (issued) {
+                            _errorMessage.value = "Certificate issued. Downloading OpenVPN config…"
+                            resp = RetrofitClient.instance.downloadOpenVpnConfig(
+                                authorization = "Bearer $token",
+                                request = OpenVpnDownloadRequest(serverId)
+                            )
+                            if (!resp.isSuccessful) {
+                                Log.e(TAG, "OpenVPN config download still failing after cert issuance: ${resp.code()} ${resp.message()}")
+                                return@withContext false
+                            }
+                        } else {
+                            return@withContext false
+                        }
+                    } else if (resp.code() == 403) {
+                        _errorMessage.value = "Access denied while downloading OpenVPN config."
+                        return@withContext false
+                    } else {
+                        Log.e(TAG, "OpenVPN config download failed: ${resp.code()} ${resp.message()}")
+                        return@withContext false
+                    }
                 }
 
                 val body: ResponseBody = resp.body() ?: return@withContext false
