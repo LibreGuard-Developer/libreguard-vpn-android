@@ -16,6 +16,8 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.example.shadowlinkvpn.ui.screens.LoginScreen
 import com.example.shadowlinkvpn.ui.screens.MainScreen
+import com.example.shadowlinkvpn.ui.screens.TwoFactorSettingsScreen
+import com.example.shadowlinkvpn.ui.screens.TwoFactorVerificationScreen
 import com.example.shadowlinkvpn.ui.theme.ShadowLinkVPNTheme
 import com.example.shadowlinkvpn.viewmodel.VpnViewModel
 
@@ -42,6 +44,7 @@ fun AppNavigation(modifier: Modifier = Modifier) {
     val context = LocalContext.current
     var authToken by remember { mutableStateOf<String?>(null) }
     var isCheckingToken by remember { mutableStateOf(true) }
+    var pendingEmail by remember { mutableStateOf<String?>(null) }
 
     // Check for persisted auth token on startup
     LaunchedEffect(Unit) {
@@ -65,14 +68,42 @@ fun AppNavigation(modifier: Modifier = Modifier) {
     ) {
         composable("login") {
             if (!isCheckingToken) { // Only show login screen after checking token
-                LoginScreen(onLoginSuccess = { token ->
-                    authToken = token
-                    navController.navigate("main") {
-                        popUpTo("login") { inclusive = true }
+                LoginScreen(
+                    onLoginSuccess = { token ->
+                        authToken = token
+                        navController.navigate("main") {
+                            popUpTo("login") { inclusive = true }
+                        }
+                    },
+                    onRequires2FA = { email ->
+                        pendingEmail = email
+                        navController.navigate("twoFactor")
                     }
-                })
+                )
             }
         }
+
+        composable("twoFactor") {
+            pendingEmail?.let { email ->
+                TwoFactorVerificationScreen(
+                    email = email,
+                    onVerificationSuccess = { token ->
+                        authToken = token
+                        pendingEmail = null
+                        navController.navigate("main") {
+                            popUpTo("login") { inclusive = true }
+                        }
+                    },
+                    onBackToLogin = {
+                        pendingEmail = null
+                        navController.navigate("login") {
+                            popUpTo("twoFactor") { inclusive = true }
+                        }
+                    }
+                )
+            }
+        }
+
         composable("main") {
             authToken?.let { token ->
                 val viewModel: VpnViewModel = viewModel()
@@ -85,6 +116,9 @@ fun AppNavigation(modifier: Modifier = Modifier) {
                         navController.navigate("login") {
                             popUpTo("main") { inclusive = true }
                         }
+                    },
+                    onNavigateToTwoFactorSettings = {
+                        navController.navigate("twoFactorSettings")
                     }
                 )
             } ?: run {
@@ -94,6 +128,17 @@ fun AppNavigation(modifier: Modifier = Modifier) {
                         popUpTo("main") { inclusive = true }
                     }
                 }
+            }
+        }
+
+        composable("twoFactorSettings") {
+            authToken?.let { token ->
+                TwoFactorSettingsScreen(
+                    authToken = token,
+                    onNavigateBack = {
+                        navController.popBackStack()
+                    }
+                )
             }
         }
     }

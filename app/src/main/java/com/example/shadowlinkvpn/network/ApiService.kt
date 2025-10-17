@@ -70,6 +70,13 @@ interface ApiService {
     @POST("api/login")
     suspend fun login(@Body request: AuthRequest): Response<AuthResponse>
 
+    // 2FA Login endpoints
+    @POST("api/login/verify-2fa")
+    suspend fun verify2fa(@Body request: Verify2faRequest): Response<TokenResponse>
+
+    @POST("api/login/verify-recovery-code")
+    suspend fun verifyRecoveryCode(@Body request: VerifyRecoveryRequest): Response<TokenResponse>
+
     @GET("api/vpn/servers")
     suspend fun getVpnServers(@Header("Authorization") authorization: String): Response<ServerResponse>
 
@@ -99,4 +106,26 @@ interface ApiService {
         @Header("Authorization") authorization: String,
         @Path("jobId") jobId: String
     ): Response<CertificateJobStatusResponse>
+
+    // 2FA Management endpoints
+    @GET("api/2fa/status")
+    suspend fun get2faStatus(@Header("Authorization") authorization: String): Response<TwoFactorStatusResponse>
+
+    @POST("api/2fa/setup")
+    suspend fun setup2fa(@Header("Authorization") authorization: String): Response<SetupResponse>
+
+    @POST("api/2fa/enable")
+    suspend fun enable2fa(
+        @Header("Authorization") authorization: String,
+        @Body request: EnableRequest
+    ): Response<EnableResponse>
+
+    @POST("api/2fa/disable")
+    suspend fun disable2fa(@Header("Authorization") authorization: String): Response<MessageResponse>
+
+    @POST("api/2fa/reset")
+    suspend fun reset2fa(@Header("Authorization") authorization: String): Response<MessageResponse>
+
+    @POST("api/2fa/recovery-codes/generate")
+    suspend fun generateRecoveryCodes(@Header("Authorization") authorization: String): Response<RecoveryCodesResponse>
 }

@@ -39,7 +39,10 @@ import kotlin.math.sin
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun LoginScreen(onLoginSuccess: (String) -> Unit) {
+fun LoginScreen(
+    onLoginSuccess: (String) -> Unit,
+    onRequires2FA: (String) -> Unit
+) {
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var isLoading by remember { mutableStateOf(false) }
@@ -382,11 +385,19 @@ fun LoginScreen(onLoginSuccess: (String) -> Unit) {
                                     )
                                     if (response.isSuccessful) {
                                         val authResponse = response.body()
-                                        val token = authResponse?.token
-                                        if (!token.isNullOrBlank()) {
-                                            onLoginSuccess(token)
+
+                                        // Check if 2FA is required
+                                        if (authResponse?.requiresTwoFactor == true) {
+                                            // Navigate to 2FA verification screen
+                                            onRequires2FA(email)
                                         } else {
-                                            errorMessage = authResponse?.message ?: "Login failed"
+                                            // Normal login flow
+                                            val token = authResponse?.token
+                                            if (!token.isNullOrBlank()) {
+                                                onLoginSuccess(token)
+                                            } else {
+                                                errorMessage = authResponse?.message ?: "Login failed"
+                                            }
                                         }
                                     } else {
                                         errorMessage = "Login failed: ${response.code()}"

@@ -11,6 +11,8 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ExitToApp
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -58,7 +60,12 @@ fun getFlagEmoji(country: String): String {
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
-fun MainScreen(authToken: String, vpnViewModel: VpnViewModel? = null, onLogout: (() -> Unit)? = null) {
+fun MainScreen(
+    authToken: String,
+    vpnViewModel: VpnViewModel? = null,
+    onLogout: (() -> Unit)? = null,
+    onNavigateToTwoFactorSettings: (() -> Unit)? = null
+) {
     val viewModel: VpnViewModel = vpnViewModel ?: viewModel()
     val context = LocalContext.current
 
@@ -81,6 +88,9 @@ fun MainScreen(authToken: String, vpnViewModel: VpnViewModel? = null, onLogout: 
 
     // State for logout confirmation dialog
     var showLogoutDialog by remember { mutableStateOf(false) }
+
+    // State for account settings menu
+    var showAccountMenu by remember { mutableStateOf(false) }
 
     val vpnPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
@@ -369,11 +379,59 @@ fun MainScreen(authToken: String, vpnViewModel: VpnViewModel? = null, onLogout: 
             }
         }
 
-        // Logout Button - positioned at top right
-        LogoutButton(
-            modifier = Modifier.align(Alignment.TopEnd),
-            onClick = { showLogoutDialog = true }
-        )
+        // Settings and Logout Buttons - positioned at top right
+        Row(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            // Account Settings Button
+            IconButton(
+                onClick = { showAccountMenu = true },
+                modifier = Modifier
+                    .size(48.dp)
+                    .background(
+                        color = MaterialTheme.colorScheme.secondary,
+                        shape = RoundedCornerShape(24.dp)
+                    )
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Settings,
+                    contentDescription = "Account Settings",
+                    tint = Color.White
+                )
+            }
+
+            // Logout Button
+            LogoutButton(onClick = { showLogoutDialog = true })
+        }
+
+        // Account Settings Dropdown Menu
+        DropdownMenu(
+            expanded = showAccountMenu,
+            onDismissRequest = { showAccountMenu = false }
+        ) {
+            DropdownMenuItem(
+                text = {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Lock,
+                            contentDescription = "2FA",
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Text("Two-Factor Authentication")
+                    }
+                },
+                onClick = {
+                    showAccountMenu = false
+                    onNavigateToTwoFactorSettings?.invoke()
+                }
+            )
+        }
     }
 }
 

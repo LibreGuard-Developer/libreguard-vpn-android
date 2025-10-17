@@ -100,6 +100,9 @@ dependencies {
     // Material icons (extended) for visibility icons
     implementation("androidx.compose.material:material-icons-extended")
 
+    // QR Code generation for 2FA
+    implementation("com.google.zxing:core:3.5.2")
+
     // Networking
     implementation(libs.retrofit)
     implementation(libs.converter.gson)
