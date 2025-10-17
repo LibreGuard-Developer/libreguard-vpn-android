@@ -16,6 +16,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.example.shadowlinkvpn.ui.screens.LoginScreen
 import com.example.shadowlinkvpn.ui.screens.MainScreen
+import com.example.shadowlinkvpn.ui.screens.SettingsScreen
 import com.example.shadowlinkvpn.ui.screens.TwoFactorSettingsScreen
 import com.example.shadowlinkvpn.ui.screens.TwoFactorVerificationScreen
 import com.example.shadowlinkvpn.ui.theme.ShadowLinkVPNTheme
@@ -117,8 +118,8 @@ fun AppNavigation(modifier: Modifier = Modifier) {
                             popUpTo("main") { inclusive = true }
                         }
                     },
-                    onNavigateToTwoFactorSettings = {
-                        navController.navigate("twoFactorSettings")
+                    onNavigateToSettings = {
+                        navController.navigate("settings")
                     }
                 )
             } ?: run {
@@ -129,6 +130,17 @@ fun AppNavigation(modifier: Modifier = Modifier) {
                     }
                 }
             }
+        }
+
+        composable("settings") {
+            SettingsScreen(
+                onNavigateBack = {
+                    navController.popBackStack()
+                },
+                onNavigateToTwoFactor = {
+                    navController.navigate("twoFactorSettings")
+                }
+            )
         }
 
         composable("twoFactorSettings") {

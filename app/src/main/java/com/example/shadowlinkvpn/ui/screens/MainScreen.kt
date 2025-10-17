@@ -64,7 +64,7 @@ fun MainScreen(
     authToken: String,
     vpnViewModel: VpnViewModel? = null,
     onLogout: (() -> Unit)? = null,
-    onNavigateToTwoFactorSettings: (() -> Unit)? = null
+    onNavigateToSettings: (() -> Unit)? = null
 ) {
     val viewModel: VpnViewModel = vpnViewModel ?: viewModel()
     val context = LocalContext.current
@@ -88,9 +88,6 @@ fun MainScreen(
 
     // State for logout confirmation dialog
     var showLogoutDialog by remember { mutableStateOf(false) }
-
-    // State for account settings menu
-    var showAccountMenu by remember { mutableStateOf(false) }
 
     val vpnPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
@@ -299,13 +296,6 @@ fun MainScreen(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            Button(
-                onClick = { viewModel.getConnectionLogs() },
-                modifier = Modifier.fillMaxWidth()
-            ) { Text("Show Logs") }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
             Card(
                 modifier = Modifier.weight(1f),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
@@ -388,7 +378,7 @@ fun MainScreen(
         ) {
             // Account Settings Button
             IconButton(
-                onClick = { showAccountMenu = true },
+                onClick = { onNavigateToSettings?.invoke() },
                 modifier = Modifier
                     .size(48.dp)
                     .background(
@@ -405,32 +395,6 @@ fun MainScreen(
 
             // Logout Button
             LogoutButton(onClick = { showLogoutDialog = true })
-        }
-
-        // Account Settings Dropdown Menu
-        DropdownMenu(
-            expanded = showAccountMenu,
-            onDismissRequest = { showAccountMenu = false }
-        ) {
-            DropdownMenuItem(
-                text = {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Lock,
-                            contentDescription = "2FA",
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-                        Text("Two-Factor Authentication")
-                    }
-                },
-                onClick = {
-                    showAccountMenu = false
-                    onNavigateToTwoFactorSettings?.invoke()
-                }
-            )
         }
     }
 }

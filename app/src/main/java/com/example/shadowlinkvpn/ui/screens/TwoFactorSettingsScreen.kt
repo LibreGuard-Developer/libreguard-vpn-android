@@ -60,9 +60,13 @@ fun TwoFactorSettingsScreen(
                         hasAuthenticator = status.hasAuthenticator
                         recoveryCodesLeft = status.recoveryCodesLeft
                     }
+                } else {
+                    val errorBody = response.errorBody()?.string()
+                    errorMessage = "Failed to load 2FA status: ${response.code()} - ${errorBody ?: response.message()}"
                 }
             } catch (e: Exception) {
-                errorMessage = "Failed to load 2FA status: ${e.localizedMessage}"
+                errorMessage = "Failed to load 2FA status: ${e.message ?: e.localizedMessage}"
+                e.printStackTrace()
             } finally {
                 isLoading = false
             }
