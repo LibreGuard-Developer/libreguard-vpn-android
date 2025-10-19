@@ -52,21 +52,37 @@ fun TwoFactorSettingsScreen(
 
     LaunchedEffect(Unit) {
         coroutineScope.launch {
+            isLoading = true
+            errorMessage = null
+
             try {
+                // Use Retrofit which already handles coroutines properly
                 val response = RetrofitClient.instance.get2faStatus("Bearer $authToken")
+
                 if (response.isSuccessful) {
                     response.body()?.let { status ->
                         is2faEnabled = status.is2faEnabled
                         hasAuthenticator = status.hasAuthenticator
                         recoveryCodesLeft = status.recoveryCodesLeft
+                        android.util.Log.d("2FA_DEBUG", "Successfully loaded 2FA status: is2faEnabled=$is2faEnabled, hasAuthenticator=$hasAuthenticator, recoveryCodesLeft=$recoveryCodesLeft")
+                    } ?: run {
+                        errorMessage = "Received empty response from server"
+                        android.util.Log.e("2FA_DEBUG", "Response body was null")
                     }
                 } else {
                     val errorBody = response.errorBody()?.string()
-                    errorMessage = "Failed to load 2FA status: ${response.code()} - ${errorBody ?: response.message()}"
+                    errorMessage = "Failed to load 2FA status (${response.code()}): ${errorBody ?: response.message()}"
+                    android.util.Log.e("2FA_DEBUG", "API Error - Code: ${response.code()}, Body: $errorBody")
                 }
+            } catch (e: com.google.gson.JsonSyntaxException) {
+                errorMessage = "Server returned invalid JSON. The API might be returning HTML or plain text instead of JSON. Check your backend endpoint."
+                android.util.Log.e("2FA_DEBUG", "JsonSyntaxException", e)
+            } catch (e: com.google.gson.stream.MalformedJsonException) {
+                errorMessage = "Server returned malformed response. Expected JSON but got something else. This usually means the API endpoint doesn't exist or is returning an error page."
+                android.util.Log.e("2FA_DEBUG", "MalformedJsonException", e)
             } catch (e: Exception) {
-                errorMessage = "Failed to load 2FA status: ${e.message ?: e.localizedMessage}"
-                e.printStackTrace()
+                errorMessage = "Failed to load 2FA status: ${e.javaClass.simpleName} - ${e.message}"
+                android.util.Log.e("2FA_DEBUG", "Exception loading 2FA status", e)
             } finally {
                 isLoading = false
             }
