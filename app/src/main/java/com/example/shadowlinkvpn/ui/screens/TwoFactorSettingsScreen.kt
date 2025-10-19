@@ -9,8 +9,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -23,10 +23,12 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.shadowlinkvpn.network.*
+import com.example.shadowlinkvpn.ui.components.CodeInputField
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.EncodeHintType
 import com.google.zxing.qrcode.QRCodeWriter
 import kotlinx.coroutines.launch
+import androidx.compose.ui.window.Dialog
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -43,7 +45,6 @@ fun TwoFactorSettingsScreen(
     var showSetupDialog by remember { mutableStateOf(false) }
     var qrCodeBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var sharedKey by remember { mutableStateOf("") }
-    var manualEntryKey by remember { mutableStateOf("") }
     var verificationCode by remember { mutableStateOf("") }
     var recoveryCodes by remember { mutableStateOf<List<String>>(emptyList()) }
     var showRecoveryCodes by remember { mutableStateOf(false) }
@@ -95,7 +96,7 @@ fun TwoFactorSettingsScreen(
                 title = { Text("Two-Factor Authentication", color = Color.White) },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.Default.ArrowBack, "Back", tint = Color.White)
+                        Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = Color.White)
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -189,7 +190,6 @@ fun TwoFactorSettingsScreen(
                                     if (response.isSuccessful) {
                                         response.body()?.let { setup ->
                                             sharedKey = setup.sharedKey
-                                            manualEntryKey = setup.manualEntryKey
                                             qrCodeBitmap = generateQRCode(setup.authenticatorUri)
                                             showSetupDialog = true
                                         }
@@ -418,25 +418,43 @@ fun SetupTwoFactorDialog(
     onConfirm: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        containerColor = Color(0xFF2A2A2A),
-        title = {
-            Text("Setup Authenticator", color = Color.White, fontWeight = FontWeight.Bold)
-        },
-        text = {
+    Dialog(onDismissRequest = onDismiss) {
+        Card(
+            shape = RoundedCornerShape(24.dp),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+        ) {
             Column(
-                modifier = Modifier.verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Text("Scan this QR code with your authenticator app:", color = Color(0xFFCCCCCC), fontSize = 14.sp)
+                Text(
+                    "Setup Authenticator",
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 22.sp,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Text(
+                    "Scan this QR code with your authenticator app:",
+                    color = Color(0xFF94A3B8),
+                    fontSize = 14.sp,
+                    modifier = Modifier.fillMaxWidth()
+                )
 
                 qrCodeBitmap?.let { bitmap ->
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .background(Color.White, RoundedCornerShape(8.dp))
-                            .padding(16.dp),
+                            .background(Color.White, RoundedCornerShape(16.dp))
+                            .padding(20.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         Image(
@@ -447,53 +465,72 @@ fun SetupTwoFactorDialog(
                     }
                 }
 
-                Text("Or enter this key manually:", color = Color(0xFFCCCCCC), fontSize = 14.sp)
+                Text(
+                    "Or enter this key manually:",
+                    color = Color(0xFF94A3B8),
+                    fontSize = 14.sp,
+                    modifier = Modifier.fillMaxWidth()
+                )
 
                 Card(
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF1A1A1A)),
-                    shape = RoundedCornerShape(8.dp)
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A)),
+                    shape = RoundedCornerShape(12.dp)
                 ) {
                     Text(
                         text = sharedKey,
-                        modifier = Modifier.padding(12.dp),
-                        color = Color(0xFF00FF88),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp),
+                        color = Color(0xFF6366F1),
                         fontSize = 12.sp,
-                        textAlign = TextAlign.Center
+                        textAlign = TextAlign.Center,
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                        maxLines = 2
                     )
                 }
 
-                Text("Enter the 6-digit code from your app:", color = Color(0xFFCCCCCC), fontSize = 14.sp)
-
-                OutlinedTextField(
-                    value = verificationCode,
-                    onValueChange = { if (it.length <= 6) onVerificationCodeChange(it.filter { char -> char.isDigit() }) },
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = Color.White,
-                        unfocusedTextColor = Color(0xFFCCCCCC),
-                        focusedBorderColor = Color(0xFF00FF88),
-                        unfocusedBorderColor = Color(0xFF555555),
-                        cursorColor = Color(0xFF00FF88)
-                    ),
-                    singleLine = true
+                Text(
+                    "Enter the 6-digit code from your app:",
+                    color = Color.White,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.fillMaxWidth()
                 )
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = onConfirm,
-                enabled = verificationCode.length == 6,
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00FF88))
-            ) {
-                Text("Verify & Enable", color = Color.Black)
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel", color = Color(0xFFAAAAAA))
+
+                CodeInputField(
+                    code = verificationCode,
+                    onCodeChange = onVerificationCodeChange,
+                    length = 6,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = onDismiss,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Cancel", color = Color(0xFF94A3B8), fontWeight = FontWeight.Medium)
+                    }
+                    Button(
+                        onClick = onConfirm,
+                        enabled = verificationCode.length == 6,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF6366F1),
+                            disabledContainerColor = Color(0xFF475569)
+                        ),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Verify & Enable", color = Color.White, fontWeight = FontWeight.SemiBold)
+                    }
+                }
             }
         }
-    )
+    }
 }
 
 @Composable

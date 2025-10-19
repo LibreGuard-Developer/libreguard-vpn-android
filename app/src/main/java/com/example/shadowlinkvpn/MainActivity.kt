@@ -133,14 +133,22 @@ fun AppNavigation(modifier: Modifier = Modifier) {
         }
 
         composable("settings") {
-            SettingsScreen(
-                onNavigateBack = {
-                    navController.popBackStack()
-                },
-                onNavigateToTwoFactor = {
-                    navController.navigate("twoFactorSettings")
-                }
-            )
+            authToken?.let { token ->
+                SettingsScreen(
+                    onNavigateBack = {
+                        navController.popBackStack()
+                    },
+                    onNavigateToTwoFactor = {
+                        navController.navigate("twoFactorSettings")
+                    },
+                    onLogout = {
+                        authToken = null
+                        navController.navigate("login") {
+                            popUpTo(0) { inclusive = true }
+                        }
+                    }
+                )
+            }
         }
 
         composable("twoFactorSettings") {

@@ -11,7 +11,6 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ExitToApp
-import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.*
@@ -33,8 +32,6 @@ import android.app.Activity
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.window.Dialog
-// Add data usage imports
-import com.example.shadowlinkvpn.ui.components.DataUsageProgressBar
 import com.example.shadowlinkvpn.ui.components.CompactDataUsageIndicator
 
 // Keep your existing VpnServer data class
@@ -113,6 +110,14 @@ fun MainScreen(
     LaunchedEffect(authToken) {
         viewModel.setAuthToken(authToken)
         viewModel.loadLocalServers(context)
+    }
+
+    // If the currently selected protocol is WireGuard (from previous state), switch to a supported one.
+    LaunchedEffect(selectedProtocol) {
+        if (selectedProtocol.displayName.equals("WireGuard", ignoreCase = true)) {
+            val fallback = VpnProtocol.entries.firstOrNull { !it.displayName.equals("WireGuard", ignoreCase = true) }
+            fallback?.let { viewModel.selectProtocol(it) }
+        }
     }
 
     // Handle certificate import UI feedback
@@ -260,7 +265,9 @@ fun MainScreen(
                     }
                 },
                 modifier = Modifier.fillMaxWidth(),
-                enabled = !isConnecting && !isInstallingCertificate && selectedServer != null,
+                // Disable the connect button if WireGuard is selected (not implemented)
+                enabled = !isConnecting && !isInstallingCertificate && selectedServer != null &&
+                    !selectedProtocol.displayName.equals("WireGuard", ignoreCase = true),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = when {
                         isConnected -> MaterialTheme.colorScheme.error
@@ -369,32 +376,23 @@ fun MainScreen(
             }
         }
 
-        // Settings and Logout Buttons - positioned at top right
-        Row(
+        // Settings Button - positioned at top right (where logout was)
+        IconButton(
+            onClick = { onNavigateToSettings?.invoke() },
             modifier = Modifier
                 .align(Alignment.TopEnd)
-                .padding(8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            // Account Settings Button
-            IconButton(
-                onClick = { onNavigateToSettings?.invoke() },
-                modifier = Modifier
-                    .size(48.dp)
-                    .background(
-                        color = MaterialTheme.colorScheme.secondary,
-                        shape = RoundedCornerShape(24.dp)
-                    )
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Settings,
-                    contentDescription = "Account Settings",
-                    tint = Color.White
+                .padding(16.dp)
+                .size(48.dp)
+                .background(
+                    color = MaterialTheme.colorScheme.primary,
+                    shape = RoundedCornerShape(24.dp)
                 )
-            }
-
-            // Logout Button
-            LogoutButton(onClick = { showLogoutDialog = true })
+        ) {
+            Icon(
+                imageVector = Icons.Default.Settings,
+                contentDescription = "Settings",
+                tint = Color.White
+            )
         }
     }
 }
@@ -416,14 +414,18 @@ fun ProtocolSelector(selectedProtocol: VpnProtocol, onProtocolSelected: (VpnProt
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                VpnProtocol.entries.forEach { proto ->
-                    FilterChip(
-                        onClick = { onProtocolSelected(proto) },
-                        label = { Text(proto.displayName) },
-                        selected = selectedProtocol == proto,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
+                // Hide WireGuard from the protocol selector since it's not implemented yet.
+                // We filter by displayName to avoid depending on a specific enum constant name.
+                VpnProtocol.entries
+                    .filter { proto -> !proto.displayName.equals("WireGuard", ignoreCase = true) }
+                    .forEach { proto ->
+                        FilterChip(
+                            onClick = { onProtocolSelected(proto) },
+                            label = { Text(proto.displayName) },
+                            selected = selectedProtocol == proto,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
             }
         }
     }
