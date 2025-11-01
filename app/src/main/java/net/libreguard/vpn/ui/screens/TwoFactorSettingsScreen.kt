@@ -614,4 +614,11 @@ fun generateQRCode(text: String, size: Int = 512): Bitmap {
     return bitmap
 }
 
-
+@Preview(showBackground = true, showSystemUi = true)
+@Composable
+fun PreviewTwoFactorSettingsScreen() {
+    TwoFactorSettingsScreen(
+        authToken = "test_token",
+        onNavigateBack = { }
+    )
+}
