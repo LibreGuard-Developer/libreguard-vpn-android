@@ -1,6 +1,7 @@
 [submodule "strongswan"]
 	path = strongswan
-	url = https://github.com/strongswan/strongswan.git
+	url = https://github.com/MareM010/libreguard-strongswan.git
+	branch = libreguard-integration
 [submodule "ics-openvpn"]
 	path = ics-openvpn
 	url = https://github.com/MareM010/libreguard-ics-openvpn.git
