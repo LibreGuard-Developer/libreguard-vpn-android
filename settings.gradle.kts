@@ -21,7 +21,7 @@ dependencyResolutionManagement {
         maven(url = "https://jitpack.io")
     }
 }
-rootProject.name = "ShadowLinkVPN"
+rootProject.name = "LibreGuardVPN"
 include(":app")
 include(":ics-openvpn:main")
 project(":ics-openvpn:main").projectDir = File(rootDir, "ics-openvpn/main")
