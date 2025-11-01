@@ -5,3 +5,4 @@
 [submodule "strongswan"]
 	path = strongswan
 	url = https://github.com/MareM010/libreguard-strongswan.git
+	branch = libreguard-integration
