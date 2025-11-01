@@ -5,11 +5,11 @@ plugins {
 }
 
 android {
-    namespace = "com.example.shadowlinkvpn"
+    namespace = "net.libreguard.vpn"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.example.shadowlinkvpn"
+        applicationId = "net.libreguard.vpn"
         minSdk = 29
         targetSdk = 35
         versionCode = 1

@@ -12,7 +12,7 @@
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
 
     <application
-        android:name=".ShadowLinkVpnApp"
+        android:name=".LibreGuardVpnApp"
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
@@ -20,7 +20,7 @@
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:theme="@style/Theme.ShadowLinkVPN"
+        android:theme="@style/Theme.LibreGuardVPN"
         android:networkSecurityConfig="@xml/network_security_config"
         android:appCategory="productivity"
         tools:replace="android:name,android:label,android:theme,android:icon,android:roundIcon,android:allowBackup,android:supportsRtl,android:appCategory,android:networkSecurityConfig"
@@ -48,7 +48,7 @@
 
         <!-- Your custom VPN service wrapper -->
         <service
-            android:name=".service.ShadowLinkVpnService"
+            android:name=".service.LibreGuardVpnService"
             android:permission="android.permission.BIND_VPN_SERVICE"
             android:foregroundServiceType="specialUse"
             android:exported="false"
@@ -76,7 +76,7 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:theme="@style/Theme.ShadowLinkVPN">
+            android:theme="@style/Theme.LibreGuardVPN">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
