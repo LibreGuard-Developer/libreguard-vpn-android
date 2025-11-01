@@ -61,7 +61,7 @@
         <!-- Log Content Provider -->
         <provider
             android:name="org.strongswan.android.data.LogContentProvider"
-            android:authorities="org.strongswan.android.content.log"
+            android:authorities="${applicationId}.content.log"
             android:exported="false" />
 
         <!-- VPN Profile Control Activity -->

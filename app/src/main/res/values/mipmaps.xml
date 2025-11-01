@@ -15,6 +15,7 @@
     for more details.
 -->
 <resources>
-    <mipmap name="ic_launcher">@mipmap/ic_app</mipmap>
-    <mipmap name="ic_shortcut">@mipmap/ic_app</mipmap>
+    <!-- Use app's own adaptive icon instead of aliasing to ic_app -->
+    <mipmap name="ic_launcher">@mipmap/ic_launcher</mipmap>
+    <mipmap name="ic_shortcut">@mipmap/ic_launcher</mipmap>
 </resources>
