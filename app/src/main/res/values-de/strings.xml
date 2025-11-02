@@ -19,8 +19,8 @@
 <resources>
 
     <!-- Application -->
-    <string name="app_name">strongSwan VPN Client</string>
-    <string name="main_activity_name">strongSwan</string>
+    <string name="app_name">LibreGuard VPN</string>
+    <string name="main_activity_name">LibreGuard</string>
     <string name="show_log">Log anzeigen</string>
     <string name="search">Suchen</string>
     <string name="vpn_not_supported_title">VPN nicht unterstützt</string>
@@ -29,7 +29,7 @@
     <string name="vpn_not_supported_no_permission">Keine Berechtigung, um VPN Verbindungen zu erstellen. Entweder weil diese vom Benutzer verweigert wurde oder weil für eine andere VPN Anwendung der Always-On-Modus aktiviert ist.</string>
     <string name="loading">Laden&#8230;</string>
     <string name="profile_not_found">Profil nicht gefunden</string>
-    <string name="strongswan_shortcut">strongSwan-Verknüpfung</string>
+    <string name="strongswan_shortcut">LibreGuard-Verknüpfung</string>
     <string name="permanent_notification_name">VPN Verbindungsstatus</string>
     <string name="permanent_notification_description">Zeigt Informationen zum Verbindungsstatus der VPN Verbindung und dient als permanente Notification dazu, den VPN Dienst im Hintergrund am Laufen zu halten.</string>
 
@@ -44,7 +44,7 @@
     <string name="log_title">Log</string>
     <string name="send_log">Logdatei senden</string>
     <string name="empty_log">Logdatei ist leer</string>
-    <string name="log_mail_subject">strongSwan %1$s Logdatei</string>
+    <string name="log_mail_subject">LibreGuard %1$s Logdatei</string>
 
     <!-- VPN profile list -->
     <string name="no_profiles">Keine VPN Profile vorhanden.</string>

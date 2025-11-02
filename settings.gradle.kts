@@ -25,3 +25,4 @@ rootProject.name = "LibreGuardVPN"
 include(":app")
 include(":ics-openvpn:main")
 project(":ics-openvpn:main").projectDir = File(rootDir, "ics-openvpn/main")
+// strongswan is present as a git submodule at strongswan/, but not included as a Gradle module

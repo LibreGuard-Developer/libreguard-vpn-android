@@ -15,8 +15,8 @@
 <resources>
 
     <!-- Application -->
-    <string name="app_name">strongSwan VPN 用戶端</string>
-    <string name="main_activity_name">strongSwan</string>
+    <string name="app_name">LibreGuard VPN</string>
+    <string name="main_activity_name">LibreGuard</string>
     <string name="show_log">觀看日誌</string>
     <string name="search">搜尋</string>
     <string name="vpn_not_supported_title">無法支援VPN</string>
@@ -25,7 +25,7 @@
     <string name="vpn_not_supported_no_permission">Unable to get permission to create VPN connections. Either because it was denied by the user, or because a different VPN app has the always-on feature enabled.</string>
     <string name="loading">載入中&#8230;</string>
     <string name="profile_not_found">沒有找到設定檔</string>
-    <string name="strongswan_shortcut">strongSwan快速選單</string>
+    <string name="strongswan_shortcut">LibreGuard快速選單</string>
     <string name="permanent_notification_name">VPN connection state</string>
     <string name="permanent_notification_description">Provides information about the VPN connection state and serves as permanent notification to keep the VPN service running in the background.</string>
 
@@ -40,7 +40,7 @@
     <string name="log_title">日誌</string>
     <string name="send_log">發送日誌檔</string>
     <string name="empty_log">沒有日誌檔</string>
-    <string name="log_mail_subject">strongSwan %1$s 日誌檔</string>
+    <string name="log_mail_subject">LibreGuard %1$s 日誌檔</string>
 
     <!-- VPN profile list -->
     <string name="no_profiles">沒有設定檔</string>
@@ -107,8 +107,8 @@
     <string name="profile_ipv6_transport_hint">Use IPv6 for outer transport addresses if available. Can only be enabled if UDP encapsulation for IPv6 is supported by the server. Note that the Linux kernel only supports this since version 5.8, so many servers will not support it yet.</string>
     <string name="profile_split_tunneling_label">拆分隧道</string>
     <string name="profile_split_tunneling_intro">By default, the client will route all network traffic through the VPN, unless the server narrows the subnets when the connection is established, in which case only traffic the server allows will be routed via VPN (by default, all other traffic is routed as if there was no VPN).</string>
-    <string name="profile_split_tunnelingv4_title">屏蔽不通过VPN的IPV4流量</string>
-    <string name="profile_split_tunnelingv6_title">屏蔽不通过VPN的IPV6流量</string>
+    <string name="profile_split_tunnelingv4_title">屏蔽不通過VPN的IPV4流量</string>
+    <string name="profile_split_tunnelingv6_title">屏蔽不通過VPN的IPV6流量</string>
     <string name="profile_included_subnets_label">Custom subnets</string>
     <string name="profile_included_subnets_hint">Only route traffic to specific subnets via VPN, everything else is routed as if there was no VPN (separated by spaces, e.g. \"192.168.1.0/24 2001:db8::/64\")</string>
     <string name="profile_excluded_subnets_label">Excluded subnets</string>

@@ -15,8 +15,8 @@
 <resources>
 
     <!-- Application -->
-    <string name="app_name">strongSwan VPN 客户端</string>
-    <string name="main_activity_name">strongSwan</string>
+    <string name="app_name">LibreGuard VPN</string>
+    <string name="main_activity_name">LibreGuard</string>
     <string name="show_log">浏览日志</string>
     <string name="search">搜索</string>
     <string name="vpn_not_supported_title">无法支持VPN</string>
@@ -25,7 +25,7 @@
     <string name="vpn_not_supported_no_permission">无法获得创建VPN连接的权限。可能是因为用户拒绝了，或者是因为其他VPN应用程序启用了“始终打开”功能。</string>
     <string name="loading">载入中&#8230;</string>
     <string name="profile_not_found">未找到配置</string>
-    <string name="strongswan_shortcut">strongSwan快捷方式</string>
+    <string name="strongswan_shortcut">LibreGuard 快捷方式</string>
     <string name="permanent_notification_name">VPN连接状态</string>
     <string name="permanent_notification_description">提供有关VPN连接状态的信息，并作为永久通知，使VPN服务在后台运行。</string>
 
@@ -40,7 +40,7 @@
     <string name="log_title">日志</string>
     <string name="send_log">发送日志文件</string>
     <string name="empty_log">日志文件为空</string>
-    <string name="log_mail_subject">strongSwan %1$s 日志文件</string>
+    <string name="log_mail_subject">LibreGuard %1$s 日志文件</string>
 
     <!-- VPN profile list -->
     <string name="no_profiles">无配置.</string>
