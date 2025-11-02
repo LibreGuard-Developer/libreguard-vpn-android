@@ -34,6 +34,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.strongswan.android.data.VpnProfile
 import org.strongswan.android.data.VpnProfileSource
+import org.strongswan.android.data.VpnProfileDataSource
 import org.strongswan.android.data.VpnType
 import java.io.File
 import java.io.InputStreamReader
@@ -43,6 +44,7 @@ import android.security.KeyChainAliasCallback
 import net.libreguard.vpn.network.OpenVpnDownloadRequest
 import okhttp3.ResponseBody
 import net.libreguard.vpn.network.CertificateRequest
+import java.lang.reflect.Method
 
 private val _connectionState = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected)
 val connectionState: StateFlow<ConnectionState> = _connectionState
@@ -1063,19 +1065,49 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
     private suspend fun completeStrongSwanConnection(profile: VpnProfile) {
         val context = getApplication<Application>().applicationContext
-        val dataSource = VpnProfileSource(context)
-        dataSource.open()
+        val dsObj = VpnProfileSource(context)
+        // Call open() reflectively to handle both signatures: open():VpnProfileDataSource and open():void
+        val dataSource: VpnProfileDataSource = try {
+            val m = dsObj.javaClass.getMethod("open")
+            val ret = m.invoke(dsObj)
+            (ret as? VpnProfileDataSource) ?: dsObj
+        } catch (t: Throwable) {
+            Log.w(TAG, "[StrongSwan] open() via reflection failed, proceeding with instance", t)
+            dsObj
+        }
         try {
-            val existingProfile = dataSource.getVpnProfile(profile.getUUID().toString())
+            // Try getVpnProfile(String) first, then fall back to getVpnProfile(UUID)
+            val existingProfile = try {
+                dataSource.getVpnProfile(profile.getUUID().toString())
+            } catch (t: Throwable) {
+                try {
+                    val gm: Method = dataSource.javaClass.getMethod("getVpnProfile", java.util.UUID::class.java)
+                    gm.invoke(dataSource, profile.getUUID()) as? VpnProfile
+                } catch (_: Throwable) {
+                    null
+                }
+            }
             if (existingProfile != null) {
-                dataSource.updateVpnProfile(profile)
-                Log.d(TAG, "Updated existing VPN profile")
+                // updateVpnProfile via reflection (boolean return in some versions)
+                try {
+                    val um = dataSource.javaClass.getMethod("updateVpnProfile", VpnProfile::class.java)
+                    um.invoke(dataSource, profile)
+                    Log.d(TAG, "Updated existing VPN profile")
+                } catch (t: Throwable) {
+                    Log.w(TAG, "[StrongSwan] updateVpnProfile() invocation failed: ${t.message}")
+                }
             } else {
-                dataSource.insertProfile(profile)
-                Log.d(TAG, "Inserted new VPN profile")
+                // insertProfile via reflection (return type differs across versions)
+                try {
+                    val im = dataSource.javaClass.getMethod("insertProfile", VpnProfile::class.java)
+                    im.invoke(dataSource, profile)
+                    Log.d(TAG, "Inserted new VPN profile")
+                } catch (t: Throwable) {
+                    Log.w(TAG, "[StrongSwan] insertProfile() invocation failed: ${t.message}")
+                }
             }
         } finally {
-            dataSource.close()
+            try { dsObj.close() } catch (_: Throwable) {}
         }
         // Persist mapping if alias present (per-user)
         val chosenAlias = profile.userCertificateAlias
@@ -1107,19 +1139,13 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                                 _errorMessage.value = "Connecting to ${profile.gateway}..."
                             }
                             is ConnectionState.Connected -> {
-                                // CRITICAL: Only accept Connected if we're currently in Connecting state
-                                // This prevents race conditions from stale state updates
                                 if (_isConnecting.value) {
                                     _isConnected.value = true
                                     _isConnecting.value = false
                                     _errorMessage.value = "Connected using IKEv2/IPSec to ${profile.gateway}"
                                     Log.d(TAG, "Successfully connected via StateFlow")
-
-                                    // Start data usage monitoring when VPN connects
                                     dataUsageManager.startMonitoring()
                                     Log.d(TAG, "Started data usage monitoring")
-
-                                    // Save connection state for persistence
                                     saveConnectionState()
                                 } else {
                                     Log.w(TAG, "Ignoring Connected state - not in Connecting state (possible stale update)")
@@ -1132,8 +1158,6 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                                     _errorMessage.value = "Disconnected"
                                 }
                                 Log.d(TAG, "Disconnected via StateFlow")
-                                
-                                // Stop monitoring and cancel observer when disconnected
                                 dataUsageManager.stopMonitoring()
                                 stateObserverJob?.cancel()
                                 stateObserverJob = null
@@ -1147,8 +1171,6 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                                 _isConnecting.value = false
                                 _errorMessage.value = state.message
                                 Log.e(TAG, "Connection error via StateFlow: ${state.message}")
-                                
-                                // Stop monitoring and cancel observer on error
                                 dataUsageManager.stopMonitoring()
                                 stateObserverJob?.cancel()
                                 stateObserverJob = null
@@ -1161,22 +1183,17 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         
-        // Initiate connection (return value is now just for logging)
         val initiatedSuccessfully = withContext(Dispatchers.IO) {
             handler?.connect(context, profile) ?: false
         }
         
         Log.d(TAG, "Connection initiation returned: $initiatedSuccessfully")
         
-        // If connection initiation failed immediately, cancel the observer
         if (!initiatedSuccessfully) {
             Log.d(TAG, "Connection initiation failed - canceling state observer")
             stateObserverJob?.cancel()
             stateObserverJob = null
         }
-        
-        // Don't set UI state here - let the StateFlow observer handle it
-        // This eliminates the race condition
     }
 
     suspend fun connectWireGuard(config: String) {

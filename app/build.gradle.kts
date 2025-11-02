@@ -6,7 +6,7 @@ plugins {
 
 android {
     namespace = "net.libreguard.vpn"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "net.libreguard.vpn"
@@ -68,20 +68,11 @@ android {
     sourceSets {
         getByName("main") {
             jniLibs.srcDirs("src/main/jniLibs", "../strongswan/libs")
-            java.srcDirs("src/main/java")
+            // Only compile app code under net/; strongSwan sources come from the submodule
+            java.setSrcDirs(listOf("src/main/java/net"))
             res.srcDirs("src/main/res")
         }
-    }
 
-    tasks.withType<JavaCompile> {
-        exclude("org/strongswan/android/logic/ManagedUserCertificateInstaller.java")
-        exclude("org/strongswan/android/logic/ManagedTrustedCertificateInstaller.java")
-        exclude("org/strongswan/android/logic/ManagedTrustedCertificateManager.java")
-        exclude("org/strongswan/android/logic/ManagedUserCertificateManager.java")
-        exclude("org/strongswan/android/data/VpnProfileManagedDataSource.java")
-        exclude("org/strongswan/android/data/VpnProfileSqlDataSource.java")
-        exclude("org/strongswan/android/data/ManagedTrustedCertificateRepository.java")
-        exclude("org/strongswan/android/data/ManagedUserCertificateRepository.java")
     }
 }
 
@@ -131,4 +122,7 @@ dependencies {
     implementation(libs.androidx.fragment.ktx)
     implementation(libs.androidx.appcompat)
     implementation(libs.androidx.recyclerview)
+
+    // Add strongSwan Android library module
+    implementation(project(":strongswan-android"))
 }

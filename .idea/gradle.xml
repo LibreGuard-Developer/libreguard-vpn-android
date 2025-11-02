@@ -13,6 +13,7 @@
             <option value="$PROJECT_DIR$/app" />
             <option value="$PROJECT_DIR$/ics-openvpn" />
             <option value="$PROJECT_DIR$/ics-openvpn/main" />
+            <option value="$PROJECT_DIR$/strongswan/src/frontends/android/app" />
           </set>
         </option>
       </GradleProjectSettings>

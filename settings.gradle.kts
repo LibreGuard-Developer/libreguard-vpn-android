@@ -26,3 +26,6 @@ include(":app")
 include(":ics-openvpn:main")
 project(":ics-openvpn:main").projectDir = File(rootDir, "ics-openvpn/main")
 // strongswan is present as a git submodule at strongswan/, but not included as a Gradle module
+// Include strongSwan Android library module as :strongswan-android
+include(":strongswan-android")
+project(":strongswan-android").projectDir = File(rootDir, "strongswan/src/frontends/android/app")

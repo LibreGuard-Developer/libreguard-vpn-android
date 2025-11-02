@@ -10,6 +10,9 @@ import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
 import android.os.ParcelFileDescriptor
+import android.security.KeyChain
+import android.security.KeyChainException
+import org.strongswan.android.security.LocalCertificateKeyStoreManager
 import android.util.Log
 import net.libreguard.vpn.util.VpnConfigManager
 import kotlinx.coroutines.Dispatchers
@@ -391,15 +394,15 @@ class StrongSwanHandler(
                 // Start CharonVpnService with the profile; pass only present extras
                 val intent = Intent(appContext, CharonVpnService::class.java).apply {
                     val bundle = Bundle().apply {
-                        putString("uuid", profile.getUUID().toString())
-                        // Only pass credentials for EAP/EAP-TLS variants
-                        if (profile.vpnType == VpnType.IKEV2_EAP || profile.vpnType == VpnType.IKEV2_EAP_TLS || profile.vpnType == VpnType.IKEV2_CERT_EAP) {
-                            profile.password?.takeIf { it.isNotBlank() }?.let { putString("password", it) }
+                        putString(VpnProfileDataSource.KEY_UUID, profile.getUUID().toString())
+                         // Only pass credentials for EAP/EAP-TLS variants
+                         if (profile.vpnType == VpnType.IKEV2_EAP || profile.vpnType == VpnType.IKEV2_EAP_TLS || profile.vpnType == VpnType.IKEV2_CERT_EAP) {
+                            profile.password?.takeIf { it.isNotBlank() }?.let { putString(VpnProfileDataSource.KEY_PASSWORD, it) }
                             profile.remoteId?.takeIf { it.isNotBlank() }?.let { putString("remoteId", it) }
-                        } else {
+                         } else {
                             // In certificate-only mode, do not pass EAP credentials to avoid prompts
                             profile.remoteId?.takeIf { it.isNotBlank() }?.let { putString("remoteId", it) }
-                        }
+                         }
 
                         // Authentication type logging
                         Log.d(tag, "Auth mode: ${profile.vpnType}")
@@ -425,28 +428,41 @@ class StrongSwanHandler(
                 }
 
                 // The VpnProfile needs to be in the database for CharonVpnService to find it
-                val dataSource = VpnProfileSource(appContext)
-                dataSource.open()
+                val dsObj = VpnProfileSource(appContext)
+                val dataSource = try {
+                    val m = dsObj.javaClass.getMethod("open")
+                    val ret = m.invoke(dsObj)
+                    (ret as? org.strongswan.android.data.VpnProfileDataSource) ?: dsObj
+                } catch (_: Throwable) { dsObj }
 
-                // Clean up profile values minimally; do NOT overwrite server/user-specific fields
-                profile.gateway = profile.gateway?.trim()?.replace("\n", "")?.replace("\r", "")
-                profile.name = profile.name?.trim()?.replace("\n", "")?.replace("\r", "")
-                profile.username = profile.username?.trim()?.replace("\n", "")?.replace("\r", "")
-                profile.remoteId = profile.remoteId?.trim()?.replace("\n", "")?.replace("\r", "")
+                 // Clean up profile values minimally; do NOT overwrite server/user-specific fields
+                 profile.gateway = profile.gateway?.trim()?.replace("\n", "")?.replace("\r", "")
+                 profile.name = profile.name?.trim()?.replace("\n", "")?.replace("\r", "")
+                 profile.username = profile.username?.trim()?.replace("\n", "")?.replace("\r", "")
+                 profile.remoteId = profile.remoteId?.trim()?.replace("\n", "")?.replace("\r", "")
 
-                // Avoid assigning null to proposal fields; empty string prevents SettingsWriter newline issues
-                profile.ikeProposal = profile.ikeProposal ?: ""
-                profile.espProposal = profile.espProposal ?: ""
-                profile.splitTunneling = profile.splitTunneling // leave as provided
-                // Optionally set a safe MTU if not set
-                if (profile.mtu == 0) profile.mtu = 1400
+                 // Avoid assigning null to proposal fields; empty string prevents SettingsWriter newline issues
+                 profile.ikeProposal = profile.ikeProposal ?: ""
+                 profile.espProposal = profile.espProposal ?: ""
+                 profile.splitTunneling = profile.splitTunneling // leave as provided
+                 // Optionally set a safe MTU if not set
+                 if (profile.mtu == 0) profile.mtu = 1400
 
-                // Ensure password is preserved when saving to database
-                Log.d(tag, "Profile fields ready; saving to database (alias=${profile.userCertificateAlias})")
+                 // Ensure password is preserved when saving to database
+                 Log.d(tag, "Profile fields ready; saving to database (alias=${profile.userCertificateAlias})")
 
-                val existingProfile = dataSource.getVpnProfile(profile.getUUID().toString())
+                val existingProfile = try {
+                    dataSource.getVpnProfile(profile.getUUID().toString())
+                } catch (_: Throwable) {
+                    try {
+                        val gm = dataSource.javaClass.getMethod("getVpnProfile", java.util.UUID::class.java)
+                        gm.invoke(dataSource, profile.getUUID()) as? VpnProfile
+                    } catch (_: Throwable) { null }
+                }
                 if (existingProfile == null) {
-                    dataSource.insertProfile(profile)
+                    try {
+                        dataSource.javaClass.getMethod("insertProfile", VpnProfile::class.java).invoke(dataSource, profile)
+                    } catch (_: Throwable) {}
                     Log.d(tag, "Inserted VPN profile ${profile.name}")
                 } else {
                     // Merge critical fields
@@ -461,15 +477,24 @@ class StrongSwanHandler(
                     existingProfile.espProposal = profile.espProposal
                     existingProfile.splitTunneling = profile.splitTunneling
                     if (existingProfile.mtu == 0 && profile.mtu != 0) existingProfile.mtu = profile.mtu
-                    dataSource.updateVpnProfile(existingProfile)
+                    try {
+                        dataSource.javaClass.getMethod("updateVpnProfile", VpnProfile::class.java).invoke(dataSource, existingProfile)
+                    } catch (_: Throwable) {}
                     Log.d(tag, "Updated existing VPN profile ${existingProfile.name}")
                 }
 
                 // Verify key fields after database save
-                val savedProfile = dataSource.getVpnProfile(profile.getUUID().toString())
+                val savedProfile = try {
+                    dataSource.getVpnProfile(profile.getUUID().toString())
+                } catch (_: Throwable) {
+                    try {
+                        val gm = dataSource.javaClass.getMethod("getVpnProfile", java.util.UUID::class.java)
+                        gm.invoke(dataSource, profile.getUUID()) as? VpnProfile
+                    } catch (_: Throwable) { null }
+                }
                 Log.d(tag, "Saved profile alias=${savedProfile?.userCertificateAlias} gateway=${savedProfile?.gateway} remoteId=${savedProfile?.remoteId}")
 
-                dataSource.close()
+                try { dsObj.close() } catch (_: Throwable) {}
 
                 // Ensure VpnStateService is bound before starting connection
                 if (!stateServiceBound) {
@@ -477,13 +502,73 @@ class StrongSwanHandler(
                     delay(500) // Give it time to bind
                 }
 
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    appContext.startForegroundService(intent)
-                } else {
-                    appContext.startService(intent)
+                // Preflight: Validate access to user certificate/key (supports local: aliases)
+                 try {
+                     val alias = profile.userCertificateAlias
+                     if (alias.isNullOrBlank()) {
+                         _state.value = ConnectionState.Error("No client certificate selected. Please select a user certificate.")
+                         return@withContext false
+                     }
+                     if (alias.startsWith("local:")) {
+                        val mgr = LocalCertificateKeyStoreManager(appContext)
+                        val hasCert = mgr.isCertificateAvailable(alias)
+                        val key = mgr.getPrivateKey(alias)
+                        if (!hasCert || key == null) {
+                            _state.value = ConnectionState.Error("Client certificate/key not accessible (local store). Re-import certificate or grant access.")
+                            return@withContext false
+                        }
+                        Log.d(tag, "[CertFlow] Pre-flight Local OK: hasCert=$hasCert hasKey=${key != null}")
+                     } else {
+                        val chain = KeyChain.getCertificateChain(appContext, alias)
+                        val key = try { KeyChain.getPrivateKey(appContext, alias) } catch (e: KeyChainException) { null }
+                        if (chain == null || chain.isEmpty() || key == null) {
+                            _state.value = ConnectionState.Error("Client certificate/key not accessible. Re-select certificate and grant access.")
+                            return@withContext false
+                        }
+                        Log.d(tag, "[CertFlow] Pre-flight KeyChain OK: chain=${chain.size} hasKey=${key != null}")
+                     }
+                 } catch (e: Exception) {
+                     Log.w(tag, "KeyChain preflight failed: ${e.message}")
+                 }
+
+                // Ensure VPN permission was granted; otherwise charon cannot initialize
+                try {
+                    val prep = VpnService.prepare(appContext)
+                    if (prep != null) {
+                        _state.value = ConnectionState.Error("VPN permission not granted. Please allow VPN permissions and retry.")
+                        Log.e(tag, "VPN permission not granted (VpnService.prepare returned an Intent)")
+                        return@withContext false
+                    }
+                } catch (e: Exception) {
+                    Log.w(tag, "VpnService.prepare check failed: ${e.message}")
                 }
 
+                // Start service without FGS API to avoid 5s timeout; service will call startForeground() itself
+                appContext.startService(intent)
+
                 Log.d(tag, "CharonVpnService started, waiting for connection result...")
+
+                // Phase 0: Wait for charon to initialize to avoid premature timeout
+                var charonStarted = false
+                for (i in 1..24) { // ~6 seconds total
+                    delay(250)
+                    val logs = getConnectionLogs(context) ?: ""
+                    if (logs.contains("charon started", ignoreCase = true)) {
+                        charonStarted = true
+                        Log.d(tag, "Detected 'charon started' in logs (${i}/24)")
+                        break
+                    }
+                    if (logs.contains("failed to load user certificate and key", ignoreCase = true)) {
+                        Log.e(tag, "Charon reported: failed to load user certificate and key")
+                        _state.value = ConnectionState.Error("Client certificate not available. Please re-select the user certificate.")
+                        disconnect(context)
+                        currentProfile = null
+                        return@withContext false
+                    }
+                }
+                if (!charonStarted) {
+                    Log.w(tag, "charon did not report 'started' within expected time; continuing with auth checks")
+                }
 
                 // DON'T start background monitoring yet - we'll check synchronously
                 // This prevents race conditions with state updates
@@ -498,11 +583,17 @@ class StrongSwanHandler(
 
                 // Phase 1: Wait for authentication to complete (first 4 seconds)
                 // During this phase, DON'T treat plain TUN presence as success
-                for (i in 1..8) {
-                    delay(500) // Check every 500ms for faster failure detection
+                for (i in 1..16) { // extend to ~8 seconds
+                     delay(500) // Check every 500ms for faster failure detection
 
-                    // Check logs for authentication and connectivity failures
-                    val logs = getConnectionLogs(context) ?: ""
+                     // Check logs for authentication and connectivity failures
+                     val logs = getConnectionLogs(context) ?: ""
+
+                    if (logs.contains("failed to load user certificate and key", ignoreCase = true)) {
+                        Log.e(tag, "Charon reported: failed to load user certificate and key (auth phase)")
+                        _state.value = ConnectionState.Error("Client certificate not available. Please re-select the user certificate.")
+                        break
+                    }
 
                     // Connectivity failures
                     if (logs.contains("peer not responding", ignoreCase = true) ||
@@ -554,6 +645,14 @@ class StrongSwanHandler(
 
                     val finalLogs = getConnectionLogs(context) ?: ""
 
+                    if (finalLogs.contains("failed to load user certificate and key", ignoreCase = true)) {
+                        Log.e(tag, "Charon reported: failed to load user certificate and key (final check)")
+                        _state.value = ConnectionState.Error("Client certificate not available. Please re-select the user certificate.")
+                        disconnect(context)
+                        currentProfile = null
+                        return@withContext false
+                    }
+
                     // Connectivity failures
                     if (finalLogs.contains("peer not responding", ignoreCase = true) ||
                         finalLogs.contains("giving up after", ignoreCase = true) ||
@@ -595,7 +694,7 @@ class StrongSwanHandler(
                     // Method 1: Send disconnect action BEFORE calling disconnect()
                     try {
                         val disconnectIntent = Intent(appContext, CharonVpnService::class.java).apply {
-                            action = "org.strongswan.android.logic.CharonVpnService.DISCONNECT"
+                            action = CharonVpnService.DISCONNECT_ACTION
                         }
                         appContext.startService(disconnectIntent)
                         Log.d(tag, "Sent immediate disconnect intent to CharonVpnService")
@@ -632,9 +731,8 @@ class StrongSwanHandler(
                         try {
                             // Send multiple disconnect signals
                             repeat(3) {
-                                val intent = Intent().apply {
-                                    setClassName("org.strongswan.android", "org.strongswan.android.logic.CharonVpnService")
-                                    action = "org.strongswan.android.logic.CharonVpnService.DISCONNECT"
+                                val intent = Intent(appContext, CharonVpnService::class.java).apply {
+                                    action = CharonVpnService.DISCONNECT_ACTION
                                 }
                                 appContext.startService(intent)
                                 delay(200)
@@ -799,26 +897,25 @@ class StrongSwanHandler(
                 }
 
                 // Method 2: Try multiple disconnect action approaches
-                try {
-                    // Try with explicit action string (StrongSwan standard)
-                    val disconnectIntent1 = Intent().apply {
-                        setClassName("org.strongswan.android", "org.strongswan.android.logic.CharonVpnService")
-                        action = "org.strongswan.android.logic.CharonVpnService.DISCONNECT"
-                    }
-                    appContext.startService(disconnectIntent1)
-                    Log.d(tag, "Sent explicit disconnect action")
+                 try {
+                    // Try with explicit in-app CharonVpnService disconnect action
+                     val disconnectIntent1 = Intent(appContext, CharonVpnService::class.java).apply {
+                         action = CharonVpnService.DISCONNECT_ACTION
+                     }
+                     appContext.startService(disconnectIntent1)
+                     Log.d(tag, "Sent explicit disconnect action")
 
-                    // Also try generic disconnect action
-                    val disconnectIntent2 = Intent(appContext, CharonVpnService::class.java).apply {
-                        action = "disconnect"
-                    }
-                    appContext.startService(disconnectIntent2)
-                    Log.d(tag, "Sent generic disconnect action")
+                    // Also try generic disconnect action (fallback)
+                     val disconnectIntent2 = Intent(appContext, CharonVpnService::class.java).apply {
+                         action = "disconnect"
+                     }
+                     appContext.startService(disconnectIntent2)
+                     Log.d(tag, "Sent generic disconnect action")
 
-                    disconnectSuccess = true
-                } catch (e: Exception) {
-                    Log.w(tag, "Failed to send disconnect intents: ${e.message}")
-                }
+                     disconnectSuccess = true
+                 } catch (e: Exception) {
+                     Log.w(tag, "Failed to send disconnect intents: ${e.message}")
+                 }
 
                 // Method 3: Try to kill the VPN connection via VpnService if we have permission
                 try {
