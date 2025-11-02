@@ -67,8 +67,7 @@ android {
 
     sourceSets {
         getByName("main") {
-            // Remove legacy JNI libs directories; strongSwan module provides native libs
-            // jniLibs.srcDirs("src/main/jniLibs", "../strongswan/libs")
+            jniLibs.srcDirs("src/main/jniLibs", "../strongswan/libs")
             // Only compile app code under net/; strongSwan sources come from the submodule
             java.setSrcDirs(listOf("src/main/java/net"))
             res.srcDirs("src/main/res")
