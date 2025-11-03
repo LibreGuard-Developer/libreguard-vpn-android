@@ -26,3 +26,25 @@ ONE_CLICK_IKEV2_IMPLEMENTATION.md
 *_CERTIFICATE_*.md
 *_PKI_*.md
 
+# Additional setup and configuration scripts
+setup_ics_openvpn_submodule.ps1
+improved_server.conf
+
+# Build and backup folders
+strongswan_backup/
+ics-openvpn_backup/
+da/
+
+# Temporary documentation and notes
+FIXES_SUMMARY.md
+CONNECTION_STATE_FIX.md
+UI_IMPROVEMENTS_SUMMARY.md
+ICS_OPENVPN_QUICK_REFERENCE.md
+ICS_OPENVPN_SUBMODULE_SETUP.md
+FIXED_CA_SCRIPTS/
+GIT_HISTORY_EXPLANATION.md
+GIT_HISTORY_REMOVAL_COMPLETE.md
+RESOURCE_CLEANUP_CHECKLIST.md
+RESOURCE_CLEANUP_NOTES.md
+SENSITIVE_FILES_AUDIT.md
+STRONGSWAN_CLEANUP_COMPLETE.md
