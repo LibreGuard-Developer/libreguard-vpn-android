@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- App-specific colors -->
     <color name="purple_200">#FFBB86FC</color>
     <color name="purple_500">#FF6200EE</color>
     <color name="purple_700">#FF3700B3</color>
@@ -11,28 +12,9 @@
     <color name="success_text" />
     <color name="error_text">#F44336</color>
 
-
-    <!-- Strongswan import colors -->
-
-    <color
-        name="accent">#96BDC2</color>
-
-    <color
-        name="primary">#A2042C</color>
-
-    <color
-        name="primary_dark">#323232</color>
-
-    <color
-        name="panel_background">#444444</color>
-
-    <color
-        name="panel_separator">#5a5a5a</color>
-
-    <color
-        name="checked">#4a4a4a</color>
-
-    <color
-        name="pressed">#5a5a5a</color>
-
+    <!-- Theme colors (used by styles.xml for app theming) -->
+    <color name="accent">#96BDC2</color>
+    <color name="primary">#A2042C</color>
+    <color name="primary_dark">#323232</color>
+</resources>
 </resources>
