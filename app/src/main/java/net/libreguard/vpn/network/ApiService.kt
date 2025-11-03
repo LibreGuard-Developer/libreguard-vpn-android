@@ -66,6 +66,45 @@ data class CertificateJobResponse(
 // Polling response (can reuse the same structure)
 typealias CertificateJobStatusResponse = CertificateJobResponse
 
+// Registration API models
+data class RegisterRequest(
+    val email: String,
+    val password: String
+)
+
+data class RegisterResponse(
+    val message: String?,
+    val userId: String?,
+    val email: String?,
+    val requiresEmailConfirmation: Boolean = true,
+    val emailConfirmationToken: String? = null
+)
+
+data class ConfirmEmailRequest(
+    val userId: String,
+    val token: String
+)
+
+data class ConfirmEmailResponse(
+    val message: String?,
+    val token: String?,
+    val email: String?,
+    val userId: String?
+)
+
+data class ResendConfirmationRequest(
+    val email: String
+)
+
+// Check confirmation polling response
+data class CheckConfirmationResponse(
+    val emailConfirmed: Boolean,
+    val message: String?,
+    val token: String? = null,
+    val email: String? = null,
+    val userId: String? = null
+)
+
 interface ApiService {
     @POST("api/login")
     suspend fun login(@Body request: AuthRequest): Response<AuthResponse>
@@ -128,4 +167,17 @@ interface ApiService {
 
     @POST("api/2fa/recovery-codes/generate")
     suspend fun generateRecoveryCodes(@Header("Authorization") authorization: String): Response<RecoveryCodesResponse>
+
+    // Registration endpoints
+    @POST("api/register")
+    suspend fun register(@Body request: RegisterRequest): Response<RegisterResponse>
+
+    @POST("api/register/confirm-email")
+    suspend fun confirmEmail(@Body request: ConfirmEmailRequest): Response<ConfirmEmailResponse>
+
+    @POST("api/register/resend-confirmation")
+    suspend fun resendConfirmation(@Body request: ResendConfirmationRequest): Response<MessageResponse>
+
+    @GET("api/register/check-confirmation/{userId}")
+    suspend fun checkConfirmation(@Path("userId") userId: String): Response<CheckConfirmationResponse>
 }

@@ -24,6 +24,7 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -33,6 +34,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.tooling.preview.Preview
 import kotlinx.coroutines.launch
+import net.libreguard.vpn.R
 import net.libreguard.vpn.network.RetrofitClient
 import net.libreguard.vpn.network.AuthRequest
 import kotlin.math.cos
@@ -41,7 +43,8 @@ import kotlin.math.cos
 @Composable
 fun LoginScreen(
     onLoginSuccess: (String) -> Unit,
-    onRequires2FA: (String) -> Unit
+    onRequires2FA: (String) -> Unit,
+    onNavigateToRegister: () -> Unit
 ) {
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
@@ -439,6 +442,15 @@ fun LoginScreen(
                             )
                         }
                     }
+
+                    // Register prompt
+                    Spacer(modifier = Modifier.height(16.dp))
+                    TextButton(onClick = { onNavigateToRegister() }) {
+                        Text(
+                            text = stringResource(id = R.string.new_here_create_account),
+                            color = Color(0xFF00FF88)
+                        )
+                    }
                 }
             }
 
@@ -544,6 +556,7 @@ private fun drawAnimatedBackground(
 fun PreviewLoginScreen() {
     LoginScreen(
         onLoginSuccess = { },
-        onRequires2FA = { }
+        onRequires2FA = { },
+        onNavigateToRegister = { }
     )
 }

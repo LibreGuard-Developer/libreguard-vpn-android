@@ -1,5 +1,6 @@
 package net.libreguard.vpn
 
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -19,6 +20,8 @@ import net.libreguard.vpn.ui.screens.MainScreen
 import net.libreguard.vpn.ui.screens.SettingsScreen
 import net.libreguard.vpn.ui.screens.TwoFactorSettingsScreen
 import net.libreguard.vpn.ui.screens.TwoFactorVerificationScreen
+import net.libreguard.vpn.ui.screens.RegisterScreen
+import net.libreguard.vpn.ui.screens.ConfirmEmailScreen
 import net.libreguard.vpn.ui.theme.LibreGuardVPNTheme
 import net.libreguard.vpn.viewmodel.VpnViewModel
 
@@ -46,6 +49,34 @@ fun AppNavigation(modifier: Modifier = Modifier) {
     var authToken by remember { mutableStateOf<String?>(null) }
     var isCheckingToken by remember { mutableStateOf(true) }
     var pendingEmail by remember { mutableStateOf<String?>(null) }
+
+    // New state for registration confirmation flow
+    var regUserId by remember { mutableStateOf<String?>(null) }
+    var regEmail by remember { mutableStateOf<String?>(null) }
+    var regToken by remember { mutableStateOf<String?>(null) }
+
+    // Handle deep links that bring the app to foreground after email confirmation
+    LaunchedEffect(Unit) {
+        val data: Uri? = (context as? MainActivity)?.intent?.data
+        data?.let { uri ->
+            // We expect libreguardvpn://email/confirmed?userId=... optionally token
+            if (uri.scheme == "libreguardvpn" && uri.host == "email" && uri.path == "/confirmed") {
+                val uid = uri.getQueryParameter("userId")
+                val token = uri.getQueryParameter("token")
+                if (!token.isNullOrBlank()) {
+                    // If token provided directly, persist and enter app
+                    val sharedPrefs = context.getSharedPreferences("vpn_state_prefs", android.content.Context.MODE_PRIVATE)
+                    sharedPrefs.edit().putString("auth_token", token).apply()
+                    authToken = token
+                    navController.navigate("main") { popUpTo("login") { inclusive = true } }
+                } else if (!uid.isNullOrBlank()) {
+                    // If only userId is present, navigate to confirmEmail and let polling finish
+                    regUserId = uid
+                    navController.navigate("confirmEmail")
+                }
+            }
+        }
+    }
 
     // Check for persisted auth token on startup
     LaunchedEffect(Unit) {
@@ -79,6 +110,48 @@ fun AppNavigation(modifier: Modifier = Modifier) {
                     onRequires2FA = { email ->
                         pendingEmail = email
                         navController.navigate("twoFactor")
+                    },
+                    onNavigateToRegister = {
+                        navController.navigate("register")
+                    }
+                )
+            }
+        }
+
+        composable("register") {
+            RegisterScreen(
+                onBack = { navController.popBackStack() },
+                onRegistrationNeedsConfirmation = { userId, email, token ->
+                    regUserId = userId
+                    regEmail = email
+                    regToken = token
+                    navController.navigate("confirmEmail")
+                }
+            )
+        }
+
+        composable("confirmEmail") {
+            val uid = regUserId
+            val email = regEmail
+            if (uid != null && email != null) {
+                ConfirmEmailScreen(
+                    userId = uid,
+                    email = email,
+                    initialToken = regToken,
+                    onConfirmed = { token ->
+                        // Persist token and go to main
+                        val sharedPrefs = context.getSharedPreferences("vpn_state_prefs", android.content.Context.MODE_PRIVATE)
+                        sharedPrefs.edit().putString("auth_token", token).apply()
+                        authToken = token
+                        regUserId = null; regEmail = null; regToken = null
+                        navController.navigate("main") {
+                            popUpTo("login") { inclusive = true }
+                        }
+                    },
+                    onBackToLogin = {
+                        navController.navigate("login") {
+                            popUpTo("login") { inclusive = true }
+                        }
                     }
                 )
             }

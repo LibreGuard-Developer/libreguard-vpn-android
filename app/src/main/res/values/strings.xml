@@ -2,5 +2,31 @@
 <resources xmlns:tools="http://schemas.android.com/tools" tools:ignore="MissingTranslation">
     <!-- App branding - minimal set for LibreGuard VPN -->
     <string name="app_name">LibreGuard VPN</string>
-</resources>
 
+    <!-- Registration -->
+    <string name="register_title">Create account</string>
+    <string name="email_label">Email</string>
+    <string name="password_label">Password</string>
+    <string name="create_account">Create account</string>
+    <string name="register_terms">By creating an account you agree to our Terms and Privacy Policy.</string>
+    <string name="new_here_create_account">New here? Create an account</string>
+
+    <!-- Confirmation -->
+    <string name="confirm_email_title">Confirm your email</string>
+    <string name="confirm_email_description">We sent a confirmation link/code to %1$s. Once you click the link in your email, we will detect it here and log you in. Or paste the code below.</string>
+    <string name="confirmation_code_label">Confirmation code</string>
+    <string name="confirm_email">Confirm email</string>
+    <string name="resend_confirmation_email">Resend confirmation email</string>
+    <string name="confirmation_email_sent_again">Confirmation email sent again.</string>
+
+    <!-- Validation and errors -->
+    <string name="error_empty_email">Please enter an email address</string>
+    <string name="error_invalid_email">Please enter a valid email address</string>
+    <string name="error_password_requirements">Password must be at least 8 characters and include a number and a special character</string>
+    <string name="error_empty_password">Please enter a password</string>
+    <string name="error_empty_code">Please enter the confirmation code</string>
+
+    <!-- Progress/info -->
+    <string name="polling_waiting_confirmation">Waiting for email confirmation…</string>
+    <string name="email_confirmed_logged_in">Email confirmed! Logging you in…</string>
+</resources>
