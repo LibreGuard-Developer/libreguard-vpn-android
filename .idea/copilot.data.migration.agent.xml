@@ -540,6 +540,7 @@
           <value>
             <set>
               <option value="015f7f44-63ef-4c99-b346-741175c031eb" />
+              <option value="04c896a0-00f1-4642-8ad5-d884b5df9209" />
               <option value="0d81c4ab-45e7-4e19-a5e7-621333fdc2a5" />
               <option value="10f36087-f4c3-48e1-a919-d9303f6d50fb" />
               <option value="13b5e846-6e44-4e00-b461-762def0c37f0" />
@@ -569,6 +570,7 @@
               <option value="7e252395-7b2a-4a94-a21e-3fcc770c8c3e" />
               <option value="7e3b59b9-f7d7-4a04-8512-0eed2c38f3ba" />
               <option value="8123624c-8a22-4add-ac22-13fb03c4900a" />
+              <option value="81e3b0bc-d8eb-4595-8553-4c688140730c" />
               <option value="81fd3bc0-bdba-4a4b-b250-91f1ce7f53d1" />
               <option value="8410e0f6-6a44-43e5-bb22-5f82bc3fbf9f" />
               <option value="84c74336-234f-4a18-8c62-454c4343eff2" />
@@ -582,6 +584,7 @@
               <option value="9d7db6a5-3dc3-4309-9993-33629a7ddab0" />
               <option value="a17e0545-2cda-47f2-8c63-cc1eb4b97ba8" />
               <option value="a26c87ee-2164-4512-bf57-8646112d0dd3" />
+              <option value="a33b8341-e462-42be-89e3-a8d701af6448" />
               <option value="a60c3fb7-51e6-4cf7-b502-dd8852108b40" />
               <option value="a6871238-db00-4fe5-8abb-e514f954bc9a" />
               <option value="a919e30b-866b-4bd9-a11c-106ad5350cb8" />
@@ -858,6 +861,15 @@
         <set>
           <option value="file://$PROJECT_DIR$/strongswan/src/frontends/android/app/src/main/jni/Android.mk" />
           <option value="file://$PROJECT_DIR$/strongswan/src/frontends/android/app/build.gradle" />
+          <option value="file://$PROJECT_DIR$/app/src/main/res/values/colors.xml" />
+          <option value="file://$PROJECT_DIR$/app/src/main/res/values/strings_new.xml" />
+          <option value="file://$USER_HOME$/generate_mipmaps.py" />
+          <option value="file://$PROJECT_DIR$/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml" />
+          <option value="file://$PROJECT_DIR$/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml" />
+          <option value="file://$PROJECT_DIR$/app/src/main/res/mipmap-anydpi/ic_launcher.xml" />
+          <option value="file://$PROJECT_DIR$/app/src/main/res/mipmap-anydpi/ic_launcher_round.xml" />
+          <option value="file://$PROJECT_DIR$/app/src/main/res/mipmap-mdpi/ic_launcher_foreground.xml" />
+          <option value="file://$PROJECT_DIR$/RESOURCE_CLEANUP_NOTES.md" />
         </set>
       </entry>
       <entry key="ae7796c1-37f6-4dba-9750-6d39eaa7a16f" />

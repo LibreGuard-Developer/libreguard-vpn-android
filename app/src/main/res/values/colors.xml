@@ -16,5 +16,7 @@
     <color name="accent">#96BDC2</color>
     <color name="primary">#A2042C</color>
     <color name="primary_dark">#323232</color>
-</resources>
+
+    <!-- Launcher icon colors -->
+    <color name="ic_launcher_bg">#005BA3</color>
 </resources>

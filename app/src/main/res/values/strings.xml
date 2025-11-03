@@ -1,18 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources xmlns:tools="http://schemas.android.com/tools" tools:ignore="MissingTranslation">
+    <!-- App branding -->
     <string name="app_name">LibreGuard VPN</string>
-
-
-    <!-- Application -->
     <string name="main_activity_name">LibreGuard</string>
+
+    <!-- Core VPN functionality strings -->
     <string name="show_log">View log</string>
     <string name="search">Search</string>
+
+    <!-- VPN error messages -->
     <string name="vpn_not_supported_title">VPN not supported</string>
     <string name="vpn_not_supported">Your device does not support VPN applications.\nPlease contact the manufacturer.</string>
     <string name="vpn_not_supported_during_lockdown">VPN connections are not supported if a built-in VPN has the always-on feature enabled.</string>
     <string name="vpn_not_supported_no_permission">Unable to get permission to create VPN connections. Either because it was denied by the user, or because a different VPN app has the always-on feature enabled.</string>
+
+    <!-- General UI -->
     <string name="loading">Loading&#8230;</string>
     <string name="profile_not_found">Profile not found</string>
     <string name="strongswan_shortcut">LibreGuard shortcut</string>
+
+    <!-- Notifications -->
     <string name="permanent_notification_name">VPN connection state</string>
     <string name="permanent_notification_description">Provides information about the VPN connection state and serves as permanent notification to keep the VPN service running in the background.</string>
 
@@ -132,7 +139,8 @@
     <string name="profile_cert_alias">Certificate for \"%1$s\"</string>
     <string name="profile_profile_id">Profile ID</string>
     <string name="profile_managed">Managed profile</string>
-    <!-- Warnings/Notifications in the details view -->
+
+    <!-- Alert messages -->
     <string name="alert_text_no_input_gateway">A value is required to initiate the connection</string>
     <string name="alert_text_no_input_username">Please enter your username </string>
     <string name="alert_text_nocertfound_title">No CA certificate selected</string>
@@ -142,11 +150,34 @@
     <string name="alert_text_no_ips">Please enter valid IP addresses, separated by spaces</string>
     <string name="alert_text_no_proposal">Please enter a valid list of algorithms, separated by hyphens</string>
     <string name="alert_text_vpn_profile_read_only">This VPN profile is managed by your administrator and can\'t be modified. You can only change the password</string>
-    <string name="tnc_notice_title">EAP-TNC may affect your privacy</string>
-    <string name="tnc_notice_subtitle">Device data is sent to the server operator</string>
-    <string name="tnc_notice_details"><![CDATA[<p>Trusted Network Connect (TNC) allows server operators to assess the health of a client device.</p><p>For that purpose the server operator may request data such as a unique identifier, a list of installed packages, system settings, or cryptographic checksums of files.</p><b>Any data will be sent only after verifying the server\'s identity.</b>]]></string>
 
-    <!-- Trusted certificate selection -->
+    <!-- VPN state fragment -->
+    <string name="state_label">Status:</string>
+    <string name="profile_label">Profile:</string>
+    <string name="disconnect">Disconnect</string>
+    <string name="state_connecting">Connecting&#8230;</string>
+    <string name="state_connected">Connected</string>
+    <string name="state_disconnecting">Disconnecting&#8230;</string>
+    <string name="state_disabled">No active VPN</string>
+    <string name="state_error">Error</string>
+    <string name="dismiss">Dismiss</string>
+
+    <!-- Login dialog -->
+    <string name="login_title">Enter password to connect</string>
+    <string name="login_username">Username</string>
+    <string name="login_password">Password</string>
+    <string name="login_confirm">Connect</string>
+
+    <!-- Connection errors -->
+    <string name="error_format">Failed to establish VPN: %1$s.</string>
+    <string name="error_lookup_failed">Server address lookup failed</string>
+    <string name="error_unreachable">Server is unreachable</string>
+    <string name="error_peer_auth_failed">Verifying server authentication failed</string>
+    <string name="error_auth_failed">User authentication failed</string>
+    <string name="error_assessment_failed">Security assessment failed</string>
+    <string name="error_generic">Unspecified failure while connecting</string>
+
+    <!-- Trusted certificates -->
     <string name="trusted_certs_title">CA certificates</string>
     <string name="no_certificates">No certificates</string>
     <string name="reload_trusted_certs">Reload CA certificates</string>
@@ -167,61 +198,11 @@
     </plurals>
     <string name="clear">Clear</string>
 
-    <!-- VPN state fragment -->
-    <string name="state_label">Status:</string>
-    <string name="profile_label">Profile:</string>
-    <string name="disconnect">Disconnect</string>
-    <string name="state_connecting">Connecting&#8230;</string>
-    <string name="state_connected">Connected</string>
-    <string name="state_disconnecting">Disconnecting&#8230;</string>
-    <string name="state_disabled">No active VPN</string>
-    <string name="state_error">Error</string>
-    <string name="dismiss">Dismiss</string>
-
-    <!-- IMC state fragment -->
+    <!-- Remediation/Assessment (EAP-TNC) -->
     <string name="imc_state_label">Assessment:</string>
     <string name="imc_state_isolate">Restricted</string>
     <string name="imc_state_block">Failed</string>
     <string name="show_remediation_instructions">View remediation instructions</string>
-
-    <!-- Remediation instructions -->
     <string name="remediation_instructions_title">Remediation instructions</string>
-
-    <!-- Dialogs -->
-    <string name="login_title">Enter password to connect</string>
-    <string name="login_username">Username</string>
-    <string name="login_password">Password</string>
-    <string name="login_confirm">Connect</string>
-    <string name="error_format">Failed to establish VPN: %1$s.</string>
-    <string name="error_lookup_failed">Server address lookup failed</string>
-    <string name="error_unreachable">Server is unreachable</string>
-    <string name="error_peer_auth_failed">Verifying server authentication failed</string>
-    <string name="error_auth_failed">User authentication failed</string>
-    <string name="error_assessment_failed">Security assessment failed</string>
-    <string name="error_generic">Unspecified failure while connecting</string>
-    <string name="error_password_missing">Password unavailable</string>
-    <string name="error_certificate_unavailable">Client certificate unavailable</string>
-    <string name="vpn_connected">VPN connected</string>
-    <string name="vpn_profile_connected">This VPN profile is currently connected!</string>
-    <string name="reconnect">Reconnect</string>
-    <string name="connect_profile_question">Connect %1$s?</string>
-    <string name="replaces_active_connection">This will replace your active VPN connection!</string>
-    <string name="disconnect_question">Disconnect VPN?</string>
-    <string name="disconnect_active_connection">This will disconnect the active VPN connection!</string>
-    <string name="connect">Connect</string>
-    <string name="retry">Retry</string>
-    <plurals name="retry_in">
-        <item quantity="one">Retry in %1$d second</item>
-        <item quantity="other">Retry in %1$d seconds</item>
-    </plurals>
-    <string name="cancel_retry">Cancel retry</string>
-    <string name="power_whitelist_title">Disable battery optimizations</string>
-    <string name="power_whitelist_text">Please confirm the next dialog to add the app to the device\'s power whitelist so it can ignore battery optimizations and schedule NAT keep-alives and rekeyings accurately in order to constantly keep reachable while the VPN is established.</string>
-
-    <!-- Quick Settings tile -->
-    <string name="tile_default">Toggle VPN</string>
-    <string name="tile_connect">Connect VPN</string>
-    <string name="tile_disconnect">Disconnect VPN</string>
-
-
 </resources>
+
