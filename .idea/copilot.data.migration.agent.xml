@@ -31,6 +31,7 @@
       <option value="a63d5516-14ff-4fb4-9798-8e7469689ab0" />
       <option value="ab6055bf-f10c-4775-aea6-2fcfcba43fe7" />
       <option value="ab9cd464-a015-4bbf-adc8-e27002e96079" />
+      <option value="ae072d60-83fc-4bfa-9dec-452d41bef8a1" />
       <option value="ae7796c1-37f6-4dba-9750-6d39eaa7a16f" />
       <option value="ba39a71b-362c-4fa1-8520-029bc3a786fa" />
       <option value="bb9d0d48-7a45-4318-8d8b-7ab71499bfe3" />
@@ -544,39 +545,57 @@
               <option value="13b5e846-6e44-4e00-b461-762def0c37f0" />
               <option value="1f300411-884b-4ecf-977c-b8b06852c9b0" />
               <option value="201b976e-47bf-443d-a046-74d4399d37e8" />
+              <option value="294fcd27-dc08-4ad6-9a31-49f737820e8e" />
+              <option value="2c8f3f0c-0ea0-478b-8eb4-214d14ca379d" />
+              <option value="2d665aa5-8140-45ad-8276-623dbdb872ff" />
               <option value="3036a87e-0906-45d2-a550-57147698612c" />
               <option value="3c6807c8-57a6-4c9f-aa68-450e54c4219c" />
               <option value="3c97e837-ec93-4c9b-bd16-69903a8f937a" />
+              <option value="43745014-e06b-44bc-b580-5975e29f8d50" />
               <option value="4431c9fb-95d9-441c-be3e-b98e30a39a3d" />
               <option value="4ee93b61-9b7f-4a34-972f-77efd4b96539" />
               <option value="504d53bf-55c1-4c72-8919-f01f4ff374d1" />
               <option value="507a18fa-824a-492e-b364-7af92faf4154" />
               <option value="58723a81-1dd9-4226-923e-51bdb45b4aa4" />
+              <option value="60a4c5cf-a6ad-475c-9147-cf8e16d38a2a" />
               <option value="61fbf51f-8d19-4338-9c88-870882201104" />
+              <option value="65b08e41-7a60-401d-a04b-4fb78aadbe11" />
               <option value="683f88a7-17fb-47fe-8871-e6c46d877f73" />
+              <option value="691229b0-f4fe-4eb8-90ab-7cbc84fefa8c" />
               <option value="7461da20-3537-44f7-b331-cb6e4804ce5d" />
               <option value="76ffa397-14b2-47cf-a7fc-ede6d8a72c0b" />
               <option value="77787962-1565-4a7a-baf5-ec67049d2a78" />
+              <option value="7e16ce5c-7b06-4bba-a053-6f49c1470f01" />
               <option value="7e252395-7b2a-4a94-a21e-3fcc770c8c3e" />
               <option value="7e3b59b9-f7d7-4a04-8512-0eed2c38f3ba" />
+              <option value="8123624c-8a22-4add-ac22-13fb03c4900a" />
               <option value="81fd3bc0-bdba-4a4b-b250-91f1ce7f53d1" />
               <option value="8410e0f6-6a44-43e5-bb22-5f82bc3fbf9f" />
               <option value="84c74336-234f-4a18-8c62-454c4343eff2" />
               <option value="8ac16a78-d2db-4d44-b7ff-b81125ecceb8" />
               <option value="8ae1fffe-dce5-4b69-a531-f776fa665303" />
+              <option value="8e20a74b-80e7-4e2b-8b30-ef1f5a394ddf" />
+              <option value="92a93ef8-7e51-497b-9fe0-e6db599281a7" />
+              <option value="99e10392-0887-418e-8a4a-f360a387fc43" />
               <option value="9b70687a-a418-4050-948a-f6e21e80144c" />
+              <option value="9c61d421-b385-4240-b1a7-74b79ecd7cb7" />
               <option value="9d7db6a5-3dc3-4309-9993-33629a7ddab0" />
               <option value="a17e0545-2cda-47f2-8c63-cc1eb4b97ba8" />
               <option value="a26c87ee-2164-4512-bf57-8646112d0dd3" />
+              <option value="a60c3fb7-51e6-4cf7-b502-dd8852108b40" />
               <option value="a6871238-db00-4fe5-8abb-e514f954bc9a" />
               <option value="a919e30b-866b-4bd9-a11c-106ad5350cb8" />
               <option value="adab23db-4e63-4a0d-8df0-8228a4776956" />
               <option value="b4149099-055a-4927-99c1-42b7ff2efc6f" />
               <option value="bff69dd2-72a7-4459-b5de-d1b44e07e530" />
               <option value="d99fc2c8-7b9a-4183-a41d-a26716df7fa1" />
+              <option value="ed7da1bb-274c-413b-aa70-63286d6e83d1" />
+              <option value="edee02bf-f6f3-4aab-900b-3b870fd89e2d" />
               <option value="f2a430cc-9673-48e7-a0dc-304ef7def671" />
               <option value="f481a7dc-04ff-426b-952c-5d94f9dce7d2" />
+              <option value="f4dca84f-ee98-407f-9df1-cefbb30591d4" />
               <option value="f6ea2b8a-41dd-47a9-9e52-4b74a525cace" />
+              <option value="f8d6fbcb-061b-4584-a40e-8f39ebef8e90" />
             </set>
           </value>
         </entry>
@@ -837,7 +856,8 @@
       <entry key="a63d5516-14ff-4fb4-9798-8e7469689ab0" />
       <entry key="ab9cd464-a015-4bbf-adc8-e27002e96079">
         <set>
-          <option value="file://$PROJECT_DIR$/strongswan/src/frontends/android/app/src/main/java/org/strongswan/android/logic/CharonVpnService.java" />
+          <option value="file://$PROJECT_DIR$/strongswan/src/frontends/android/app/src/main/jni/Android.mk" />
+          <option value="file://$PROJECT_DIR$/strongswan/src/frontends/android/app/build.gradle" />
         </set>
       </entry>
       <entry key="ae7796c1-37f6-4dba-9750-6d39eaa7a16f" />

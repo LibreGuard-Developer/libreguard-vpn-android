@@ -67,7 +67,7 @@ android {
 
     sourceSets {
         getByName("main") {
-            jniLibs.srcDirs("src/main/jniLibs", "../strongswan/libs")
+            jniLibs.srcDirs("src/main/jniLibs")
             // Only compile app code under net/; strongSwan sources come from the submodule
             java.setSrcDirs(listOf("src/main/java/net"))
             res.srcDirs("src/main/res")
