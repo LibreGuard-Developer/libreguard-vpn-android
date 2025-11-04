@@ -31,4 +31,8 @@
     <!-- Progress/info -->
     <string name="polling_waiting_confirmation">Waiting for email confirmation…</string>
     <string name="email_confirmed_logged_in">Email confirmed! Logging you in…</string>
+
+    <!-- Generic registration messages -->
+    <string name="registration_generic_error">We couldn’t create your account. Please check your information or try logging in.</string>
+    <string name="registration_account_exists_login">An account with this email already exists. Please log in.</string>
 </resources>

@@ -126,7 +126,6 @@ fun RegisterScreen(
                                     error = "Empty response from server"
                                 }
                             } else if (resp.code() == 409) {
-                                // Parse error body JSON per updated API
                                 val raw = resp.errorBody()?.string()
                                 val obj = try { if (raw.isNullOrBlank()) null else JSONObject(raw) } catch (_: Throwable) { null }
                                 val status = obj?.optString("accountStatus")?.lowercase()
@@ -136,17 +135,35 @@ fun RegisterScreen(
                                 val msg = obj?.optString("message")
 
                                 when (status) {
+                                    // Unverified + CORRECT password: backend has already (re)sent email. Just navigate.
                                     "unverified" -> {
-                                        runCatching { RetrofitClient.instance.resendConfirmation(ResendConfirmationRequest(errEmail)) }
                                         onRegistrationNeedsConfirmation(errUserId, errEmail, errToken)
                                     }
-                                    "verified" -> {
-                                        error = msg ?: "Account already verified. Please log in."
+                                    // Unverified + WRONG password: do not send email, show generic low-information message
+                                    "unknown" -> {
+                                        error = msg ?: context.getString(R.string.registration_generic_error)
+                                    }
+                                    // Verified account: only show login suggestion if password is correct
+                                    "exists" -> {
+                                        // Verified account: only show login suggestion if password is correct
+                                        val loginResponse = runCatching {
+                                            RetrofitClient.instance.login(net.libreguard.vpn.network.AuthRequest(email = errEmail, password = password))
+                                        }.getOrNull()
+                                        if (loginResponse?.isSuccessful == true) {
+                                            val auth = loginResponse.body()
+                                            val looksValid = (auth?.token?.isNotBlank() == true) || (auth?.requiresTwoFactor == true)
+                                            if (looksValid) {
+                                                error = msg ?: context.getString(R.string.registration_account_exists_login)
+                                            } else {
+                                                error = context.getString(R.string.registration_generic_error)
+                                            }
+                                        } else {
+                                            error = context.getString(R.string.registration_generic_error)
+                                        }
                                     }
                                     else -> {
-                                        // Fallback: behave like unverified
-                                        runCatching { RetrofitClient.instance.resendConfirmation(ResendConfirmationRequest(errEmail)) }
-                                        onRegistrationNeedsConfirmation(errUserId, errEmail, errToken)
+                                        // Generic fallback to avoid info leakage
+                                        error = msg ?: context.getString(R.string.registration_generic_error)
                                     }
                                 }
                             } else {
