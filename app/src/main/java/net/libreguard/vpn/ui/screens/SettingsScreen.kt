@@ -1,5 +1,6 @@
 package net.libreguard.vpn.ui.screens
 
+import android.util.Base64
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -21,6 +22,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.platform.LocalContext
+import org.json.JSONObject
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -31,16 +34,45 @@ fun SettingsScreen(
 ) {
     var showLogoutDialog by remember { mutableStateOf(false) }
 
+    val context = LocalContext.current
+    val sharedPrefs = remember { context.getSharedPreferences("vpn_state_prefs", android.content.Context.MODE_PRIVATE) }
+    val token = remember { sharedPrefs.getString("auth_token", null) }
+
+    // Try to extract email from JWT token (sub, email, or username)
+    val userEmail by remember(token) {
+        mutableStateOf(runCatching {
+            if (token.isNullOrBlank()) return@runCatching null
+            val parts = token.split(".")
+            if (parts.size != 3) return@runCatching null
+            val payload = String(Base64.decode(parts[1], Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP))
+            val json = JSONObject(payload)
+            json.optString("email").ifBlank {
+                json.optString("username").ifBlank {
+                    json.optString("sub").ifBlank { null }
+                }
+            }
+        }.getOrNull())
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
                 title = {
-                    Text(
-                        "Settings",
-                        color = Color.White,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 22.sp
-                    )
+                    Column {
+                        Text(
+                            "Settings",
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 22.sp
+                        )
+                        userEmail?.let {
+                            Text(
+                                text = it,
+                                color = Color(0xFFE0E7FF),
+                                fontSize = 12.sp
+                            )
+                        }
+                    }
                 },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {

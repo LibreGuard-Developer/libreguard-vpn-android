@@ -37,14 +37,15 @@ import kotlinx.coroutines.launch
 import net.libreguard.vpn.R
 import net.libreguard.vpn.network.RetrofitClient
 import net.libreguard.vpn.network.AuthRequest
-import kotlin.math.cos
+import net.libreguard.vpn.network.ResendConfirmationRequest
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LoginScreen(
     onLoginSuccess: (String) -> Unit,
     onRequires2FA: (String) -> Unit,
-    onNavigateToRegister: () -> Unit
+    onNavigateToRegister: () -> Unit,
+    onNavigateToEmailVerification: (email: String, userId: String?) -> Unit
 ) {
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
@@ -372,7 +373,15 @@ fun LoginScreen(
                                             }
                                         }
                                     } else {
-                                        errorMessage = "Login failed: ${response.code()}"
+                                        if (response.code() == 401) {
+                                            // Treat as email not verified: resend confirmation and route to verification
+                                            runCatching {
+                                                RetrofitClient.instance.resendConfirmation(ResendConfirmationRequest(email))
+                                            }
+                                            onNavigateToEmailVerification(email, null)
+                                        } else {
+                                            errorMessage = "Login failed: ${response.code()}"
+                                        }
                                     }
                                 } catch (e: Exception) {
                                     errorMessage = "Network error: ${e.localizedMessage}"
@@ -557,6 +566,7 @@ fun PreviewLoginScreen() {
     LoginScreen(
         onLoginSuccess = { },
         onRequires2FA = { },
-        onNavigateToRegister = { }
+        onNavigateToRegister = { },
+        onNavigateToEmailVerification = { _, _ -> }
     )
 }

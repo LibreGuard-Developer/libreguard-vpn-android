@@ -113,6 +113,11 @@ fun AppNavigation(modifier: Modifier = Modifier) {
                     },
                     onNavigateToRegister = {
                         navController.navigate("register")
+                    },
+                    onNavigateToEmailVerification = { email, _ ->
+                        regEmail = email
+                        // We may not know userId here; confirm screen uses polling and resend was already triggered
+                        navController.navigate("confirmEmail")
                     }
                 )
             }
