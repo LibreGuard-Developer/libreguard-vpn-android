@@ -116,7 +116,6 @@ fun AppNavigation(modifier: Modifier = Modifier) {
                     },
                     onNavigateToEmailVerification = { email, _ ->
                         regEmail = email
-                        // We may not know userId here; confirm screen uses polling and resend was already triggered
                         navController.navigate("confirmEmail")
                     }
                 )
@@ -137,12 +136,14 @@ fun AppNavigation(modifier: Modifier = Modifier) {
 
         composable("confirmEmail") {
             val uid = regUserId
-            val email = regEmail
-            if (uid != null && email != null) {
+            val emailParam = regEmail
+            val tokenParam = regToken
+            if (!emailParam.isNullOrBlank()) {
+                val emailNonNull: String = emailParam
                 ConfirmEmailScreen(
-                    userId = uid,
-                    email = email,
-                    initialToken = regToken,
+                    userId = uid ?: "",
+                    email = emailNonNull,
+                    initialToken = tokenParam,
                     onConfirmed = { token ->
                         // Persist token and go to main
                         val sharedPrefs = context.getSharedPreferences("vpn_state_prefs", android.content.Context.MODE_PRIVATE)

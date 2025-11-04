@@ -13,11 +13,13 @@
 
     <!-- Confirmation -->
     <string name="confirm_email_title">Confirm your email</string>
-    <string name="confirm_email_description">We sent a confirmation link to <b>%1$s </b>. Once you click the link in your email, we will detect it here and log you in. Once verified, you will be redirected to this app.\nThank you for choosing <font color="#26BFDE">LibreGuard</font></string>
+    <string name="confirm_email_description">We sent a confirmation link/code to %1$s. Once you click the link in your email, we will detect it here and log you in. Or paste the code below.</string>
     <string name="confirmation_code_label">Confirmation code</string>
     <string name="confirm_email">Confirm email</string>
     <string name="resend_confirmation_email">Resend confirmation email</string>
     <string name="confirmation_email_sent_again">Confirmation email sent again.</string>
+    <string name="verification_link_expired">Verification link expired, please request another one.</string>
+    <string name="time_remaining_label">Time remaining: %1$s</string>
 
     <!-- Validation and errors -->
     <string name="error_empty_email">Please enter an email address</string>

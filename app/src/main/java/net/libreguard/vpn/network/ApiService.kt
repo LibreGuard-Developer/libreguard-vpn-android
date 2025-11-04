@@ -77,7 +77,8 @@ data class RegisterResponse(
     val userId: String?,
     val email: String?,
     val requiresEmailConfirmation: Boolean = true,
-    val emailConfirmationToken: String? = null
+    val emailConfirmationToken: String? = null,
+    val accountStatus: String? = null // "created" | "unverified" | "verified"
 )
 
 data class ConfirmEmailRequest(

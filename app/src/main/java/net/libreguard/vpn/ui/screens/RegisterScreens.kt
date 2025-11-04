@@ -7,7 +7,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -17,9 +16,11 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import net.libreguard.vpn.R
 import net.libreguard.vpn.network.*
+import org.json.JSONObject
 
 private fun isValidEmail(email: String): Boolean =
     android.util.Patterns.EMAIL_ADDRESS.matcher(email).matches()
@@ -34,7 +35,7 @@ private fun isValidPassword(pw: String): Boolean {
 @Composable
 fun RegisterScreen(
     onBack: () -> Unit,
-    onRegistrationNeedsConfirmation: (userId: String, email: String, token: String?) -> Unit,
+    onRegistrationNeedsConfirmation: (userId: String?, email: String, token: String?) -> Unit,
 ) {
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
@@ -117,12 +118,36 @@ fun RegisterScreen(
                                 val body = resp.body()
                                 if (body != null) {
                                     onRegistrationNeedsConfirmation(
-                                        body.userId ?: "",
+                                        body.userId,
                                         body.email ?: email,
                                         body.emailConfirmationToken
                                     )
                                 } else {
                                     error = "Empty response from server"
+                                }
+                            } else if (resp.code() == 409) {
+                                // Parse error body JSON per updated API
+                                val raw = resp.errorBody()?.string()
+                                val obj = try { if (raw.isNullOrBlank()) null else JSONObject(raw) } catch (_: Throwable) { null }
+                                val status = obj?.optString("accountStatus")?.lowercase()
+                                val errEmail = obj?.optString("email").takeUnless { it.isNullOrBlank() } ?: email
+                                val errUserId = obj?.optString("userId").takeUnless { it.isNullOrBlank() }
+                                val errToken = obj?.optString("emailConfirmationToken").takeUnless { it.isNullOrBlank() }
+                                val msg = obj?.optString("message")
+
+                                when (status) {
+                                    "unverified" -> {
+                                        runCatching { RetrofitClient.instance.resendConfirmation(ResendConfirmationRequest(errEmail)) }
+                                        onRegistrationNeedsConfirmation(errUserId, errEmail, errToken)
+                                    }
+                                    "verified" -> {
+                                        error = msg ?: "Account already verified. Please log in."
+                                    }
+                                    else -> {
+                                        // Fallback: behave like unverified
+                                        runCatching { RetrofitClient.instance.resendConfirmation(ResendConfirmationRequest(errEmail)) }
+                                        onRegistrationNeedsConfirmation(errUserId, errEmail, errToken)
+                                    }
                                 }
                             } else {
                                 error = "Registration failed: ${resp.code()} ${resp.message()}"
@@ -166,7 +191,7 @@ fun RegisterScreen(
 
 @Composable
 fun ConfirmEmailScreen(
-    userId: String,
+    userId: String?,
     email: String,
     initialToken: String?,
     onConfirmed: (token: String) -> Unit,
@@ -175,42 +200,54 @@ fun ConfirmEmailScreen(
     var info by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var isLoading by remember { mutableStateOf(false) }
+    var remainingMillis by remember { mutableStateOf(120_000L) }
+    var expired by remember { mutableStateOf(false) }
 
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
 
-    // Polling state
-    var isPolling by remember { mutableStateOf(true) }
+    // Countdown timer
+    LaunchedEffect(Unit) {
+        val tick = 1000L
+        while (isActive && remainingMillis > 0L) {
+            delay(tick)
+            remainingMillis -= tick
+        }
+        if (remainingMillis <= 0L) {
+            expired = true
+            info = context.getString(R.string.verification_link_expired)
+        }
+    }
 
-    // Start polling as soon as we enter this screen
+    // Poll only if userId is present and not expired
     LaunchedEffect(userId) {
-        val start = System.currentTimeMillis()
-        isPolling = true
         info = context.getString(R.string.polling_waiting_confirmation)
-        while (isPolling && System.currentTimeMillis() - start < 120_000) { // 2 minutes
-            try {
-                val resp = RetrofitClient.instance.checkConfirmation(userId)
-                if (resp.isSuccessful) {
-                    val body = resp.body()
-                    if (body?.emailConfirmed == true) {
-                        val token = body.token
-                        if (!token.isNullOrBlank()) {
-                            onConfirmed(token)
-                            break
-                        } else {
-                            info = body?.message ?: context.getString(R.string.email_confirmed_logged_in)
-                            // If backend confirms without token (unlikely by contract), navigate user back to login
-                            onBackToLogin()
-                            break
+        val uid = userId
+        if (!uid.isNullOrBlank()) {
+            val start = System.currentTimeMillis()
+            while (System.currentTimeMillis() - start < 120_000 && !expired) { // 2 minutes
+                try {
+                    val resp = RetrofitClient.instance.checkConfirmation(uid)
+                    if (resp.isSuccessful) {
+                        val body = resp.body()
+                        if (body?.emailConfirmed == true) {
+                            val token = body.token
+                            if (!token.isNullOrBlank()) {
+                                onConfirmed(token)
+                                break
+                            } else {
+                                info = body?.message ?: context.getString(R.string.email_confirmed_logged_in)
+                                onBackToLogin()
+                                break
+                            }
                         }
                     }
+                } catch (_: Throwable) {
+                    // ignore transient errors
                 }
-            } catch (_: Throwable) {
-                // Ignore transient network errors and keep polling
+                delay(3000)
             }
-            delay(3000)
         }
-        isPolling = false
     }
 
     Scaffold(
@@ -232,19 +269,31 @@ fun ConfirmEmailScreen(
                 .padding(24.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            // Use Material Text instead of HtmlText for normal, readable layout
             Text(
                 text = stringResource(id = R.string.confirm_email_description, email),
-                style = MaterialTheme.typography.bodyMedium
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface
             )
 
-            // Show waiting status prominently
+            // Time remaining label
+            val minutes = (remainingMillis / 1000L) / 60
+            val seconds = (remainingMillis / 1000L) % 60
+            val timeText = String.format("%02d:%02d", minutes, seconds)
+            if (!expired) {
+                Text(stringResource(id = R.string.time_remaining_label, timeText), style = MaterialTheme.typography.bodySmall)
+            } else {
+                Text(text = context.getString(R.string.verification_link_expired), color = Color(0xFFEF5350), style = MaterialTheme.typography.bodySmall)
+            }
+
             Card(
                 colors = CardDefaults.cardColors(containerColor = Color(0x2222AA22)),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(
                     text = info ?: context.getString(R.string.polling_waiting_confirmation),
-                    modifier = Modifier.padding(16.dp)
+                    modifier = Modifier.padding(16.dp),
+                    style = MaterialTheme.typography.bodyMedium
                 )
             }
 
@@ -256,6 +305,9 @@ fun ConfirmEmailScreen(
                         try {
                             val resp = RetrofitClient.instance.resendConfirmation(ResendConfirmationRequest(email))
                             if (resp.isSuccessful) {
+                                // Reset timer on resend
+                                remainingMillis = 120_000L
+                                expired = false
                                 info = context.getString(R.string.confirmation_email_sent_again)
                             } else {
                                 error = "Resend failed: ${resp.code()} ${resp.message()}"
