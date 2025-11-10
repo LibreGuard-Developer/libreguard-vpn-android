@@ -110,6 +110,10 @@ interface ApiService {
     @POST("api/login")
     suspend fun login(@Body request: AuthRequest): Response<AuthResponse>
 
+    // Add Google Sign-In endpoint
+    @POST("api/login/google")
+    suspend fun loginWithGoogle(@Body request: GoogleLoginRequest): Response<GoogleLoginResponse>
+
     // 2FA Login endpoints
     @POST("api/login/verify-2fa")
     suspend fun verify2fa(@Body request: Verify2faRequest): Response<TokenResponse>

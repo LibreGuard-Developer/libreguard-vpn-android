@@ -1,5 +1,7 @@
 package net.libreguard.vpn.ui.screens
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -15,8 +17,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.*
@@ -24,8 +24,8 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -33,11 +33,19 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.tooling.preview.Preview
+import com.google.android.gms.auth.api.signin.GoogleSignIn
+import com.google.android.gms.auth.api.signin.GoogleSignInOptions
+import com.google.android.gms.auth.api.signin.GoogleSignInStatusCodes
+import com.google.android.gms.common.api.ApiException
+import com.google.android.gms.common.SignInButton
 import kotlinx.coroutines.launch
 import net.libreguard.vpn.R
 import net.libreguard.vpn.network.RetrofitClient
 import net.libreguard.vpn.network.AuthRequest
 import net.libreguard.vpn.network.ResendConfirmationRequest
+import net.libreguard.vpn.network.GoogleLoginRequest
+import net.libreguard.vpn.network.GoogleLoginResponse
+import androidx.compose.ui.viewinterop.AndroidView
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -62,6 +70,60 @@ fun LoginScreen(
     val screenWidth = configuration.screenWidthDp.dp
     val scrollState = rememberScrollState()
     val keyboardController = LocalSoftwareKeyboardController.current
+    val context = LocalContext.current
+
+    // Keep only web client id for ID token
+    val webClientId = stringResource(id = R.string.google_web_client_id)
+
+    var googleLoading by remember { mutableStateOf(false) }
+
+    // Google Sign-In client setup
+    val gso = remember {
+        GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+            .requestIdToken(webClientId)
+            .requestEmail()
+            .build()
+    }
+    val googleSignInClient = remember { GoogleSignIn.getClient(context, gso) }
+
+    val googleLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        coroutineScope.launch {
+            googleLoading = false
+            val task = GoogleSignIn.getSignedInAccountFromIntent(result.data)
+            runCatching {
+                task.getResult(Exception::class.java)
+            }.onSuccess { account ->
+                val idToken = account.idToken
+                if (idToken.isNullOrBlank()) {
+                    errorMessage = context.getString(R.string.google_sign_in_error, "Missing ID token")
+                    return@launch
+                }
+                // Exchange with backend
+                isLoading = true
+                try {
+                    val resp = RetrofitClient.instance.loginWithGoogle(GoogleLoginRequest(idToken))
+                    if (resp.isSuccessful) {
+                        val body: GoogleLoginResponse? = resp.body()
+                        val token = body?.token
+                        if (!token.isNullOrBlank()) {
+                            onLoginSuccess(token)
+                        } else {
+                            errorMessage = context.getString(R.string.google_sign_in_error, "No token returned")
+                        }
+                    } else {
+                        errorMessage = context.getString(R.string.google_sign_in_error, "${resp.code()}")
+                    }
+                } catch (e: Exception) {
+                    errorMessage = context.getString(R.string.google_sign_in_error, e.localizedMessage ?: "Unknown error")
+                } finally {
+                    isLoading = false
+                }
+            }.onFailure { ex ->
+                val mapped = mapGoogleSignInFailure(ex)
+                errorMessage = context.getString(R.string.google_sign_in_error, mapped)
+            }
+        }
+    }
 
     // Animation states
     val infiniteTransition = rememberInfiniteTransition(label = "background_animation")
@@ -248,6 +310,37 @@ fun LoginScreen(
                         color = Color(0xFF888888),
                         modifier = Modifier.padding(bottom = 24.dp)
                     )
+
+                    // Google Sign-In button (official with Google logo)
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(50.dp)
+                    ) {
+                        AndroidView(
+                            factory = { ctx ->
+                                SignInButton(ctx).apply {
+                                    setSize(SignInButton.SIZE_WIDE)
+                                    setColorScheme(SignInButton.COLOR_DARK)
+                                    setOnClickListener {
+                                        errorMessage = null
+                                        googleLoading = true
+                                        googleLauncher.launch(googleSignInClient.signInIntent)
+                                    }
+                                }
+                            },
+                            update = { btn -> btn.isEnabled = !isLoading && !googleLoading },
+                            modifier = Modifier.matchParentSize()
+                        )
+                        if (googleLoading) {
+                            Box(
+                                modifier = Modifier.matchParentSize(),
+                                contentAlignment = Alignment.Center
+                            ) { CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp) }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
 
                     // Email field with gradient border when focused
                     OutlinedTextField(
@@ -557,6 +650,36 @@ private fun drawAnimatedBackground(
                 strokeWidth = 1.dp.toPx()
             )
         }
+    }
+}
+
+// Map Google Sign-In failures into more actionable messages
+private fun mapGoogleSignInFailure(ex: Throwable): String {
+    return if (ex is ApiException) {
+        val code = ex.statusCode
+        val name = GoogleSignInStatusCodes.getStatusCodeString(code)
+        val base = "$name ($code)"
+        when (code) {
+            // DEVELOPER_ERROR (commonly code 10) detailed guidance
+            10 -> buildString {
+                append(base)
+                append(" - Configuration error. Check that:\n")
+                append("1. The SHA-1 of the signing certificate (debug/release) is registered in the Google Cloud Console for the Android OAuth client.\n")
+                append("2. You're requesting the ID token with the correct WEB CLIENT ID (not the Android client ID).\n")
+                append("3. OAuth consent screen is published or your test account is whitelisted.\n")
+                append("4. The app's package name matches the one configured in the Android OAuth client.\n")
+                append("5. Play Services on the device/emulator is up to date.\n")
+                append("If you recently added the SHA-1, wait a few minutes and reinstall the app.")
+            }
+            // Network related transient issues sometimes bubble up as INTERNAL_ERROR
+            8 -> "$base - Internal error. Retry; could be transient Play Services issue."
+            7 -> "$base - Network error. Check connectivity."
+            12501 -> "$base - User cancelled the sign-in flow."
+            12500 -> "$base - Sign-in failed. Often temporary; retry."
+            else -> base
+        }
+    } else {
+        ex.localizedMessage ?: "Unknown error"
     }
 }
 

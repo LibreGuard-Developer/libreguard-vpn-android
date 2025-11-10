@@ -35,4 +35,12 @@
     <!-- Generic registration messages -->
     <string name="registration_generic_error">We couldn’t create your account. Please check your information or try logging in.</string>
     <string name="registration_account_exists_login">An account with this email already exists. Please log in.</string>
+
+    <!-- Google Sign-In -->
+    <string name="sign_in_with_google">Sign in with Google</string>
+    <string name="continue_with_google">Continue with Google</string>
+    <string name="google_sign_in_error">Google Sign-In failed: %1$s</string>
+    <string name="google_web_client_id">1054984406670-5g7pg1hbjnqv6m0te2tbs2s9sl9t3qk7.apps.googleusercontent.com</string>
+    <string name="google_android_client_id">1054984406670-d4tgh38g1mudrt95ris39m60fmdmoegr.apps.googleusercontent.com</string>
+    <string name="google_signin_diagnostics">Google Sign-In Diagnostics</string>
 </resources>

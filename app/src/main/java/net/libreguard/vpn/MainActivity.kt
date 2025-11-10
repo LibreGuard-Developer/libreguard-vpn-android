@@ -24,6 +24,8 @@ import net.libreguard.vpn.ui.screens.RegisterScreen
 import net.libreguard.vpn.ui.screens.ConfirmEmailScreen
 import net.libreguard.vpn.ui.theme.LibreGuardVPNTheme
 import net.libreguard.vpn.viewmodel.VpnViewModel
+import com.google.android.gms.auth.api.signin.GoogleSignIn
+import com.google.android.gms.auth.api.signin.GoogleSignInOptions
 
 class MainActivity : ComponentActivity() {
 
@@ -54,6 +56,20 @@ fun AppNavigation(modifier: Modifier = Modifier) {
     var regUserId by remember { mutableStateOf<String?>(null) }
     var regEmail by remember { mutableStateOf<String?>(null) }
     var regToken by remember { mutableStateOf<String?>(null) }
+
+    // Helper: perform full logout (Google + local state)
+    fun performLogout() {
+        // Clear stored token
+        val sharedPrefs = context.getSharedPreferences("vpn_state_prefs", android.content.Context.MODE_PRIVATE)
+        sharedPrefs.edit().remove("auth_token").apply()
+        authToken = null
+        // Google Sign-Out (best-effort)
+        val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+            .requestIdToken(context.getString(R.string.google_web_client_id))
+            .requestEmail()
+            .build()
+        GoogleSignIn.getClient(context, gso).signOut()
+    }
 
     // Handle deep links that bring the app to foreground after email confirmation
     LaunchedEffect(Unit) {
@@ -103,6 +119,9 @@ fun AppNavigation(modifier: Modifier = Modifier) {
                 LoginScreen(
                     onLoginSuccess = { token ->
                         authToken = token
+                        // Persist token for future launches
+                        val sharedPrefs = context.getSharedPreferences("vpn_state_prefs", android.content.Context.MODE_PRIVATE)
+                        sharedPrefs.edit().putString("auth_token", token).apply()
                         navController.navigate("main") {
                             popUpTo("login") { inclusive = true }
                         }
@@ -192,7 +211,7 @@ fun AppNavigation(modifier: Modifier = Modifier) {
                     authToken = token,
                     vpnViewModel = viewModel,
                     onLogout = {
-                        authToken = null
+                        performLogout()
                         navController.navigate("login") {
                             popUpTo("main") { inclusive = true }
                         }
@@ -221,7 +240,7 @@ fun AppNavigation(modifier: Modifier = Modifier) {
                         navController.navigate("twoFactorSettings")
                     },
                     onLogout = {
-                        authToken = null
+                        performLogout()
                         navController.navigate("login") {
                             popUpTo(0) { inclusive = true }
                         }

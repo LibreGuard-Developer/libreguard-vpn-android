@@ -106,6 +106,9 @@ dependencies {
     implementation(project(":ics-openvpn:main"))
     implementation("androidx.annotation:annotation:1.9.1") // fixes common errors
 
+    // Google Sign-In
+    implementation(libs.play.services.auth)
+
     // Testing
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
@@ -114,6 +117,7 @@ dependencies {
     androidTestImplementation(libs.androidx.ui.test.junit4)
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
+    testImplementation(libs.mockwebserver)
 
     implementation(libs.androidx.preference)
     implementation(libs.androidx.security.crypto)

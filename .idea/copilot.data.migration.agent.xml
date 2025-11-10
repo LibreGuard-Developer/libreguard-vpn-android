@@ -3,9 +3,11 @@
   <component name="AgentMigrationStateService">
     <option name="migrationStatus" value="IN_PROGRESS" />
     <option name="pendingSessionIds">
+      <option value="067d6a66-2460-4d54-b1d3-6be308f262fc" />
       <option value="09a02415-29d4-4034-9458-761c6d5ba8de" />
       <option value="0a4ee7ad-c2e0-48ac-81b2-18c94bef0dcb" />
       <option value="0c09f407-46a8-4d7f-a45a-1f567c21f833" />
+      <option value="0d4ca27b-2449-490e-9f4e-3c342ae5c596" />
       <option value="1a6d2f34-9f17-4be6-8c72-6f55cf4f53e6" />
       <option value="1aeee451-f528-4ab5-83f1-536412e4a463" />
       <option value="1ddde62c-5d17-48a2-b21e-1d6511ef41be" />
@@ -28,6 +30,7 @@
       <option value="95da3083-1717-4588-b770-4e7a1049ed9c" />
       <option value="9876ae51-ae37-40be-b02a-61e01958eed6" />
       <option value="9ab3b284-2d8d-4440-901b-02e87ae3d8d8" />
+      <option value="a358d2b0-6814-484a-87d6-544adfcae571" />
       <option value="a63d5516-14ff-4fb4-9798-8e7469689ab0" />
       <option value="ab6055bf-f10c-4775-aea6-2fcfcba43fe7" />
       <option value="ab9cd464-a015-4bbf-adc8-e27002e96079" />
@@ -51,9 +54,18 @@
       <option value="f1380a02-392a-43c5-ab9b-e3d8e8066324" />
       <option value="f286894f-132c-423a-92e6-b50d56ce695f" />
       <option value="f54ea180-954a-4572-86a0-6e3d4e573013" />
+      <option value="fa0b31b9-9897-4ea5-b83c-eddb6e0b2d2a" />
     </option>
     <option name="pendingTurns">
       <map>
+        <entry key="067d6a66-2460-4d54-b1d3-6be308f262fc">
+          <value>
+            <set>
+              <option value="6579364c-f24a-4d83-80a3-2c927a454c6d" />
+              <option value="aafb3631-2957-40d9-8b05-7e9c0c8d7b21" />
+            </set>
+          </value>
+        </entry>
         <entry key="09a02415-29d4-4034-9458-761c6d5ba8de">
           <value>
             <set>
@@ -76,6 +88,32 @@
           <value>
             <set>
               <option value="e23ee72e-cc63-4143-a1ad-8c4f10ced28c" />
+            </set>
+          </value>
+        </entry>
+        <entry key="0d4ca27b-2449-490e-9f4e-3c342ae5c596">
+          <value>
+            <set>
+              <option value="0461fcdb-14b4-4a2f-a782-e62ddfc05994" />
+              <option value="215cd3fe-6cbe-48c0-a416-40905841cdfa" />
+              <option value="22e6c1d1-5c10-4956-a9b4-32ce50b0554b" />
+              <option value="2921d615-5710-432b-baef-032734681fcd" />
+              <option value="37dce642-47a7-47f8-998f-6afb749ac435" />
+              <option value="4cb26020-2b6f-41a6-98f5-3efbe412c3e0" />
+              <option value="52ca4481-d6de-41ab-8658-da042e7b749d" />
+              <option value="5d461c4a-b10a-49e2-b27d-1aa0d071691e" />
+              <option value="736c035c-ac86-45d0-8f54-a5b74e53cf62" />
+              <option value="83c06ca5-440d-420a-8806-07aa4d548700" />
+              <option value="969d9784-f7f8-4d08-88a7-b6ec310e2f22" />
+              <option value="9f41360d-dd54-406d-b1fd-dfa29b269292" />
+              <option value="a301c3e3-6a7f-4a94-853a-073d9b14d226" />
+              <option value="b03ad4ef-45c6-4323-971c-4aedf6d7ad75" />
+              <option value="c714ebfb-fb29-4035-a455-2e366e23fb69" />
+              <option value="c88b5e8c-07e0-42ef-9e7a-3179a51a8e66" />
+              <option value="d0a72037-cb13-4603-93ac-b5301cd456f6" />
+              <option value="d42b5f59-1bf6-417f-8270-ee7d70562eaf" />
+              <option value="d8e3f414-9eaf-4559-9c1a-2fe9a38fdcb8" />
+              <option value="ea4d95e7-372a-4eab-8c68-6385cda095a3" />
             </set>
           </value>
         </entry>
@@ -489,6 +527,16 @@
             </set>
           </value>
         </entry>
+        <entry key="a358d2b0-6814-484a-87d6-544adfcae571">
+          <value>
+            <set>
+              <option value="e5095d65-ca84-417b-bff9-a307111c762e" />
+              <option value="900fa05a-4b0e-4d60-bd76-3fd3dcf70cf9" />
+              <option value="4dba552a-c70d-4711-a422-9b8e90f44ca2" />
+              <option value="21106c19-1700-4568-a7b2-f26e6f03d477" />
+            </set>
+          </value>
+        </entry>
         <entry key="a63d5516-14ff-4fb4-9798-8e7469689ab0">
           <value>
             <set>
@@ -565,6 +613,7 @@
               <option value="691229b0-f4fe-4eb8-90ab-7cbc84fefa8c" />
               <option value="7461da20-3537-44f7-b331-cb6e4804ce5d" />
               <option value="76ffa397-14b2-47cf-a7fc-ede6d8a72c0b" />
+              <option value="77602151-44dc-47b8-923c-55ea7a095a6b" />
               <option value="77787962-1565-4a7a-baf5-ec67049d2a78" />
               <option value="7e16ce5c-7b06-4bba-a053-6f49c1470f01" />
               <option value="7e252395-7b2a-4a94-a21e-3fcc770c8c3e" />
@@ -591,6 +640,7 @@
               <option value="adab23db-4e63-4a0d-8df0-8228a4776956" />
               <option value="b4149099-055a-4927-99c1-42b7ff2efc6f" />
               <option value="bff69dd2-72a7-4459-b5de-d1b44e07e530" />
+              <option value="d7863ba8-4e5a-46c6-9312-57d6a56e4420" />
               <option value="d99fc2c8-7b9a-4183-a41d-a26716df7fa1" />
               <option value="ed7da1bb-274c-413b-aa70-63286d6e83d1" />
               <option value="edee02bf-f6f3-4aab-900b-3b870fd89e2d" />
@@ -834,10 +884,29 @@
             </set>
           </value>
         </entry>
+        <entry key="fa0b31b9-9897-4ea5-b83c-eddb6e0b2d2a">
+          <value>
+            <set>
+              <option value="0097aa71-8731-48ff-b4e4-a58ced570ea1" />
+              <option value="22e5ea6b-2193-481e-9a05-4e7c33eea6b1" />
+              <option value="24148388-cd36-48d9-ac36-c839294a2dcd" />
+              <option value="4568677f-1737-4028-a95d-dd1d0d16cf55" />
+              <option value="68995785-d99d-4337-bfa5-003e24b669c7" />
+              <option value="84aa77ba-2b3d-45f4-8b5a-71dfb9812fce" />
+              <option value="9f9872cc-4f19-45ca-87d2-996b4e55a562" />
+              <option value="a421578d-f779-4fa7-9d72-54839669fa26" />
+              <option value="ac1b771f-16c0-45fd-812c-74e16533dc84" />
+              <option value="b207dfda-ffce-4345-a7db-0ea36595e3c2" />
+              <option value="c9b0da12-d170-4568-b392-95fd99258ec0" />
+              <option value="d24c7120-9bfd-4f99-adab-33932a4dd2eb" />
+            </set>
+          </value>
+        </entry>
       </map>
     </option>
     <pendingWorkingSetItems>
       <entry key="0c09f407-46a8-4d7f-a45a-1f567c21f833" />
+      <entry key="0d4ca27b-2449-490e-9f4e-3c342ae5c596" />
       <entry key="1a6d2f34-9f17-4be6-8c72-6f55cf4f53e6" />
       <entry key="1aeee451-f528-4ab5-83f1-536412e4a463" />
       <entry key="1ddde62c-5d17-48a2-b21e-1d6511ef41be" />
@@ -856,22 +925,14 @@
       <entry key="95da3083-1717-4588-b770-4e7a1049ed9c" />
       <entry key="9876ae51-ae37-40be-b02a-61e01958eed6" />
       <entry key="9ab3b284-2d8d-4440-901b-02e87ae3d8d8" />
-      <entry key="a63d5516-14ff-4fb4-9798-8e7469689ab0" />
-      <entry key="ab9cd464-a015-4bbf-adc8-e27002e96079">
+      <entry key="a358d2b0-6814-484a-87d6-544adfcae571">
         <set>
-          <option value="file://$PROJECT_DIR$/strongswan/src/frontends/android/app/src/main/jni/Android.mk" />
-          <option value="file://$PROJECT_DIR$/strongswan/src/frontends/android/app/build.gradle" />
-          <option value="file://$PROJECT_DIR$/app/src/main/res/values/colors.xml" />
-          <option value="file://$PROJECT_DIR$/app/src/main/res/values/strings_new.xml" />
-          <option value="file://$USER_HOME$/generate_mipmaps.py" />
-          <option value="file://$PROJECT_DIR$/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml" />
-          <option value="file://$PROJECT_DIR$/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml" />
-          <option value="file://$PROJECT_DIR$/app/src/main/res/mipmap-anydpi/ic_launcher.xml" />
-          <option value="file://$PROJECT_DIR$/app/src/main/res/mipmap-anydpi/ic_launcher_round.xml" />
-          <option value="file://$PROJECT_DIR$/app/src/main/res/mipmap-mdpi/ic_launcher_foreground.xml" />
-          <option value="file://$PROJECT_DIR$/RESOURCE_CLEANUP_NOTES.md" />
+          <option value="file://$PROJECT_DIR$/app/src/main/java/net/libreguard/vpn/ui/screens/LoginScreen.kt" />
+          <option value="file://$PROJECT_DIR$/app/src/main/java/net/libreguard/vpn/ui/screens/SettingsScreen.kt" />
         </set>
       </entry>
+      <entry key="a63d5516-14ff-4fb4-9798-8e7469689ab0" />
+      <entry key="ab9cd464-a015-4bbf-adc8-e27002e96079" />
       <entry key="ae7796c1-37f6-4dba-9750-6d39eaa7a16f" />
       <entry key="ba39a71b-362c-4fa1-8520-029bc3a786fa" />
       <entry key="bb9d0d48-7a45-4318-8d8b-7ab71499bfe3" />
@@ -888,6 +949,7 @@
       <entry key="f1380a02-392a-43c5-ab9b-e3d8e8066324" />
       <entry key="f286894f-132c-423a-92e6-b50d56ce695f" />
       <entry key="f54ea180-954a-4572-86a0-6e3d4e573013" />
+      <entry key="fa0b31b9-9897-4ea5-b83c-eddb6e0b2d2a" />
     </pendingWorkingSetItems>
   </component>
 </project>

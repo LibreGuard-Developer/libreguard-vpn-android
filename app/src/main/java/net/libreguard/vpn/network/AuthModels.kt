@@ -23,6 +23,21 @@ data class AuthResponse(
     val userId: String? = null
 )
 
+// Add Google Sign-In models
+// Request body for POST /api/login/google
+data class GoogleLoginRequest(
+    @SerializedName("idToken")
+    val idToken: String
+)
+
+// Response from POST /api/login/google { token, email, userId, provider }
+data class GoogleLoginResponse(
+    @SerializedName("token") val token: String,
+    @SerializedName("email") val email: String,
+    @SerializedName("userId") val userId: String,
+    @SerializedName("provider") val provider: String
+)
+
 // 2FA Verification Request
 data class Verify2faRequest(
     val email: String,
