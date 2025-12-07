@@ -9,7 +9,7 @@ import javax.net.ssl.TrustManager
 import javax.net.ssl.X509TrustManager
 
 object RetrofitClient {
-    private const val BASE_URL = "https://shadowlink-vpn-ca-proxy1.ddns.net/"
+    private const val BASE_URL = "https://management.libreguard.net/"
 
     private fun getUnsafeOkHttpClient(): OkHttpClient.Builder {
         try {
