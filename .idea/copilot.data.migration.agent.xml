@@ -286,6 +286,15 @@
             </set>
           </value>
         </entry>
+        <entry key="64ed1300-0c5a-4c0d-b564-fcf587c69c78">
+          <value>
+            <set>
+              <option value="89202616-8db0-44fa-b717-7caf22251e43" />
+              <option value="3032ebf2-16f0-4e75-8034-296f65349a44" />
+              <option value="b020c33d-b960-4a95-8f58-3d9f01348d31" />
+            </set>
+          </value>
+        </entry>
         <entry key="6fcdbdd9-96db-4377-8e51-678b6f8a2519">
           <value>
             <set>
@@ -920,6 +929,11 @@
       <entry key="5503fbc5-85e0-4c6d-a6f2-857e0ae03fe4" />
       <entry key="59cb3c15-a25c-4428-8056-2323b109e1e8" />
       <entry key="5ce102fe-6939-48cc-a57d-1e5beba50251" />
+      <entry key="64ed1300-0c5a-4c0d-b564-fcf587c69c78">
+        <set>
+          <option value="file://$PROJECT_DIR$/ics-openvpn/main/src/main/java/de/blinkt/openvpn/core/ConfigParser.java" />
+        </set>
+      </entry>
       <entry key="6fcdbdd9-96db-4377-8e51-678b6f8a2519" />
       <entry key="70214da0-7c95-475d-821b-3320dfc4edf6" />
       <entry key="91b1301b-aa44-4c58-9cb2-55fbf98304de" />
