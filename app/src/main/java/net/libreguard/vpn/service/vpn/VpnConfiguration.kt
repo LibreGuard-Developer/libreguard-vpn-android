@@ -25,7 +25,7 @@ data class VpnConfiguration(
 
         // Basic server configuration
         json.put("server", serverAddress)
-        json.put("name", "ShadowLink VPN Connection")
+        json.put("name", "LibreGuard VPN Connection")
         json.put("uuid", java.util.UUID.randomUUID().toString())
         json.put("type", "ikev2-cert") // Force certificate-only auth
 

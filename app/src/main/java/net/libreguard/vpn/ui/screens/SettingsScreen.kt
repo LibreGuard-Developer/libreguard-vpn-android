@@ -180,7 +180,7 @@ fun SettingsScreen(
 
             // App Info Footer
             Text(
-                text = "ShadowLink VPN v1.0",
+                text = "LibreGuard VPN v1.0",
                 fontSize = 12.sp,
                 color = Color(0xFF94A3B8),
                 modifier = Modifier

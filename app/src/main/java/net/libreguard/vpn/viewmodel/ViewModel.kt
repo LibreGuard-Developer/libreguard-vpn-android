@@ -286,7 +286,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
                 if (gateway != null) {
                     val recreatedProfile = VpnProfile().apply {
-                        this.name = name ?: "ShadowLink VPN"
+                        this.name = name ?: "LibreGuard VPN"
                         this.gateway = gateway
                         this.remoteId = remoteId ?: gateway
                         this.userCertificateAlias = userCertAlias

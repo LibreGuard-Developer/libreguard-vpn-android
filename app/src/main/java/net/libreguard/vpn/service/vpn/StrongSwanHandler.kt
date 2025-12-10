@@ -849,7 +849,7 @@ class StrongSwanHandler(
             val leftauth = map["leftauth"]?.lowercase() ?: ""
             val rightauth = map["rightauth"]?.lowercase() ?: ""
             val profile = VpnProfile().apply {
-                name = map["conn"].takeUnless { it.isNullOrBlank() } ?: "ShadowLink Config"
+                name = map["conn"].takeUnless { it.isNullOrBlank() } ?: "LibreGuard Config"
                 this.gateway = gateway ?: ""
                 remoteId = map["rightid"] ?: this.gateway
                 username = map["leftid"] ?: map["eap_identity"]

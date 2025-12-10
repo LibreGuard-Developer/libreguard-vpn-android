@@ -182,7 +182,7 @@ class VpnConfigManager(private val context: Context) {
             Log.i(tag, "=== HYBRID MODE: Let's Encrypt Server + Private CA Clients ===")
             Log.d(tag, "JSON keys: ${json.keys().asSequence().toList()}")
 
-            profile.name = json.optString("name", "ShadowLink VPN")
+            profile.name = json.optString("name", "LibreGuard VPN")
             profile.gateway = json.optString("gateway")
 
             if (profile.gateway.isBlank()) {

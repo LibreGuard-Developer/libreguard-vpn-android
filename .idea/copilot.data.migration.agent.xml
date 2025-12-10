@@ -21,6 +21,7 @@
       <option value="5503fbc5-85e0-4c6d-a6f2-857e0ae03fe4" />
       <option value="59cb3c15-a25c-4428-8056-2323b109e1e8" />
       <option value="5ce102fe-6939-48cc-a57d-1e5beba50251" />
+      <option value="64ed1300-0c5a-4c0d-b564-fcf587c69c78" />
       <option value="6c9312ca-79cf-406d-b694-c3655d3081f3" />
       <option value="6fcdbdd9-96db-4377-8e51-678b6f8a2519" />
       <option value="70214da0-7c95-475d-821b-3320dfc4edf6" />
@@ -530,10 +531,10 @@
         <entry key="a358d2b0-6814-484a-87d6-544adfcae571">
           <value>
             <set>
-              <option value="e5095d65-ca84-417b-bff9-a307111c762e" />
-              <option value="900fa05a-4b0e-4d60-bd76-3fd3dcf70cf9" />
-              <option value="4dba552a-c70d-4711-a422-9b8e90f44ca2" />
               <option value="21106c19-1700-4568-a7b2-f26e6f03d477" />
+              <option value="4dba552a-c70d-4711-a422-9b8e90f44ca2" />
+              <option value="900fa05a-4b0e-4d60-bd76-3fd3dcf70cf9" />
+              <option value="e5095d65-ca84-417b-bff9-a307111c762e" />
             </set>
           </value>
         </entry>
@@ -925,12 +926,7 @@
       <entry key="95da3083-1717-4588-b770-4e7a1049ed9c" />
       <entry key="9876ae51-ae37-40be-b02a-61e01958eed6" />
       <entry key="9ab3b284-2d8d-4440-901b-02e87ae3d8d8" />
-      <entry key="a358d2b0-6814-484a-87d6-544adfcae571">
-        <set>
-          <option value="file://$PROJECT_DIR$/app/src/main/java/net/libreguard/vpn/ui/screens/LoginScreen.kt" />
-          <option value="file://$PROJECT_DIR$/app/src/main/java/net/libreguard/vpn/ui/screens/SettingsScreen.kt" />
-        </set>
-      </entry>
+      <entry key="a358d2b0-6814-484a-87d6-544adfcae571" />
       <entry key="a63d5516-14ff-4fb4-9798-8e7469689ab0" />
       <entry key="ab9cd464-a015-4bbf-adc8-e27002e96079" />
       <entry key="ae7796c1-37f6-4dba-9750-6d39eaa7a16f" />

@@ -193,8 +193,8 @@ class OpenVpnHandler(
             }
 
             // Give profile a readable name
-            profile.mName = profile.mName ?: "ShadowLink OpenVPN"
-            if (profile.mName.isBlank()) profile.mName = "ShadowLink OpenVPN"
+            profile.mName = profile.mName ?: "LibreGuard OpenVPN"
+            if (profile.mName.isBlank()) profile.mName = "LibreGuard OpenVPN"
 
             // Save as temporary profile to avoid polluting profile list
             ProfileManager.setTemporaryProfile(context, profile)
@@ -210,14 +210,14 @@ class OpenVpnHandler(
             if (needsPermission) {
                 val launch = Intent(context, LaunchVPN::class.java).apply {
                     putExtra(LaunchVPN.EXTRA_KEY, profile.getUUIDString())
-                    putExtra(OpenVPNService.EXTRA_START_REASON, "ShadowLink start")
+                    putExtra(OpenVPNService.EXTRA_START_REASON, "LibreGuard start")
                     putExtra(LaunchVPN.EXTRA_HIDELOG, true)
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     action = Intent.ACTION_MAIN
                 }
                 context.startActivity(launch)
             } else {
-                VPNLaunchHelper.startOpenVpn(profile, context.applicationContext, "ShadowLink start", true)
+                VPNLaunchHelper.startOpenVpn(profile, context.applicationContext, "LibreGuard start", true)
             }
 
             // Wait until connected (or error) to report success
