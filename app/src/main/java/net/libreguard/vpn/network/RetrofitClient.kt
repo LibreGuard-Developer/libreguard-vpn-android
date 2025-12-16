@@ -7,9 +7,18 @@ import java.security.cert.X509Certificate
 import javax.net.ssl.SSLContext
 import javax.net.ssl.TrustManager
 import javax.net.ssl.X509TrustManager
+import android.content.Context
+import net.libreguard.vpn.util.TokenManager
 
 object RetrofitClient {
     private const val BASE_URL = "https://management.libreguard.net/"
+    private var tokenManager: TokenManager? = null
+    private var appContext: Context? = null
+
+    fun init(context: Context) {
+        appContext = context.applicationContext
+        tokenManager = TokenManager(context.applicationContext)
+    }
 
     private fun getUnsafeOkHttpClient(): OkHttpClient.Builder {
         try {
@@ -35,12 +44,36 @@ object RetrofitClient {
         }
     }
 
-    val instance: ApiService by lazy {
+    // Auth API Service (No Authenticator) - used for refreshing tokens
+    private val authApiService: ApiService by lazy {
         val retrofit = Retrofit.Builder()
             .baseUrl(BASE_URL)
-            .client(getUnsafeOkHttpClient().build())
+            .client(getUnsafeOkHttpClient().build()) // No interceptors/authenticators
             .addConverterFactory(GsonConverterFactory.create())
             .build()
         retrofit.create(ApiService::class.java)
+    }
+
+    val instance: ApiService by lazy {
+        if (tokenManager == null || appContext == null) {
+            throw IllegalStateException("RetrofitClient must be initialized with context before use.")
+        }
+
+        val clientBuilder = getUnsafeOkHttpClient()
+
+        // Add Authenticator and Interceptor
+        clientBuilder.authenticator(TokenAuthenticator(appContext!!, tokenManager!!, authApiService))
+        clientBuilder.addInterceptor(AuthInterceptor(tokenManager!!))
+
+        val retrofit = Retrofit.Builder()
+            .baseUrl(BASE_URL)
+            .client(clientBuilder.build())
+            .addConverterFactory(GsonConverterFactory.create())
+            .build()
+        retrofit.create(ApiService::class.java)
+    }
+
+    fun getTokenManager(): TokenManager {
+        return tokenManager ?: throw IllegalStateException("RetrofitClient not initialized")
     }
 }

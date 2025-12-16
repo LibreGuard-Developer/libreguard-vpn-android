@@ -13,6 +13,8 @@ data class AuthRequest(
 data class AuthResponse(
     @SerializedName("token")
     val token: String?, // Token might not be present in an error response
+    @SerializedName("refreshToken")
+    val refreshToken: String?,
     @SerializedName("message")
     val message: String?, // Message might not be present in a success response
     @SerializedName("requiresTwoFactor")
@@ -33,9 +35,16 @@ data class GoogleLoginRequest(
 // Response from POST /api/login/google { token, email, userId, provider }
 data class GoogleLoginResponse(
     @SerializedName("token") val token: String,
+    @SerializedName("refreshToken") val refreshToken: String,
     @SerializedName("email") val email: String,
     @SerializedName("userId") val userId: String,
     @SerializedName("provider") val provider: String
+)
+
+// Refresh Token Request
+data class RefreshTokenRequest(
+    @SerializedName("refreshToken")
+    val refreshToken: String
 )
 
 // 2FA Verification Request

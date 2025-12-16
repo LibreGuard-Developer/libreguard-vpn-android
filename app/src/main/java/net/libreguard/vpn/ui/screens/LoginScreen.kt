@@ -459,7 +459,9 @@ fun LoginScreen(
                                         } else {
                                             // Normal login flow
                                             val token = authResponse?.token
+                                            val refreshToken = authResponse?.refreshToken
                                             if (!token.isNullOrBlank()) {
+                                                RetrofitClient.getTokenManager().saveTokens(token, refreshToken ?: "")
                                                 onLoginSuccess(token)
                                             } else {
                                                 errorMessage = authResponse?.message ?: "Login failed"

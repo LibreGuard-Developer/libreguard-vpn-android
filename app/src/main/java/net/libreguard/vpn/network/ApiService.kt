@@ -114,6 +114,10 @@ interface ApiService {
     @POST("api/login/google")
     suspend fun loginWithGoogle(@Body request: GoogleLoginRequest): Response<GoogleLoginResponse>
 
+    // Refresh Token endpoint
+    @POST("api/login/refresh")
+    fun refreshToken(@Body request: RefreshTokenRequest): retrofit2.Call<AuthResponse>
+
     // 2FA Login endpoints
     @POST("api/login/verify-2fa")
     suspend fun verify2fa(@Body request: Verify2faRequest): Response<TokenResponse>

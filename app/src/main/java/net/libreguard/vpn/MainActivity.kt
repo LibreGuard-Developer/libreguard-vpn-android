@@ -27,6 +27,13 @@ import net.libreguard.vpn.viewmodel.VpnViewModel
 import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions
 
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.os.Build
+import net.libreguard.vpn.network.RetrofitClient
+
 class MainActivity : ComponentActivity() {
 
     private val TAG = "MainActivity"
@@ -60,8 +67,7 @@ fun AppNavigation(modifier: Modifier = Modifier) {
     // Helper: perform full logout (Google + local state)
     fun performLogout() {
         // Clear stored token
-        val sharedPrefs = context.getSharedPreferences("vpn_state_prefs", android.content.Context.MODE_PRIVATE)
-        sharedPrefs.edit().remove("auth_token").apply()
+        RetrofitClient.getTokenManager().clearTokens()
         authToken = null
         // Google Sign-Out (best-effort)
         val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
@@ -69,6 +75,29 @@ fun AppNavigation(modifier: Modifier = Modifier) {
             .requestEmail()
             .build()
         GoogleSignIn.getClient(context, gso).signOut()
+    }
+
+    // Handle Logout Broadcast
+    DisposableEffect(Unit) {
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                if (intent?.action == "net.libreguard.vpn.ACTION_LOGOUT") {
+                    performLogout()
+                    navController.navigate("login") {
+                        popUpTo(0) { inclusive = true }
+                    }
+                }
+            }
+        }
+        val filter = IntentFilter("net.libreguard.vpn.ACTION_LOGOUT")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            context.registerReceiver(receiver, filter)
+        }
+        onDispose {
+            context.unregisterReceiver(receiver)
+        }
     }
 
     // Handle deep links that bring the app to foreground after email confirmation
@@ -81,8 +110,7 @@ fun AppNavigation(modifier: Modifier = Modifier) {
                 val token = uri.getQueryParameter("token")
                 if (!token.isNullOrBlank()) {
                     // If token provided directly, persist and enter app
-                    val sharedPrefs = context.getSharedPreferences("vpn_state_prefs", android.content.Context.MODE_PRIVATE)
-                    sharedPrefs.edit().putString("auth_token", token).apply()
+                    RetrofitClient.getTokenManager().saveTokens(token, "") // No refresh token from deep link usually
                     authToken = token
                     navController.navigate("main") { popUpTo("login") { inclusive = true } }
                 } else if (!uid.isNullOrBlank()) {
@@ -96,8 +124,7 @@ fun AppNavigation(modifier: Modifier = Modifier) {
 
     // Check for persisted auth token on startup
     LaunchedEffect(Unit) {
-        val sharedPrefs = context.getSharedPreferences("vpn_state_prefs", android.content.Context.MODE_PRIVATE)
-        val savedToken = sharedPrefs.getString("auth_token", null)
+        val savedToken = RetrofitClient.getTokenManager().getAccessToken()
 
         if (!savedToken.isNullOrBlank()) {
             authToken = savedToken
@@ -119,9 +146,7 @@ fun AppNavigation(modifier: Modifier = Modifier) {
                 LoginScreen(
                     onLoginSuccess = { token ->
                         authToken = token
-                        // Persist token for future launches
-                        val sharedPrefs = context.getSharedPreferences("vpn_state_prefs", android.content.Context.MODE_PRIVATE)
-                        sharedPrefs.edit().putString("auth_token", token).apply()
+                        // Token is already saved in LoginScreen
                         navController.navigate("main") {
                             popUpTo("login") { inclusive = true }
                         }
