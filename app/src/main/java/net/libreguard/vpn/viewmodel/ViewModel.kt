@@ -1246,15 +1246,26 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 // Start observing handler state to keep UI in sync, including revocation cases
                 observeActiveHandlerState()
 
-                // Try cached config first
+                // Try cached config first - but validate it first
                 if (cacheFile.exists() && cacheFile.length() > 0) {
-                    Log.d(TAG, "Using cached OpenVPN config: ${cacheFile.absolutePath}")
-                    val ok = (activeVpnHandler as? OpenVpnHandler)?.connect(context, cacheFile.absolutePath) == true
-                    if (ok) {
-                        onOpenVpnConnected()
-                        return@withContext true
+                    if (isConfigCacheValid(cacheFile)) {
+                        Log.d(TAG, "Using cached OpenVPN config: ${cacheFile.absolutePath}")
+                        val configContent = cacheFile.readText()
+
+                        // Validate config structure before attempting connection
+                        if (validateOpenVpnConfig(configContent)) {
+                            val ok = (activeVpnHandler as? OpenVpnHandler)?.connect(context, cacheFile.absolutePath) == true
+                            if (ok) {
+                                onOpenVpnConnected()
+                                return@withContext true
+                            } else {
+                                Log.w(TAG, "Cached OpenVPN config failed connection attempt. Will re-download and retry")
+                            }
+                        } else {
+                            Log.w(TAG, "Cached OpenVPN config failed validation. Will re-download")
+                        }
                     } else {
-                        Log.w(TAG, "Cached OpenVPN config failed. Will re-download and retry")
+                        Log.w(TAG, "Cached OpenVPN config expired (TTL exceeded). Will re-download")
                     }
                 }
 
@@ -1690,6 +1701,49 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         // Implementation for certificate import
         Log.d(TAG, "Importing certificate with alias: $alias")
         _showImportCertDialog.value = false
+    }
+
+    /**
+     * Validate OpenVPN config has required fields: remote, ca, cert, key
+     * This catches malformed or corrupted configs before connection attempts
+     */
+    private fun validateOpenVpnConfig(configContent: String): Boolean {
+        return try {
+            val content = configContent.trim()
+            if (content.isEmpty()) return false
+
+            // Check for required OpenVPN directives
+            val hasRemote = content.contains(Regex("^remote\\s+", RegexOption.MULTILINE))
+            val hasCa = content.contains(Regex("^<ca>|^ca\\s+", RegexOption.MULTILINE))
+            val hasCert = content.contains(Regex("^<cert>|^cert\\s+", RegexOption.MULTILINE))
+            val hasKey = content.contains(Regex("^<key>|^key\\s+", RegexOption.MULTILINE))
+
+            val valid = hasRemote && hasCa && hasCert && hasKey
+            Log.d(TAG, "OpenVPN config validation: remote=$hasRemote ca=$hasCa cert=$hasCert key=$hasKey valid=$valid")
+            valid
+        } catch (e: Exception) {
+            Log.w(TAG, "Error validating OpenVPN config: ${e.message}")
+            false
+        }
+    }
+
+    /**
+     * Check if cached config is still fresh (TTL = 1 hour)
+     * If config is older than TTL, it should be re-downloaded to ensure
+     * certificates and server configs haven't changed
+     */
+    private fun isConfigCacheValid(cacheFile: File): Boolean {
+        return try {
+            val CONFIG_CACHE_TTL_MS = 3600_000L // 1 hour
+            val lastModified = cacheFile.lastModified()
+            val age = System.currentTimeMillis() - lastModified
+            val valid = age < CONFIG_CACHE_TTL_MS
+            Log.d(TAG, "Config cache age check: ${age / 1000}s (TTL=${CONFIG_CACHE_TTL_MS / 1000}s) valid=$valid")
+            valid
+        } catch (e: Exception) {
+            Log.w(TAG, "Error checking config cache validity: ${e.message}")
+            false
+        }
     }
 
     // Build a per-user mapping key by combining remoteId and username

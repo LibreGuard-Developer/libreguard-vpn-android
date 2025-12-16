@@ -444,6 +444,21 @@ class OpenVpnHandler(
                 if (connectingSinceMs == 0L || prevState == "CONNECTED") connectingSinceMs = now
                 if (state == "CONNECTRETRY") connectRetryCount.incrementAndGet()
                 if (logmessage.contains("server-pushed-connection-reset", ignoreCase = true)) connectRetryCount.incrementAndGet()
+
+                // FAST-FAIL: Detect critical errors and immediately abort
+                val hasTlsError = logmessage.contains("tls-error", ignoreCase = true) ||
+                                  logmessage.contains("certificate verify fail", ignoreCase = true) ||
+                                  logmessage.contains("certificate problem", ignoreCase = true)
+                val hasAuthError = logmessage.contains("AUTH_FAILED", ignoreCase = true)
+
+                if (!hadConnected && (hasTlsError || hasAuthError)) {
+                    Log.w(tag, "Fast-fail: detected critical error on first attempt: tls=$hasTlsError auth=$hasAuthError msg=$logmessage")
+                    connectingActive = false
+                    connectingSinceMs = 0L
+                    _state.value = ConnectionState.Error("Connection failed: ${if (hasTlsError) "TLS error" else "Authentication error"}. Will retry with fresh config.")
+                    return
+                }
+
                 val retryExceeded = connectRetryCount.get() >= 3
                 val timeExceeded = (now - reconnectStartAt) > 10_000
                 val noTun = !isTunUp()
@@ -484,7 +499,7 @@ class OpenVpnHandler(
         Log.d(tag, "[AIDL] state=$state level=$level msg=$logmessage")
     }
 
-    private suspend fun waitUntilConnectedOrFail(timeoutMs: Long = 45000L): Boolean {
+    private suspend fun waitUntilConnectedOrFail(timeoutMs: Long = 20000L): Boolean {
         return try {
             withContext(Dispatchers.Default) {
                 kotlinx.coroutines.withTimeout(timeoutMs) {
