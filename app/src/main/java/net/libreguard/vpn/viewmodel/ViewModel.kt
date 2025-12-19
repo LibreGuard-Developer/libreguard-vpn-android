@@ -133,6 +133,8 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     init {
         // Load persisted auth token and connection state immediately on startup
         loadPersistedAuthToken()
+        // Restore any previously active VPN session (e.g., after process death or app swipe-away)
+        loadPersistedState()
 
         // Start observing data usage
         startDataUsageObservation()
@@ -237,6 +239,8 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
                         // Restore connection state
                         _isConnected.value = true
+                        _connectionState.value = ConnectionState.Connected
+                        _isConnecting.value = false
                         _errorMessage.value = "Reconnected to existing VPN session"
                         Log.d(TAG, "Successfully restored VPN connection state")
 
@@ -371,8 +375,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 putBoolean("was_connected", connected)
                 putString("connected_server", server?.serverName)
                 putString("connected_protocol", protocol.displayName)
-
-                // ...existing code...
+                apply()
             }
             Log.d(TAG, "Saved connection state: connected=$connected, server=${server?.serverName}, hasToken=${authToken != null}")
         } catch (e: Exception) {
@@ -1779,20 +1782,30 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         return@withContext try {
             val context = getApplication<Application>().applicationContext
 
-            // Method 1: Check if VPN permission is granted and no preparation needed
+            // Method 1: Check if VPN permission is granted (null means granted/prepared)
             val vpnService = VpnService.prepare(context)
-            val isVpnServiceReady = vpnService == null // null means VPN permission is granted
+            val isVpnServiceReady = vpnService == null
 
-            // Method 2: Check for active VPN connection by examining network interfaces
-            val isVpnActive = try {
-                // On Android, when VPN is active, there should be a tun interface
+            // Method 2: Check ConnectivityManager for VPN transport (Most reliable system check)
+            val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+            val activeNetwork = connectivityManager.activeNetwork
+            val caps = connectivityManager.getNetworkCapabilities(activeNetwork)
+            val isVpnTransport = caps?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN) == true
+
+            if (isVpnServiceReady && isVpnTransport) {
+                Log.d(TAG, "VPN is active (ConnectivityManager + VpnService check)")
+                return@withContext true
+            }
+
+            // Method 3: Fallback to checking network interfaces (for cases where CM might be delayed or specific device quirks)
+            val isVpnInterfaceActive = try {
                 val networkInterfaces = java.net.NetworkInterface.getNetworkInterfaces()
                 var hasTunInterface = false
                 while (networkInterfaces.hasMoreElements()) {
                     val networkInterface = networkInterfaces.nextElement()
-                    if (networkInterface.name.startsWith("tun") && networkInterface.isUp) {
+                    if ((networkInterface.name.startsWith("tun") || networkInterface.name.startsWith("ipsec")) && networkInterface.isUp) {
                         hasTunInterface = true
-                        Log.d(TAG, "Found active tun interface: ${networkInterface.name}")
+                        Log.d(TAG, "Found active VPN interface: ${networkInterface.name}")
                         break
                     }
                 }
@@ -1802,9 +1815,8 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 false
             }
 
-            // Method 3: Check StrongSwan service state
+            // Method 4: Check StrongSwan service state (fallback for StrongSwan specifically)
             val isStrongSwanActive = try {
-                // Check if strongSwan VPN service files exist and are recent
                 val vpnStateFile = File(context.filesDir, "charon.log")
                 val isRecentlyActive = vpnStateFile.exists() &&
                     (System.currentTimeMillis() - vpnStateFile.lastModified()) < 60000 // 1 minute
@@ -1813,10 +1825,10 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 false
             }
 
-            Log.d(TAG, "VPN status check improved: vpnServiceReady=$isVpnServiceReady, hasTunInterface=$isVpnActive, strongSwanActive=$isStrongSwanActive")
+            Log.d(TAG, "VPN status check details: vpnServiceReady=$isVpnServiceReady, transport=$isVpnTransport, interface=$isVpnInterfaceActive, strongSwanLog=$isStrongSwanActive")
 
-            // Consider VPN active if service is ready AND we have evidence of active VPN
-            isVpnServiceReady && (isVpnActive || isStrongSwanActive)
+            // Consider VPN active if service is ready AND (Transport is VPN OR Interface is Up OR StrongSwan log is recent)
+            isVpnServiceReady && (isVpnTransport || isVpnInterfaceActive || isStrongSwanActive)
         } catch (e: Exception) {
             Log.e(TAG, "Error checking VPN status (improved)", e)
             false

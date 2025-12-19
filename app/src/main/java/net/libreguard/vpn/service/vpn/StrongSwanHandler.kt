@@ -876,9 +876,10 @@ class StrongSwanHandler(
                 // Stop log monitoring first
                 stopLogMonitoring()
 
-                if (_state.value is ConnectionState.Disconnected || _state.value is ConnectionState.Disconnecting) {
-                    Log.w(tag, "Already disconnected or disconnecting")
-                    return@withContext true
+                // Force disconnect even if state says disconnected, to handle app restart scenarios
+                // where handler state is out of sync with actual service state
+                if (_state.value is ConnectionState.Disconnected) {
+                    Log.d(tag, "Handler state is Disconnected, but proceeding with disconnect to ensure cleanup")
                 }
 
                 _state.value = ConnectionState.Disconnecting

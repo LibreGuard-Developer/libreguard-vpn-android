@@ -192,10 +192,20 @@ class DataUsageManager(private val context: Context) {
      */
     private fun isVpnStillActive(): Boolean {
         return try {
+            // Method 1: Check ConnectivityManager (Most reliable)
+            val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+            val activeNetwork = connectivityManager.activeNetwork
+            val caps = connectivityManager.getNetworkCapabilities(activeNetwork)
+            if (caps?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN) == true) {
+                Log.d(TAG, "VPN still active (ConnectivityManager check)")
+                return true
+            }
+
+            // Method 2: Fallback to NetworkInterfaces
             val networkInterfaces = java.net.NetworkInterface.getNetworkInterfaces()
             while (networkInterfaces.hasMoreElements()) {
                 val networkInterface = networkInterfaces.nextElement()
-                if (networkInterface.name.startsWith("tun") && networkInterface.isUp) {
+                if ((networkInterface.name.startsWith("tun") || networkInterface.name.startsWith("ipsec")) && networkInterface.isUp) {
                     Log.d(TAG, "VPN still active - found interface: ${networkInterface.name}")
                     return true
                 }
