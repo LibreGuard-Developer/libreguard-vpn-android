@@ -63,7 +63,7 @@ object RetrofitClient {
 
         // Add Authenticator and Interceptor
         clientBuilder.authenticator(TokenAuthenticator(appContext!!, tokenManager!!, authApiService))
-        clientBuilder.addInterceptor(AuthInterceptor(tokenManager!!))
+        clientBuilder.addInterceptor(AuthInterceptor(tokenManager!!, appContext!!))
 
         val retrofit = Retrofit.Builder()
             .baseUrl(BASE_URL)

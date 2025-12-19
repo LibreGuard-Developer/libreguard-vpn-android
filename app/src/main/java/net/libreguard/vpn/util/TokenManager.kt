@@ -44,9 +44,27 @@ class TokenManager(context: Context) {
             .apply()
     }
 
+    fun saveLastTokenCheckTime(time: Long) {
+        sharedPreferences.edit()
+            .putLong(KEY_LAST_TOKEN_CHECK, time)
+            .apply()
+    }
+
+    fun getLastTokenCheckTime(): Long {
+        return sharedPreferences.getLong(KEY_LAST_TOKEN_CHECK, 0)
+    }
+
+    fun shouldCheckTokenValidity(): Boolean {
+        val lastCheck = getLastTokenCheckTime()
+        val now = System.currentTimeMillis()
+        // Check token every 5 minutes (300000 ms)
+        return (now - lastCheck) >= TOKEN_CHECK_INTERVAL_MS
+    }
+
     companion object {
         private const val KEY_ACCESS_TOKEN = "access_token"
         private const val KEY_REFRESH_TOKEN = "refresh_token"
+        private const val KEY_LAST_TOKEN_CHECK = "last_token_check"
+        private const val TOKEN_CHECK_INTERVAL_MS = 5 * 60 * 1000L // 5 minutes
     }
 }
-

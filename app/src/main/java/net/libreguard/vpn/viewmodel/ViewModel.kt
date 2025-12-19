@@ -20,6 +20,8 @@ import net.libreguard.vpn.service.vpn.VpnProtocolFactory
 import net.libreguard.vpn.service.vpn.VpnProtocolHandler
 import net.libreguard.vpn.service.vpn.WireGuardHandler
 import net.libreguard.vpn.util.VpnConfigManager
+import net.libreguard.vpn.util.TokenValidationManager
+import net.libreguard.vpn.util.TokenManager
 import net.libreguard.vpn.service.data.DataUsageManager
 import net.libreguard.vpn.service.data.DataUsageInfo
 import com.google.gson.Gson
@@ -117,6 +119,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _dataUsageInfo = MutableStateFlow(DataUsageInfo())
     val dataUsageInfo: StateFlow<DataUsageInfo> = _dataUsageInfo
+
+    // Token validation for early revocation detection
+    private var tokenValidationManager: TokenValidationManager? = null
 
     // Polling configuration for certificate issuance
     private val certPollIntervalMs = 2000L
@@ -428,6 +433,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun logout() {
         viewModelScope.launch {
+            // Stop background token validation
+            tokenValidationManager?.stopBackgroundValidation()
+
             // Disconnect VPN if connected
             if (_isConnected.value) {
                 disconnect()
@@ -530,6 +538,16 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         } catch (e: Exception) {
             Log.w(TAG, "Legacy OpenVPN cache cleanup failed: ${e.message}")
         }
+
+        // Initialize and start background token validation to detect early revocation
+        if (tokenValidationManager == null) {
+            tokenValidationManager = TokenValidationManager(
+                getApplication<Application>().applicationContext,
+                RetrofitClient.getTokenManager()
+            )
+        }
+        Log.d(TAG, "Starting background token validation polling")
+        tokenValidationManager?.startBackgroundValidation(viewModelScope)
 
         // Automatically load remote servers when token is set, but don't fail if it doesn't work
         loadRemoteServersWithFallback()
@@ -682,6 +700,18 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
         viewModelScope.launch {
             try {
+                // Validate token before attempting connection
+                val manager = tokenValidationManager
+                if (manager != null) {
+                    Log.d(TAG, "Validating token before VPN connection")
+                    val tokenValid = manager.validateTokenBeforeAction()
+                    if (!tokenValid) {
+                        _errorMessage.value = "Token invalid or revoked. Please login again."
+                        _isConnecting.value = false
+                        return@launch
+                    }
+                }
+
                 val selected = _selectedProtocol.value
                 val remoteServer = server
                 if (selected == VpnProtocol.OPENVPN) {
@@ -1443,6 +1473,19 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 val context = getApplication<Application>().applicationContext
                 Log.d(TAG, "Starting disconnect process - activeHandler exists: ${activeVpnHandler != null}")
 
+                // Validate token before disconnect - if revoked, still allow disconnect to happen
+                // but mark it as a forced logout scenario
+                val token = authToken
+                val manager = tokenValidationManager
+                if (token != null && manager != null) {
+                    Log.d(TAG, "Validating token before VPN disconnection")
+                    val tokenValid = manager.validateTokenBeforeAction()
+                    if (!tokenValid) {
+                        Log.w(TAG, "Token invalid during disconnect - will proceed with disconnect and logout")
+                        _errorMessage.value = "Token revoked. Disconnecting and logging out..."
+                    }
+                }
+
                 // Cancel OpenVPN state observer
                 openVpnStateJob?.cancel()
                 openVpnStateJob = null
@@ -1751,5 +1794,19 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         val u = username?.takeIf { it.isNotBlank() }?.let { "user:$it" }
         if (r == null && u == null) return null
         return listOfNotNull(r, u).joinToString("|")
+    }
+
+    /**
+     * Cleanup when ViewModel is destroyed
+     */
+    override fun onCleared() {
+        super.onCleared()
+        try {
+            // Stop background token validation - safely handle nullable property
+            tokenValidationManager?.stopBackgroundValidation()
+            Log.d(TAG, "ViewModel cleared - token validation stopped")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error during ViewModel cleanup", e)
+        }
     }
 }

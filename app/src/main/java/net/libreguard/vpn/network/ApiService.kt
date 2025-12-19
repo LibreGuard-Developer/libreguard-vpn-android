@@ -107,6 +107,21 @@ data class CheckConfirmationResponse(
     val userId: String? = null
 )
 
+// Token validation response
+data class TokenCheckResponse(
+    val isValid: Boolean,
+    val message: String?
+)
+
+// VPN health check response
+data class VpnHealthResponse(
+    val status: String, // "healthy", "degraded", "unreachable"
+    val message: String?,
+    val serverIp: String?,
+    val responseTime: Int?,
+    val lastChecked: String?
+)
+
 interface ApiService {
     @POST("api/login")
     suspend fun login(@Body request: AuthRequest): Response<AuthResponse>
@@ -190,4 +205,12 @@ interface ApiService {
 
     @GET("api/register/check-confirmation/{userId}")
     suspend fun checkConfirmation(@Path("userId") userId: String): Response<CheckConfirmationResponse>
+
+    // Token validation endpoint - Check if token is still valid (not revoked)
+    @GET("api/token/check")
+    suspend fun checkTokenValidity(@Header("Authorization") authorization: String): Response<TokenCheckResponse>
+
+    // VPN health check endpoint - Verify VPN server is reachable
+    @GET("api/vpn/health")
+    suspend fun checkVpnHealth(@Header("Authorization") authorization: String): Response<VpnHealthResponse>
 }
