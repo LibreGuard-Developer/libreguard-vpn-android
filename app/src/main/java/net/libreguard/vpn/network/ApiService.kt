@@ -42,6 +42,7 @@ data class RemoteVpnServer(
     val serverIp: String,
     val serverHostname: String?,
     val country: String,
+    val city: String,
     val linkSpeed: Int,
     val pricingTier: String
 )

@@ -19,7 +19,6 @@ import net.libreguard.vpn.service.vpn.StrongSwanHandler
 import net.libreguard.vpn.service.vpn.VpnProtocolFactory
 import net.libreguard.vpn.service.vpn.VpnProtocolHandler
 import net.libreguard.vpn.service.vpn.WireGuardHandler
-import net.libreguard.vpn.ui.screens.VpnServer
 import net.libreguard.vpn.util.VpnConfigManager
 import net.libreguard.vpn.service.data.DataUsageManager
 import net.libreguard.vpn.service.data.DataUsageInfo
@@ -59,14 +58,11 @@ enum class VpnProtocol(val displayName: String, val apiName: String) {
 }
 
 class VpnViewModel(application: Application) : AndroidViewModel(application) {
-    private val _servers = MutableStateFlow<List<VpnServer>>(emptyList())
-    val servers: StateFlow<List<VpnServer>> = _servers
+    private val _servers = MutableStateFlow<List<RemoteVpnServer>>(emptyList())
+    val servers: StateFlow<List<RemoteVpnServer>> = _servers
 
-    private val _remoteServers = MutableStateFlow<List<RemoteVpnServer>>(emptyList())
-    val remoteServers: StateFlow<List<RemoteVpnServer>> = _remoteServers
-
-    private val _selectedServer = MutableStateFlow<VpnServer?>(null)
-    val selectedServer: StateFlow<VpnServer?> = _selectedServer
+    private val _selectedServer = MutableStateFlow<RemoteVpnServer?>(null)
+    val selectedServer: StateFlow<RemoteVpnServer?> = _selectedServer
 
     private val _selectedProtocol = MutableStateFlow(VpnProtocol.IKEV2_IPSEC)
     val selectedProtocol: StateFlow<VpnProtocol> = _selectedProtocol
@@ -149,6 +145,41 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
+     * Cache VPN servers to SharedPreferences
+     */
+    private fun cacheServers(servers: List<RemoteVpnServer>) {
+        try {
+            val gson = Gson()
+            val json = gson.toJson(servers)
+            sharedPrefs.edit().putString("vpn_servers_cache", json).apply()
+            Log.d(TAG, "Cached ${servers.size} VPN servers")
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to cache servers: ${e.message}")
+        }
+    }
+
+    /**
+     * Load cached VPN servers from SharedPreferences
+     */
+    private fun loadCachedServers(): List<RemoteVpnServer> {
+        return try {
+            val json = sharedPrefs.getString("vpn_servers_cache", null)
+            if (json != null) {
+                val gson = Gson()
+                val serverListType = object : TypeToken<List<RemoteVpnServer>>() {}.type
+                val servers = gson.fromJson<List<RemoteVpnServer>>(json, serverListType)
+                Log.d(TAG, "Loaded ${servers.size} VPN servers from cache")
+                servers
+            } else {
+                emptyList()
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to load cached servers: ${e.message}")
+            emptyList()
+        }
+    }
+
+    /**
      * Load persisted auth token immediately on startup
      */
     private fun loadPersistedAuthToken() {
@@ -193,10 +224,10 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                         }
 
                         // Find and set the server
-                        val server = _servers.value.find { it.name == serverName }
+                        val server = _servers.value.find { it.serverName == serverName }
                         if (server != null) {
                             _selectedServer.value = server
-                            Log.d(TAG, "Restored server: ${server.name}")
+                            Log.d(TAG, "Restored server: ${server.serverName}")
                         }
 
                         // Restore connection state
@@ -333,36 +364,12 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
             sharedPrefs.edit().apply {
                 putBoolean("was_connected", connected)
-                putString("connected_server", server?.name)
+                putString("connected_server", server?.serverName)
                 putString("connected_protocol", protocol.displayName)
 
-                // IMPORTANT FIX: Save VPN profile details for proper disconnection
-                val currentProfile = (activeVpnHandler as? StrongSwanHandler)?.let { handler ->
-                    // Try to get the current profile from the handler
-                    val reflection = handler::class.java.getDeclaredField("currentProfile")
-                    reflection.isAccessible = true
-                    reflection.get(handler) as? VpnProfile
-                }
-
-                currentProfile?.let { profile ->
-                    putString("vpn_profile_uuid", profile.getUUID()?.toString())
-                    putString("vpn_profile_name", profile.name)
-                    putString("vpn_profile_gateway", profile.gateway)
-                    putString("vpn_profile_remote_id", profile.remoteId)
-                    putString("vpn_profile_user_cert_alias", profile.userCertificateAlias)
-                    putString("vpn_profile_username", profile.username)
-                    putString("vpn_profile_password", profile.password)
-                    Log.d(TAG, "Saved VPN profile details: UUID=${profile.getUUID()}, gateway=${profile.gateway}")
-                } ?: run {
-                    // If we can't get the profile from handler, save basic connection info
-                    Log.w(TAG, "Could not access current profile from handler, saving basic info only")
-                }
-
-                // Also save auth token for seamless reconnection
-                authToken?.let { putString("auth_token", it) }
-                apply()
+                // ...existing code...
             }
-            Log.d(TAG, "Saved connection state: connected=$connected, server=${server?.name}, hasToken=${authToken != null}")
+            Log.d(TAG, "Saved connection state: connected=$connected, server=${server?.serverName}, hasToken=${authToken != null}")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to save connection state", e)
         }
@@ -404,22 +411,6 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun loadLocalServers(context: Context) {
-        try {
-            val inputStream = context.resources.openRawResource(R.raw.servers)
-            val reader = InputStreamReader(inputStream)
-            val serverListType = object : TypeToken<List<VpnServer>>() {}.type
-            val serverList: List<VpnServer> = Gson().fromJson(reader, serverListType) ?: emptyList()
-            _servers.value = serverList
-            Log.d(TAG, "Loaded ${serverList.size} local servers")
-
-            // Load persisted state after servers are loaded
-            loadPersistedState()
-        } catch (e: Exception) {
-            Log.e(TAG, "Error loading local servers", e)
-            _errorMessage.value = "Failed to load local servers: ${e.localizedMessage}"
-        }
-    }
 
     fun loadRemoteServers() {
         loadRemoteServersWithFallback()
@@ -455,7 +446,6 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             // Clear auth token and all related state
             authToken = null
             currentUserId = null
-            _remoteServers.value = emptyList()
             _selectedServer.value = null
             _errorMessage.value = "Logged out successfully"
 
@@ -467,7 +457,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * Load remote servers but don't fail silently - preserve auth token even if server loading fails
+     * Load remote servers with caching - try cache first, then API
      */
     private fun loadRemoteServersWithFallback() {
         val token = authToken
@@ -480,25 +470,40 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
         viewModelScope.launch {
             try {
+                // Load from cache first
+                val cachedServers = loadCachedServers()
+                if (cachedServers.isNotEmpty()) {
+                    _servers.value = cachedServers
+                    Log.d(TAG, "Loaded ${cachedServers.size} servers from cache")
+                }
+
+                // Try to get fresh list from API
                 val response = RetrofitClient.instance.getVpnServers("Bearer $token")
 
                 if (response.isSuccessful) {
                     val serverResponse = response.body()
                     if (serverResponse?.servers != null) {
-                        _remoteServers.value = serverResponse.servers
-                        Log.d(TAG, "Loaded ${serverResponse.servers.size} remote servers")
+                        _servers.value = serverResponse.servers
+                        cacheServers(serverResponse.servers)
+                        Log.d(TAG, "Loaded ${serverResponse.servers.size} remote servers from API")
                         _errorMessage.value = "Server list updated (${serverResponse.servers.size} servers)"
                     } else {
                         Log.w(TAG, "No servers received from API, but token is still valid")
-                        _errorMessage.value = "No servers received from API"
+                        if (cachedServers.isEmpty()) {
+                            _errorMessage.value = "No servers received from API"
+                        }
                     }
                 } else {
                     Log.w(TAG, "Failed to load servers: ${response.code()} - ${response.message()}, but preserving auth token")
-                    _errorMessage.value = "Failed to load servers (network issue), but you're still logged in"
+                    if (cachedServers.isEmpty()) {
+                        _errorMessage.value = "Failed to load servers (network issue), but you're still logged in"
+                    }
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Error loading remote servers: ${e.message}, but preserving auth token")
-                _errorMessage.value = "Network error loading servers, but you're still logged in"
+                if (_servers.value.isEmpty()) {
+                    _errorMessage.value = "Network error loading servers, but you're still logged in"
+                }
             } finally {
                 _isLoadingServers.value = false
             }
@@ -636,7 +641,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun selectServer(server: VpnServer) {
+    fun selectServer(server: RemoteVpnServer) {
         _selectedServer.value = server
     }
 
@@ -645,7 +650,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun findRemoteServerByName(serverName: String): RemoteVpnServer? {
-        return _remoteServers.value.find { it.serverName == serverName }
+        return _servers.value.find { it.serverName == serverName }
     }
 
     fun connectToVpn() {
@@ -672,19 +677,13 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
-        // Check if selected server exists in remote server list
-        val remoteServer = findRemoteServerByName(server.name)
-        if (remoteServer == null) {
-            _errorMessage.value = "Selected server '${server.name}' not found in server list. Please refresh server list."
-            return
-        }
-
         _isConnecting.value = true
         _errorMessage.value = null
 
         viewModelScope.launch {
             try {
                 val selected = _selectedProtocol.value
+                val remoteServer = server
                 if (selected == VpnProtocol.OPENVPN) {
                     // Use download endpoint and cached config
                     val ok = connectOpenVpnViaDownload(remoteServer.id)
@@ -847,7 +846,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun connectWithConfig(
         configContent: String,
-        server: VpnServer,
+        server: RemoteVpnServer,
         protocol: VpnProtocol,
         certificateName: String?,
         passphrase: String?

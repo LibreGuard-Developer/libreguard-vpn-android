@@ -34,16 +34,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.window.Dialog
 import net.libreguard.vpn.ui.components.CompactDataUsageIndicator
-
-// Keep your existing VpnServer data class
-data class VpnServer(
-    val name: String,
-    val ip: String,
-    val hostname: String,
-    val country: String,
-    val linkSpeed: Int,
-    val pricingTier: String
-)
+import net.libreguard.vpn.network.RemoteVpnServer
 
 // Keep your existing helper function
 fun getFlagEmoji(country: String): String {
@@ -110,7 +101,7 @@ fun MainScreen(
     // Set auth token and load servers
     LaunchedEffect(authToken) {
         viewModel.setAuthToken(authToken)
-        viewModel.loadLocalServers(context)
+        viewModel.loadRemoteServers()
     }
 
     // If the currently selected protocol is WireGuard (from previous state), switch to a supported one.
@@ -223,7 +214,7 @@ fun MainScreen(
 
                         if (selectedServer != null) {
                             Text(
-                                text = "${getFlagEmoji(selectedServer!!.country)} ${selectedServer!!.name}",
+                                text = "${getFlagEmoji(selectedServer!!.country)} ${selectedServer!!.serverName}",
                                 fontSize = 16.sp,
                                 color = MaterialTheme.colorScheme.onSurface
                             )
@@ -447,7 +438,7 @@ fun CountryHeader(country: String) {
 }
 
 @Composable
-fun ServerListItem(server: VpnServer, isSelected: Boolean, onServerSelected: (VpnServer) -> Unit) {
+fun ServerListItem(server: RemoteVpnServer, isSelected: Boolean, onServerSelected: (RemoteVpnServer) -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -458,7 +449,7 @@ fun ServerListItem(server: VpnServer, isSelected: Boolean, onServerSelected: (Vp
     ) {
         Column(Modifier.weight(1f)) {
             Text(
-                text = server.name,
+                text = server.serverName,
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Medium,
                 color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
