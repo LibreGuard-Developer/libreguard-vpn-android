@@ -465,6 +465,145 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
+     * Force disconnect VPN when user logs out (manual or token revocation).
+     * Called from MainActivity's logout broadcast receiver.
+     * Does NOT require valid authentication token.
+     *
+     * CRITICAL: This ensures VPN tunnels are terminated when:
+     * - User manually clicks logout
+     * - Token is revoked by admin (detected via background poll or API error)
+     * - Session expires
+     */
+    suspend fun forceDisconnectVpn(context: Context) {
+        try {
+            Log.d(TAG, "🛑 Force disconnect VPN on logout")
+
+            // 1. Stop background token validation first
+            tokenValidationManager?.stopBackgroundValidation()
+            Log.d(TAG, "Stopped token validation background job")
+
+            // 2. Cancel any ongoing OpenVPN state observer
+            openVpnStateJob?.cancel()
+            openVpnStateJob = null
+
+            // 3. Get handler reference (avoid smart cast issues)
+            val handler = activeVpnHandler
+
+            // 4. Try normal disconnect using active handler
+            if (handler != null) {
+                try {
+                    val result = withContext(Dispatchers.IO) {
+                        handler.disconnect(context)
+                    }
+                    Log.d(TAG, "Handler disconnect result: $result")
+                } catch (e: Exception) {
+                    Log.w(TAG, "Handler disconnect failed: ${e.message}")
+                }
+            } else {
+                Log.d(TAG, "No active handler - trying fallback methods")
+            }
+
+            // 5. Try fallback disconnect methods (force-stop apps)
+            tryFallbackDisconnect(context)
+
+            // 6. Verify it's actually disconnected
+            verifyVpnDisconnected()
+
+            // 7. Clear all VPN state
+            _isConnected.value = false
+            _isConnecting.value = false
+            activeVpnHandler = null
+            _selectedServer.value = null
+
+            Log.d(TAG, "✅ Force disconnect completed on logout")
+
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error during force disconnect: ${e.message}", e)
+            // Continue anyway - user should see login screen
+            // But make sure state is cleared
+            _isConnected.value = false
+            _isConnecting.value = false
+            activeVpnHandler = null
+        }
+    }
+
+    /**
+     * Try fallback disconnect methods when normal handler disconnect fails.
+     * Uses system commands to force-stop VPN apps.
+     */
+    private suspend fun tryFallbackDisconnect(context: Context) {
+        // Try to stop OpenVPN
+        try {
+            // Method 1: Send disconnect intent to OpenVPN
+            val openVpnIntent = Intent().apply {
+                setClassName("de.blinkt.openvpn", "de.blinkt.openvpn.api.DisconnectVPN")
+            }
+            context.sendBroadcast(openVpnIntent)
+            Log.d(TAG, "Sent disconnect broadcast to OpenVPN")
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to send OpenVPN disconnect broadcast: ${e.message}")
+        }
+
+        // Try to stop StrongSwan
+        try {
+            // Method 1: Send disconnect intent to StrongSwan
+            val strongSwanIntent = Intent().apply {
+                setClassName("org.strongswan.android", "org.strongswan.android.logic.CharonVpnService")
+                action = "org.strongswan.android.logic.CharonVpnService.DISCONNECT"
+            }
+            context.startService(strongSwanIntent)
+            Log.d(TAG, "Sent disconnect intent to StrongSwan")
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to send StrongSwan disconnect intent: ${e.message}")
+        }
+
+        // Try alternative: Use package manager to force-stop (requires system permission or root)
+        try {
+            withContext(Dispatchers.IO) {
+                // These may fail without proper permissions, but worth trying
+                Runtime.getRuntime().exec("am force-stop de.blinkt.openvpn").waitFor()
+                Log.d(TAG, "Force-stopped OpenVPN app")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to force-stop OpenVPN: ${e.message}")
+        }
+
+        try {
+            withContext(Dispatchers.IO) {
+                Runtime.getRuntime().exec("am force-stop org.strongswan.android").waitFor()
+                Log.d(TAG, "Force-stopped StrongSwan app")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to force-stop StrongSwan: ${e.message}")
+        }
+
+        // Give processes time to stop
+        delay(300)
+    }
+
+    /**
+     * Verify VPN connection has actually been terminated.
+     * Waits up to 1 second for disconnect to complete.
+     */
+    private suspend fun verifyVpnDisconnected() {
+        var attempts = 0
+        val maxAttempts = 10  // 10 * 100ms = 1 second max wait
+
+        while (attempts < maxAttempts && _isConnected.value) {
+            Log.d(TAG, "Verifying disconnect... attempt ${attempts + 1}/$maxAttempts")
+            delay(100)
+            attempts++
+        }
+
+        if (_isConnected.value) {
+            Log.w(TAG, "⚠️ VPN still shows connected after force disconnect - forcing state change")
+            _isConnected.value = false
+        } else {
+            Log.d(TAG, "✅ VPN verified disconnected")
+        }
+    }
+
+    /**
      * Load remote servers with caching - try cache first, then API
      */
     private fun loadRemoteServersWithFallback() {

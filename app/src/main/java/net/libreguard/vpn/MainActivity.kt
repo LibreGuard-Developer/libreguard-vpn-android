@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.*
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -32,6 +33,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.os.Build
+import kotlinx.coroutines.launch
 import net.libreguard.vpn.network.RetrofitClient
 
 class MainActivity : ComponentActivity() {
@@ -64,6 +66,12 @@ fun AppNavigation(modifier: Modifier = Modifier) {
     var regEmail by remember { mutableStateOf<String?>(null) }
     var regToken by remember { mutableStateOf<String?>(null) }
 
+    // ViewModel reference for VPN disconnect on logout - shared across all composables
+    val vpnViewModel: VpnViewModel = viewModel()
+
+    // Coroutine scope for async logout operations
+    val coroutineScope = rememberCoroutineScope()
+
     // Helper: perform full logout (Google + local state)
     fun performLogout() {
         // Clear stored token
@@ -80,11 +88,20 @@ fun AppNavigation(modifier: Modifier = Modifier) {
     // Handle Logout Broadcast
     DisposableEffect(Unit) {
         val receiver = object : BroadcastReceiver() {
-            override fun onReceive(context: Context?, intent: Intent?) {
+            override fun onReceive(ctx: Context?, intent: Intent?) {
                 if (intent?.action == "net.libreguard.vpn.ACTION_LOGOUT") {
-                    performLogout()
-                    navController.navigate("login") {
-                        popUpTo(0) { inclusive = true }
+                    // CRITICAL: Disconnect VPN first before clearing tokens
+                    coroutineScope.launch {
+                        try {
+                            vpnViewModel.forceDisconnectVpn(context)
+                        } catch (e: Exception) {
+                            android.util.Log.e("MainActivity", "Error disconnecting VPN on logout: ${e.message}")
+                        }
+                        // Then perform logout
+                        performLogout()
+                        navController.navigate("login") {
+                            popUpTo(0) { inclusive = true }
+                        }
                     }
                 }
             }
@@ -230,15 +247,21 @@ fun AppNavigation(modifier: Modifier = Modifier) {
 
         composable("main") {
             authToken?.let { token ->
-                val viewModel: VpnViewModel = viewModel()
-
                 MainScreen(
                     authToken = token,
-                    vpnViewModel = viewModel,
+                    vpnViewModel = vpnViewModel,
                     onLogout = {
-                        performLogout()
-                        navController.navigate("login") {
-                            popUpTo("main") { inclusive = true }
+                        // Disconnect VPN first, then logout
+                        coroutineScope.launch {
+                            try {
+                                vpnViewModel.forceDisconnectVpn(context)
+                            } catch (e: Exception) {
+                                android.util.Log.e("MainActivity", "Error disconnecting VPN on manual logout: ${e.message}")
+                            }
+                            performLogout()
+                            navController.navigate("login") {
+                                popUpTo("main") { inclusive = true }
+                            }
                         }
                     },
                     onNavigateToSettings = {
@@ -265,9 +288,17 @@ fun AppNavigation(modifier: Modifier = Modifier) {
                         navController.navigate("twoFactorSettings")
                     },
                     onLogout = {
-                        performLogout()
-                        navController.navigate("login") {
-                            popUpTo(0) { inclusive = true }
+                        // Disconnect VPN first, then logout
+                        coroutineScope.launch {
+                            try {
+                                vpnViewModel.forceDisconnectVpn(context)
+                            } catch (e: Exception) {
+                                android.util.Log.e("MainActivity", "Error disconnecting VPN on settings logout: ${e.message}")
+                            }
+                            performLogout()
+                            navController.navigate("login") {
+                                popUpTo(0) { inclusive = true }
+                            }
                         }
                     }
                 )
