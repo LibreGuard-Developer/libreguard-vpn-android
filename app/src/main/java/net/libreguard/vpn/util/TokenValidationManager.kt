@@ -81,6 +81,13 @@ class TokenValidationManager(
             return false
         }
 
+        // CRITICAL: Warn if refresh token is missing (indicates OAuth persistence issue)
+        val refreshToken = tokenManager.getRefreshToken()
+        if (refreshToken.isNullOrBlank()) {
+            Log.w(TAG, "WARNING: Refresh token is missing! This indicates OAuth tokens may not have been persisted correctly. " +
+                       "User will be unable to refresh expired tokens.")
+        }
+
         return validateTokenValidity()
     }
 
@@ -95,6 +102,13 @@ class TokenValidationManager(
                 Log.w(TAG, "No token to validate")
                 false
             } else {
+                // CRITICAL: Check if refresh token exists (needed for token rotation)
+                val refreshToken = tokenManager.getRefreshToken()
+                if (refreshToken.isNullOrBlank()) {
+                    Log.w(TAG, "WARNING: Refresh token is missing during validation! " +
+                               "Token rotation will fail on expiry. This indicates OAuth tokens were not persisted correctly.")
+                }
+
                 val response = RetrofitClient.instance.checkTokenValidity("Bearer $token")
 
                 when {

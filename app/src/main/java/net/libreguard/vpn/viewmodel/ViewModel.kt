@@ -854,6 +854,13 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
 
+                // DEFENSIVE CHECK: Warn if refresh token is missing (indicates OAuth persistence issue)
+                val refreshToken = RetrofitClient.getTokenManager().getRefreshToken()
+                if (refreshToken.isNullOrBlank()) {
+                    Log.w(TAG, "WARNING: Refresh token is missing! OAuth tokens may not have been persisted correctly. " +
+                               "Token validation will fail if access token expires.")
+                }
+
                 val selected = _selectedProtocol.value
                 val remoteServer = server
                 if (selected == VpnProtocol.OPENVPN) {

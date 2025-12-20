@@ -105,7 +105,11 @@ fun LoginScreen(
                     if (resp.isSuccessful) {
                         val body: GoogleLoginResponse? = resp.body()
                         val token = body?.token
+                        val refreshToken = body?.refreshToken
                         if (!token.isNullOrBlank()) {
+                            // CRITICAL: Save both access token and refresh token before calling onLoginSuccess
+                            // This ensures tokens are persisted in encrypted storage for later token validation/refresh
+                            RetrofitClient.getTokenManager().saveTokens(token, refreshToken ?: "")
                             onLoginSuccess(token)
                         } else {
                             errorMessage = context.getString(R.string.google_sign_in_error, "No token returned")
