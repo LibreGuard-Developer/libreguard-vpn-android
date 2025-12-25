@@ -213,4 +213,50 @@ interface ApiService {
     // VPN health check endpoint - Verify VPN server is reachable
     @GET("api/vpn/health")
     suspend fun checkVpnHealth(@Header("Authorization") authorization: String): Response<VpnHealthResponse>
+
+    // ===== SUBSCRIPTION ENDPOINTS =====
+    @GET("api/subscription/status")
+    suspend fun getSubscriptionStatus(
+        @Header("Authorization") authorization: String
+    ): Response<SubscriptionStatusResponse>
+
+    @POST("api/subscription/register-device")
+    suspend fun registerDevice(
+        @Header("Authorization") authorization: String,
+        @Body request: RegisterDeviceRequest
+    ): Response<DeviceResponse>
+
+    @GET("api/subscription/can-access-server/{tierNumber}")
+    suspend fun canAccessServer(
+        @Header("Authorization") authorization: String,
+        @Path("tierNumber") tierNumber: Int
+    ): Response<AccessCheckResponse>
+
+    // ===== CARD PAYMENT (LEMONSQUEEZY) =====
+    @GET("api/subscription/checkout-url")
+    suspend fun getCheckoutUrl(
+        @Header("Authorization") authorization: String
+    ): Response<CheckoutUrlResponse>
+
+    // ===== MONERO PAYMENT =====
+    @GET("api/monero/price")
+    suspend fun getMoneroPrice(
+        @Header("Authorization") authorization: String
+    ): Response<MoneroPriceResponse>
+
+    @POST("api/monero/create-invoice")
+    suspend fun createMoneroInvoice(
+        @Header("Authorization") authorization: String
+    ): Response<MoneroInvoiceResponse>
+
+    @GET("api/monero/status/{invoiceId}")
+    suspend fun getMoneroPaymentStatus(
+        @Header("Authorization") authorization: String,
+        @Path("invoiceId") invoiceId: String
+    ): Response<MoneroStatusResponse>
+
+    @GET("api/monero/latest-invoice")
+    suspend fun getLatestMoneroInvoice(
+        @Header("Authorization") authorization: String
+    ): Response<MoneroInvoiceResponse?>
 }

@@ -7,9 +7,10 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ChevronRight
-import androidx.compose.material.icons.filled.ExitToApp
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -23,13 +24,16 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.viewmodel.compose.viewModel
 import org.json.JSONObject
+import net.libreguard.vpn.viewmodel.SubscriptionViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
     onNavigateBack: () -> Unit,
     onNavigateToTwoFactor: () -> Unit,
+    onNavigateToUpgrade: () -> Unit,
     onLogout: () -> Unit
 ) {
     var showLogoutDialog by remember { mutableStateOf(false) }
@@ -37,6 +41,19 @@ fun SettingsScreen(
     val context = LocalContext.current
     val sharedPrefs = remember { context.getSharedPreferences("vpn_state_prefs", android.content.Context.MODE_PRIVATE) }
     val token = remember { sharedPrefs.getString("auth_token", null) }
+
+    // Initialize subscription ViewModel
+    val subscriptionViewModel: SubscriptionViewModel = viewModel()
+
+    // Set auth token in subscription view model
+    LaunchedEffect(token) {
+        token?.let { subscriptionViewModel.setAuthToken(it) }
+        subscriptionViewModel.fetchSubscriptionStatus()
+    }
+
+    val subscriptionStatus by subscriptionViewModel.subscriptionStatus.collectAsState()
+    val isPro by subscriptionViewModel.isPro.collectAsState()
+    val isLoading by subscriptionViewModel.isLoading.collectAsState()
 
     // Try to extract email from JWT token (sub, email, or username)
     val userEmail by remember(token) {
@@ -77,7 +94,7 @@ fun SettingsScreen(
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
                         Icon(
-                            Icons.Default.ArrowBack,
+                            imageVector = Icons.Filled.ArrowBack,
                             contentDescription = "Back",
                             tint = Color.White
                         )
@@ -104,6 +121,27 @@ fun SettingsScreen(
                 .padding(padding)
         ) {
             Spacer(modifier = Modifier.height(16.dp))
+
+            // Subscription Status Section
+            if (isLoading) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp)
+                        .height(120.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator()
+                }
+            } else if (subscriptionStatus != null) {
+                SubscriptionStatusCard(
+                    subscriptionStatus = subscriptionStatus!!,
+                    isPro = isPro,
+                    onUpgradeClick = onNavigateToUpgrade
+                )
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
 
             // Security Section
             Text(
@@ -166,7 +204,7 @@ fun SettingsScreen(
                 shape = RoundedCornerShape(16.dp)
             ) {
                 ModernSettingsItem(
-                    icon = Icons.Default.ExitToApp,
+                    icon = Icons.Default.Close,
                     iconTint = Color(0xFFEF4444),
                     iconBackground = Color(0xFFFEE2E2),
                     title = "Logout",
@@ -205,7 +243,7 @@ fun SettingsScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        imageVector = Icons.Default.ExitToApp,
+                        imageVector = Icons.Filled.Close,
                         contentDescription = "Logout",
                         tint = Color(0xFFEF4444),
                         modifier = Modifier.size(28.dp)
@@ -250,6 +288,154 @@ fun SettingsScreen(
             },
             containerColor = Color.White,
             shape = RoundedCornerShape(24.dp)
+        )
+    }
+}
+
+@Composable
+fun SubscriptionStatusCard(
+    subscriptionStatus: net.libreguard.vpn.network.SubscriptionStatusResponse,
+    isPro: Boolean,
+    onUpgradeClick: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp)
+            .shadow(
+                elevation = 4.dp,
+                shape = RoundedCornerShape(16.dp),
+                ambientColor = Color.Black.copy(alpha = 0.05f)
+            ),
+        colors = CardDefaults.cardColors(
+            containerColor = if (isPro) Color(0xFFFFF3E0) else Color.White
+        ),
+        shape = RoundedCornerShape(16.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            // Plan Title Row
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(48.dp)
+                            .background(
+                                color = if (isPro) Color(0xFFFFB74D) else Color(0xFFE0E7FF),
+                                shape = RoundedCornerShape(12.dp)
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = if (isPro) Icons.Default.Star else Icons.Default.Lock,
+                            contentDescription = null,
+                            tint = if (isPro) Color(0xFFF57C00) else Color(0xFF6366F1),
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        Text(
+                            text = if (isPro) "Pro Plan" else "Free Plan",
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF0F172A)
+                        )
+                        Text(
+                            text = subscriptionStatus.status,
+                            fontSize = 12.sp,
+                            color = Color(0xFF64748B)
+                        )
+                    }
+                }
+            }
+
+            // Plan Details
+            Column(
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                DetailRow(
+                    label = "Active Devices",
+                    value = "${subscriptionStatus.activeDevices}/${subscriptionStatus.maxDevices}"
+                )
+
+                if (!subscriptionStatus.currentPeriodEnd.isNullOrBlank()) {
+                    DetailRow(
+                        label = "Period End",
+                        value = subscriptionStatus.currentPeriodEnd ?: "N/A"
+                    )
+                }
+
+                if (!subscriptionStatus.paymentType.isNullOrBlank()) {
+                    DetailRow(
+                        label = "Payment Method",
+                        value = subscriptionStatus.paymentType ?: "N/A"
+                    )
+                }
+            }
+
+            // Upgrade Button (only if Free)
+            if (!isPro) {
+                Button(
+                    onClick = onUpgradeClick,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF2196F3)
+                    ),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.padding(vertical = 8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Star,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Text(
+                            "Upgrade to Pro",
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 16.sp
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun DetailRow(label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(
+            text = label,
+            fontSize = 13.sp,
+            color = Color(0xFF64748B)
+        )
+        Text(
+            text = value,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = Color(0xFF0F172A)
         )
     }
 }
@@ -324,7 +510,7 @@ fun ModernSettingsItem(
         }
 
         if (showDivider) {
-            Divider(
+            HorizontalDivider(
                 modifier = Modifier.padding(start = 84.dp, end = 20.dp),
                 color = Color(0xFFE2E8F0),
                 thickness = 1.dp
@@ -339,6 +525,7 @@ fun PreviewSettingsScreen() {
     SettingsScreen(
         onNavigateBack = { },
         onNavigateToTwoFactor = { },
+        onNavigateToUpgrade = { },
         onLogout = { }
     )
 }

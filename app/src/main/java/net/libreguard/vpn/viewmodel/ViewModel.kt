@@ -30,6 +30,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -100,6 +102,16 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     private val _isInstallingCertificate = MutableStateFlow(false)
     val isInstallingCertificate: StateFlow<Boolean> = _isInstallingCertificate
 
+    // Subscription state
+    private val _showUpgradeDialog = MutableStateFlow(false)
+    val showUpgradeDialog: StateFlow<Boolean> = _showUpgradeDialog
+
+    private val _upgradeReason = MutableStateFlow<String?>(null)
+    val upgradeReason: StateFlow<String?> = _upgradeReason
+
+    private var _isPro = MutableStateFlow(false)
+    val isPro: StateFlow<Boolean> = _isPro
+
     private var authToken: String? = null
     private var currentUserId: String? = null
     private var activeVpnHandler: VpnProtocolHandler? = null
@@ -130,11 +142,18 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     // Track OpenVPN state collection
     private var openVpnStateJob: Job? = null
 
+    // Upgrade events for UI navigation
+    private val _upgradeEvents = MutableSharedFlow<Map<String, String?>>(replay = 0)
+    val upgradeEvents: SharedFlow<Map<String, String?>> = _upgradeEvents
+
     init {
         // Load persisted auth token and connection state immediately on startup
         loadPersistedAuthToken()
         // Restore any previously active VPN session (e.g., after process death or app swipe-away)
         loadPersistedState()
+
+        // Load cached subscription status (isPro)
+        loadCachedSubscriptionStatus()
 
         // Start observing data usage
         startDataUsageObservation()
@@ -174,7 +193,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             if (json != null) {
                 val gson = Gson()
                 val serverListType = object : TypeToken<List<RemoteVpnServer>>() {}.type
-                val servers = gson.fromJson<List<RemoteVpnServer>>(json, serverListType)
+                val servers: List<RemoteVpnServer> = gson.fromJson(json, serverListType)
                 Log.d(TAG, "Loaded ${servers.size} VPN servers from cache")
                 servers
             } else {
@@ -816,6 +835,47 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     fun connectToVpn() {
         val server = _selectedServer.value
         val token = authToken
+
+        // Guard: ensure access for server/protocol before attempting
+        try {
+            val prefs = getApplication<Application>().getSharedPreferences("vpn_subscription_prefs", Context.MODE_PRIVATE)
+            val isProCached = prefs.getBoolean("subscription_is_pro", false)
+
+            // If server is premium and user is not pro, emit upgrade event and abort
+            if (server != null && server.pricingTier.equals("Premium", ignoreCase = true) && !isProCached) {
+                viewModelScope.launch {
+                    _upgradeEvents.emit(mapOf(
+                        "reason" to "Server requires Pro",
+                        "resource_type" to "server",
+                        "resource_id" to server.id.toString(),
+                        "required_tier" to server.pricingTier
+                    ))
+                }
+                _errorMessage.value = "This server requires Pro subscription. Redirecting to upgrade..."
+                _isConnecting.value = false
+                return
+            }
+
+            val selected = _selectedProtocol.value
+            if (selected == VpnProtocol.OPENVPN) {
+                // OpenVPN is Pro-only; if not Pro, emit upgrade
+                if (!isProCached) {
+                    viewModelScope.launch {
+                        _upgradeEvents.emit(mapOf(
+                            "reason" to "Protocol requires Pro",
+                            "resource_type" to "protocol",
+                            "resource_id" to selected.name,
+                            "required_tier" to "Pro"
+                        ))
+                    }
+                    _errorMessage.value = "OpenVPN requires Pro subscription. Redirecting to upgrade..."
+                    _isConnecting.value = false
+                    return
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to validate local subscription cache: ${e.message}")
+        }
 
         // Guard: ignore requests while connecting or already connected
         if (_isConnecting.value) {
@@ -1743,7 +1803,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 // Final verification: check if VPN is actually disconnected
                 val isStillActive = checkVpnStatusImproved()
                 if (isStillActive) {
-                    Log.w(TAG, "VPN still appears to be active after disconnect attempts")
+                    Log.w(TAG, "VPN still appears to be active after disconnect")
                     _errorMessage.value = "VPN disconnect attempted - please check if connection is actually terminated"
                 } else {
                     Log.d(TAG, "VPN successfully disconnected - no active VPN detected")
@@ -1965,6 +2025,60 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             Log.d(TAG, "ViewModel cleared - token validation stopped")
         } catch (e: Exception) {
             Log.e(TAG, "Error during ViewModel cleanup", e)
+        }
+    }
+
+    /**
+     * Check if user can access OpenVPN protocol (Pro only)
+     */
+    fun canAccessOpenVpn(isPro: Boolean): Boolean {
+        return isPro
+    }
+
+    /**
+     * Check if user can access a premium server
+     */
+    fun canAccessPremiumServer(serverTier: String, isPro: Boolean): Boolean {
+        if (serverTier.equals("Free", ignoreCase = true)) {
+            return true // All users can access free servers
+        }
+        return isPro // Only Pro users can access premium servers
+    }
+
+    /**
+     * Show upgrade dialog with specific reason
+     */
+    fun showUpgradeDialog(reason: String) {
+        _upgradeReason.value = reason
+        _showUpgradeDialog.value = true
+    }
+
+    /**
+     * Hide upgrade dialog
+     */
+    fun hideUpgradeDialog() {
+        _showUpgradeDialog.value = false
+        _upgradeReason.value = null
+    }
+
+    /**
+     * Update Pro user status from subscription service
+     */
+    fun setProStatus(isPro: Boolean) {
+        _isPro.value = isPro
+    }
+
+    /**
+     * Load cached subscription status (isPro) from SharedPreferences
+     */
+    private fun loadCachedSubscriptionStatus() {
+        try {
+            val subscriptionPrefs = getApplication<Application>().getSharedPreferences("vpn_subscription_prefs", Context.MODE_PRIVATE)
+            val isProCached = subscriptionPrefs.getBoolean("subscription_is_pro", false)
+            _isPro.value = isProCached
+            Log.d(TAG, "Loaded cached subscription status: isPro=$isProCached")
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to load cached subscription status: ${e.message}")
         }
     }
 }

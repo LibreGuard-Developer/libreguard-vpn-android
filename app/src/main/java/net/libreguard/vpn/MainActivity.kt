@@ -23,6 +23,9 @@ import net.libreguard.vpn.ui.screens.TwoFactorSettingsScreen
 import net.libreguard.vpn.ui.screens.TwoFactorVerificationScreen
 import net.libreguard.vpn.ui.screens.RegisterScreen
 import net.libreguard.vpn.ui.screens.ConfirmEmailScreen
+import net.libreguard.vpn.ui.screens.UpgradeScreen
+import net.libreguard.vpn.ui.screens.CardPaymentScreen
+import net.libreguard.vpn.ui.screens.MoneroPaymentScreen
 import net.libreguard.vpn.ui.theme.LibreGuardVPNTheme
 import net.libreguard.vpn.viewmodel.VpnViewModel
 import com.google.android.gms.auth.api.signin.GoogleSignIn
@@ -110,10 +113,33 @@ fun AppNavigation(modifier: Modifier = Modifier) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
         } else {
-            context.registerReceiver(receiver, filter)
+            // Use the not-exported flag as well on older SDKs to satisfy lint/security checks
+            context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
         }
         onDispose {
             context.unregisterReceiver(receiver)
+        }
+    }
+
+    // Handle Upgrade Required Broadcast
+    DisposableEffect(Unit) {
+        val upgradeReceiver = object : BroadcastReceiver() {
+            override fun onReceive(ctx: Context?, intent: Intent?) {
+                if (intent?.action == "net.libreguard.vpn.ACTION_SHOW_UPGRADE") {
+                    android.util.Log.d("MainActivity", "Received ACTION_SHOW_UPGRADE broadcast - navigating to upgrade screen")
+                    // navigate to upgrade screen on main thread
+                    navController.navigate("upgrade")
+                }
+            }
+        }
+        val upgradeFilter = IntentFilter("net.libreguard.vpn.ACTION_SHOW_UPGRADE")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            context.registerReceiver(upgradeReceiver, upgradeFilter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            context.registerReceiver(upgradeReceiver, upgradeFilter, Context.RECEIVER_NOT_EXPORTED)
+        }
+        onDispose {
+            context.unregisterReceiver(upgradeReceiver)
         }
     }
 
@@ -151,6 +177,19 @@ fun AppNavigation(modifier: Modifier = Modifier) {
             }
         }
         isCheckingToken = false
+
+        // Flush any pending upgrade payload persisted by AuthInterceptor (if app was backgrounded when 403 happened)
+        try {
+            val prefs = context.getSharedPreferences("vpn_state_prefs", Context.MODE_PRIVATE)
+            val pending = prefs.getString("pending_upgrade_payload", null)
+            if (!pending.isNullOrBlank()) {
+                android.util.Log.d("MainActivity", "Found pending upgrade payload; navigating to upgrade")
+                prefs.edit().remove("pending_upgrade_payload").apply()
+                navController.navigate("upgrade")
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("MainActivity", "Failed to flush pending upgrade payload: ${e.message}")
+        }
     }
 
     NavHost(
@@ -266,6 +305,9 @@ fun AppNavigation(modifier: Modifier = Modifier) {
                     },
                     onNavigateToSettings = {
                         navController.navigate("settings")
+                    },
+                    onNavigateToUpgrade = {
+                        navController.navigate("upgrade")
                     }
                 )
             } ?: run {
@@ -286,6 +328,9 @@ fun AppNavigation(modifier: Modifier = Modifier) {
                     },
                     onNavigateToTwoFactor = {
                         navController.navigate("twoFactorSettings")
+                    },
+                    onNavigateToUpgrade = {
+                        navController.navigate("upgrade")
                     },
                     onLogout = {
                         // Disconnect VPN first, then logout
@@ -310,6 +355,55 @@ fun AppNavigation(modifier: Modifier = Modifier) {
                 TwoFactorSettingsScreen(
                     authToken = token,
                     onNavigateBack = {
+                        navController.popBackStack()
+                    }
+                )
+            }
+        }
+
+        // ===== SUBSCRIPTION ROUTES =====
+        composable("upgrade") {
+            authToken?.let { token ->
+                UpgradeScreen(
+                    onNavigateBack = {
+                        navController.popBackStack()
+                    },
+                    onChooseCard = {
+                        navController.navigate("payment/card")
+                    },
+                    onChooseMonero = {
+                        navController.navigate("payment/monero")
+                    }
+                )
+            }
+        }
+
+        composable("payment/card") {
+            authToken?.let { token ->
+                CardPaymentScreen(
+                    checkoutUrl = "https://checkout.lemonsqueezy.com/buy/",
+                    isLoading = false,
+                    onClose = {
+                        navController.popBackStack()
+                    }
+                )
+            }
+        }
+
+        composable("payment/monero") {
+            authToken?.let { token ->
+                MoneroPaymentScreen(
+                    paymentAddress = "87E7Qw1j6VKNjNj4mK1F5...",
+                    xmrAmount = 0.0234,
+                    usdAmount = 4.00,
+                    xmrPrice = 170.85,
+                    confirmations = 0,
+                    requiredConfirmations = 10,
+                    isLoading = false,
+                    isWaitingForPayment = false,
+                    hoursRemaining = 23,
+                    minutesRemaining = 59,
+                    onClose = {
                         navController.popBackStack()
                     }
                 )

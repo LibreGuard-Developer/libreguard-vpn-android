@@ -10,7 +10,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.ExitToApp
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.*
@@ -53,7 +52,8 @@ fun MainScreen(
     authToken: String,
     vpnViewModel: VpnViewModel? = null,
     onLogout: (() -> Unit)? = null,
-    onNavigateToSettings: (() -> Unit)? = null
+    onNavigateToSettings: (() -> Unit)? = null,
+    onNavigateToUpgrade: (() -> Unit)? = null
 ) {
     val viewModel: VpnViewModel = vpnViewModel ?: viewModel()
     val context = LocalContext.current
@@ -74,6 +74,9 @@ fun MainScreen(
 
     // Data usage state
     val dataUsageInfo by viewModel.dataUsageInfo.collectAsState()
+
+    // Subscription status
+    val isPro by viewModel.isPro.collectAsState()
 
     // State for logout confirmation dialog
     var showLogoutDialog by remember { mutableStateOf(false) }
@@ -102,6 +105,14 @@ fun MainScreen(
     LaunchedEffect(authToken) {
         viewModel.setAuthToken(authToken)
         viewModel.loadRemoteServers()
+    }
+
+    // Listen for upgrade events and navigate to upgrade screen
+    LaunchedEffect(Unit) {
+        viewModel.upgradeEvents.collect { event ->
+            android.util.Log.d("MainScreen", "Received upgrade event: $event")
+            onNavigateToUpgrade?.invoke()
+        }
     }
 
     // If the currently selected protocol is WireGuard (from previous state), switch to a supported one.
@@ -240,7 +251,8 @@ fun MainScreen(
             // Protocol Selector
             ProtocolSelector(
                 selectedProtocol = selectedProtocol,
-                onProtocolSelected = { viewModel.selectProtocol(it) }
+                onProtocolSelected = { viewModel.selectProtocol(it) },
+                isPro = isPro
             )
 
             Spacer(modifier = Modifier.height(16.dp))
@@ -390,7 +402,7 @@ fun MainScreen(
 }
 
 @Composable
-fun ProtocolSelector(selectedProtocol: VpnProtocol, onProtocolSelected: (VpnProtocol) -> Unit) {
+fun ProtocolSelector(selectedProtocol: VpnProtocol, onProtocolSelected: (VpnProtocol) -> Unit, isPro: Boolean = false) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
@@ -411,16 +423,59 @@ fun ProtocolSelector(selectedProtocol: VpnProtocol, onProtocolSelected: (VpnProt
                 VpnProtocol.entries
                     .filter { proto -> !proto.displayName.equals("WireGuard", ignoreCase = true) }
                     .forEach { proto ->
-                        FilterChip(
-                            onClick = { onProtocolSelected(proto) },
-                            label = { Text(proto.displayName) },
+                        ProtocolChip(
+                            protocol = proto,
                             selected = selectedProtocol == proto,
+                            isPro = isPro,
+                            onSelect = { onProtocolSelected(proto) },
                             modifier = Modifier.weight(1f)
                         )
                     }
             }
         }
     }
+}
+
+@Composable
+fun ProtocolChip(
+    protocol: VpnProtocol,
+    selected: Boolean,
+    isPro: Boolean,
+    onSelect: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val isOpenVpn = protocol.displayName.equals("OpenVPN", ignoreCase = true)
+    val isProFeature = isOpenVpn
+    val canAccess = !isProFeature || isPro
+
+    FilterChip(
+        onClick = onSelect,
+        label = {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(protocol.displayName)
+                if (isProFeature) {
+                    Text(
+                        "⭐",
+                        fontSize = 12.sp
+                    )
+                }
+            }
+        },
+        selected = selected,
+        modifier = modifier,
+        enabled = canAccess,
+        colors = if (!canAccess) {
+            FilterChipDefaults.filterChipColors(
+                disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                disabledLabelColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+            )
+        } else {
+            FilterChipDefaults.filterChipColors()
+        }
+    )
 }
 
 @Composable
@@ -448,24 +503,36 @@ fun ServerListItem(server: RemoteVpnServer, isSelected: Boolean, onServerSelecte
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column(Modifier.weight(1f)) {
-            Text(
-                text = server.serverName,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Medium,
-                color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
-            )
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                if (server.pricingTier == "Premium") {
+                    Icon(
+                        imageVector = Icons.Default.Star,
+                        contentDescription = "Premium Server",
+                        tint = Color(0xFFFFD700),
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                }
+                Text(
+                    text = server.serverName,
+                    modifier = Modifier.weight(1f),
+                    color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
+                    fontWeight = FontWeight.Medium,
+                    fontSize = 16.sp
+                )
+                if (isSelected) {
+                    Icon(
+                        imageVector = Icons.Default.Check,
+                        contentDescription = "Selected",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
             Text(
                 text = "${server.linkSpeed} Mbps • ${server.pricingTier}",
                 fontSize = 12.sp,
                 color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-        if (isSelected) {
-            Icon(
-                imageVector = Icons.Default.Star,
-                contentDescription = "Selected",
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(20.dp)
             )
         }
     }
@@ -650,13 +717,14 @@ fun ImportCertificateDialog(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LogoutConfirmationDialog(onConfirm: () -> Unit, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
         icon = {
             Icon(
-                imageVector = Icons.Default.ExitToApp,
+                imageVector = Icons.Filled.Close,
                 contentDescription = "Logout",
                 tint = MaterialTheme.colorScheme.error,
                 modifier = Modifier.size(32.dp)
@@ -686,7 +754,7 @@ fun LogoutConfirmationDialog(onConfirm: () -> Unit, onDismiss: () -> Unit) {
                 modifier = Modifier.padding(end = 8.dp)
             ) {
                 Icon(
-                    imageVector = Icons.Default.ExitToApp,
+                    imageVector = Icons.Filled.Close,
                     contentDescription = null,
                     modifier = Modifier.size(16.dp)
                 )
@@ -704,7 +772,7 @@ fun LogoutConfirmationDialog(onConfirm: () -> Unit, onDismiss: () -> Unit) {
                 shape = RoundedCornerShape(8.dp)
             ) {
                 Icon(
-                    imageVector = Icons.Default.Close,
+                    imageVector = Icons.Filled.Close,
                     contentDescription = null,
                     modifier = Modifier.size(16.dp),
                     tint = Color(0xFF2196F3)
@@ -734,11 +802,80 @@ fun LogoutButton(modifier: Modifier = Modifier, onClick: () -> Unit) {
             )
     ) {
         Icon(
-            imageVector = Icons.Default.ExitToApp,
+            imageVector = Icons.Filled.Close,
             contentDescription = "Logout",
             tint = Color.White
         )
     }
+}
+
+@Composable
+fun ModernSettingsItem(
+    title: String,
+    subtitle: String? = null,
+    icon: @Composable (() -> Unit)? = null,
+    switch: @Composable (() -> Unit)? = null,
+    onClick: () -> Unit,
+    showDivider: Boolean = true
+) {
+    Column {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onClick)
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                if (icon != null) {
+                    Icon(
+                        imageVector = Icons.Default.Settings,
+                        contentDescription = null,
+                        modifier = Modifier.size(24.dp),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                }
+                Column(
+                    horizontalAlignment = Alignment.Start
+                ) {
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    if (subtitle != null) {
+                        Text(
+                            text = subtitle,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+            // Add the switch or any trailing icon here if needed
+            if (switch != null) {
+                Box(
+                    modifier = Modifier
+                        .size(24.dp)
+                        .align(Alignment.CenterVertically)
+                ) {
+                    switch()
+                }
+            }
+        }
+        if (showDivider) {
+            HorizontalDivider(
+                 modifier = Modifier.padding(start = 84.dp, end = 20.dp),
+                 color = Color(0xFFE2E8F0),
+                 thickness = 1.dp
+             )
+         }
+     }
 }
 
 @Preview(showBackground = true, showSystemUi = true)
