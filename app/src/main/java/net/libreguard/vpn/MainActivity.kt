@@ -2,6 +2,7 @@ package net.libreguard.vpn
 
 import android.net.Uri
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -28,6 +29,7 @@ import net.libreguard.vpn.ui.screens.CardPaymentScreen
 import net.libreguard.vpn.ui.screens.MoneroPaymentScreen
 import net.libreguard.vpn.ui.theme.LibreGuardVPNTheme
 import net.libreguard.vpn.viewmodel.VpnViewModel
+import net.libreguard.vpn.viewmodel.SubscriptionViewModel
 import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions
 
@@ -380,9 +382,32 @@ fun AppNavigation(modifier: Modifier = Modifier) {
 
         composable("payment/card") {
             authToken?.let { token ->
+                Log.d("PaymentCard", "payment/card route composable called with token: ${token.take(20)}...")
+
+                // Create stable viewModel instance that persists across recompositions
+                val subscriptionViewModel: SubscriptionViewModel = viewModel()
+                val checkoutUrl by subscriptionViewModel.checkoutUrl.collectAsState()
+                val isLoading by subscriptionViewModel.isLoading.collectAsState()
+                val errorMessage by subscriptionViewModel.errorMessage.collectAsState()
+
+                Log.d("PaymentCard", "Current checkoutUrl state: ${checkoutUrl?.take(50) ?: "null"}")
+                Log.d("PaymentCard", "isLoading: $isLoading, errorMessage: $errorMessage")
+
+                // Fetch checkout URL once when entering this screen
+                LaunchedEffect(token) {
+                    Log.d("PaymentCard", "LaunchedEffect triggered with token: ${token.take(20)}...")
+                    Log.d("PaymentCard", "Setting auth token in ViewModel...")
+
+                    subscriptionViewModel.setAuthToken(token)
+                    Log.d("PaymentCard", "Auth token set. Calling fetchCheckoutUrl()...")
+
+                    subscriptionViewModel.fetchCheckoutUrl()
+                    Log.d("PaymentCard", "fetchCheckoutUrl() call completed, waiting for response...")
+                }
+
                 CardPaymentScreen(
-                    checkoutUrl = "https://checkout.lemonsqueezy.com/buy/",
-                    isLoading = false,
+                    checkoutUrl = checkoutUrl ?: "",
+                    isLoading = isLoading,
                     onClose = {
                         navController.popBackStack()
                     }

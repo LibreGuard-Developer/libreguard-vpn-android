@@ -162,32 +162,40 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
      * Fetch checkout URL for card payment (LemonSqueezy)
      */
     fun fetchCheckoutUrl() {
+        Log.d(TAG, "fetchCheckoutUrl() called - authToken is ${if (authToken != null) "SET" else "NULL"}")
         if (authToken == null) {
             _errorMessage.value = "Authentication required"
+            Log.e(TAG, "fetchCheckoutUrl() failed: authToken is null")
             return
         }
 
         _isLoading.value = true
         _errorMessage.value = null
+        Log.d(TAG, "Starting API call to fetch checkout URL with token: ${authToken?.take(20)}...")
 
         viewModelScope.launch(Dispatchers.IO) {
             try {
+                Log.d(TAG, "Calling RetrofitClient.getCheckoutUrl()...")
                 val response = RetrofitClient.instance.getCheckoutUrl(
                     authorization = "Bearer $authToken"
                 )
+                Log.d(TAG, "API response received - isSuccessful: ${response.isSuccessful}, code: ${response.code()}")
 
                 withContext(Dispatchers.Main) {
                     if (response.isSuccessful && response.body() != null) {
                         val checkoutUrl = response.body()!!.checkoutUrl
+                        Log.d(TAG, "Checkout URL received: ${checkoutUrl.take(100)}...")
                         _checkoutUrl.value = checkoutUrl
-                        Log.d(TAG, "Checkout URL fetched")
+                        Log.d(TAG, "Checkout URL set in StateFlow: ${_checkoutUrl.value?.take(50)}...")
                     } else {
-                        _errorMessage.value = "Failed to get checkout URL: ${response.code()}"
+                        val errorMsg = "Failed to get checkout URL: ${response.code()} - ${response.message()}"
+                        Log.e(TAG, errorMsg)
+                        _errorMessage.value = errorMsg
                     }
                     _isLoading.value = false
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Error fetching checkout URL", e)
+                Log.e(TAG, "Error fetching checkout URL: ${e.message}", e)
                 withContext(Dispatchers.Main) {
                     _errorMessage.value = "Error: ${e.localizedMessage}"
                     _isLoading.value = false

@@ -1,5 +1,6 @@
 package net.libreguard.vpn.ui.screens
 
+import android.util.Log
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
@@ -12,6 +13,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+
+private const val TAG = "UpgradeScreen"
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -89,7 +92,10 @@ fun UpgradeScreen(
             Text("Choose Payment Method:", fontWeight = FontWeight.Bold, fontSize = 14.sp)
 
             Button(
-                onClick = onChooseCard,
+                onClick = {
+                    Log.d(TAG, "Pay with Card button clicked - navigating to payment/card")
+                    onChooseCard()
+                },
                 modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2196F3))
             ) {
@@ -97,7 +103,10 @@ fun UpgradeScreen(
             }
 
             Button(
-                onClick = onChooseMonero,
+                onClick = {
+                    Log.d(TAG, "Pay with Monero button clicked - navigating to payment/monero")
+                    onChooseMonero()
+                },
                 modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4CAF50))
             ) {
