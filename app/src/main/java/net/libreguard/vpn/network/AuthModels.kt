@@ -2,12 +2,16 @@ package net.libreguard.vpn.network
 
 import com.google.gson.annotations.SerializedName
 
-// Updated to match the C# LoginModel
+// Updated to match the C# LoginModel with device binding
 data class AuthRequest(
     @SerializedName("Email") // Use SerializedName to ensure the JSON key is "Email"
     val email: String,
     @SerializedName("Password") // Match the C# model property name
-    val password: String
+    val password: String,
+    @SerializedName("deviceId") // Device ID for enforcing device limits
+    val deviceId: String? = null,
+    @SerializedName("appVersion")
+    val appVersion: String? = null
 )
 
 data class AuthResponse(
@@ -22,14 +26,26 @@ data class AuthResponse(
     @SerializedName("email")
     val email: String? = null,
     @SerializedName("userId")
-    val userId: String? = null
+    val userId: String? = null,
+    @SerializedName("deviceId")
+    val deviceId: String? = null,
+    @SerializedName("activeDevices")
+    val activeDevices: Int? = null,
+    @SerializedName("maxDevices")
+    val maxDevices: Int? = null,
+    @SerializedName("planType")
+    val planType: String? = null // "Free", "Pro"
 )
 
 // Add Google Sign-In models
 // Request body for POST /api/login/google
 data class GoogleLoginRequest(
     @SerializedName("idToken")
-    val idToken: String
+    val idToken: String,
+    @SerializedName("deviceId")
+    val deviceId: String? = null,
+    @SerializedName("appVersion")
+    val appVersion: String? = null
 )
 
 // Response from POST /api/login/google { token, email, userId, provider }
@@ -38,13 +54,19 @@ data class GoogleLoginResponse(
     @SerializedName("refreshToken") val refreshToken: String,
     @SerializedName("email") val email: String,
     @SerializedName("userId") val userId: String,
-    @SerializedName("provider") val provider: String
+    @SerializedName("provider") val provider: String,
+    @SerializedName("deviceId") val deviceId: String? = null,
+    @SerializedName("activeDevices") val activeDevices: Int? = null,
+    @SerializedName("maxDevices") val maxDevices: Int? = null,
+    @SerializedName("planType") val planType: String? = null // "Free", "Pro"
 )
 
 // Refresh Token Request
 data class RefreshTokenRequest(
     @SerializedName("refreshToken")
-    val refreshToken: String
+    val refreshToken: String,
+    @SerializedName("deviceId")
+    val deviceId: String? = null
 )
 
 // 2FA Verification Request
@@ -102,4 +124,47 @@ data class MessageResponse(
 data class RecoveryCodesResponse(
     val recoveryCodes: List<String>,
     val message: String
+)
+
+// ===== LOGOUT =====
+// Request body for POST /api/logout
+data class LogoutRequest(
+    @SerializedName("refreshToken")
+    val refreshToken: String,
+    @SerializedName("deviceId")
+    val deviceId: String? = null
+)
+
+// Response from POST /api/logout
+data class LogoutResponse(
+    @SerializedName("message")
+    val message: String,
+    @SerializedName("success")
+    val success: Boolean? = true
+)
+
+/**
+ * Error response returned when device limit is exceeded (409 Conflict).
+ *
+ * Sent by backend when user attempts to login on a new device
+ * but has reached their subscription limit (Free: 1, Pro: 3).
+ *
+ * Example: Free user with 1 active device tries to login on device 2
+ * GET /api/login returns 409 with this structure.
+ */
+data class DeviceLimitErrorResponse(
+    @SerializedName("message")
+    val message: String,
+    @SerializedName("errorCode")
+    val errorCode: String, // "DEVICE_LIMIT_EXCEEDED"
+    @SerializedName("currentDevices")
+    val currentDevices: Int? = null,
+    @SerializedName("maxDevices")
+    val maxDevices: Int? = null,
+    @SerializedName("planType")
+    val planType: String? = null, // "Free", "Pro"
+    @SerializedName("email")
+    val email: String? = null,
+    @SerializedName("userId")
+    val userId: String? = null
 )

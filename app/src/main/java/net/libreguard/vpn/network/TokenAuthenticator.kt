@@ -15,8 +15,9 @@ class TokenAuthenticator(
 ) : Authenticator {
 
     override fun authenticate(route: Route?, response: Response): Request? {
-        // 1. Get stored refresh token
+        // 1. Get stored refresh token and device ID
         val refreshToken = tokenManager.getRefreshToken()
+        val deviceId = tokenManager.getDeviceId()
         if (refreshToken == null) {
             return null // No token, let it fail
         }
@@ -33,20 +34,44 @@ class TokenAuthenticator(
                     .build()
             }
 
-            // 2. Synchronously call refresh endpoint
+            // 2. Synchronously call refresh endpoint with device binding
             try {
-                val refreshResponse = authApiService.refreshToken(RefreshTokenRequest(refreshToken)).execute()
+                val refreshResponse = authApiService.refreshToken(
+                    RefreshTokenRequest(refreshToken, deviceId)
+                ).execute()
 
                 if (refreshResponse.isSuccessful) {
                     val authResponse = refreshResponse.body()
                     if (authResponse != null && authResponse.token != null && authResponse.refreshToken != null) {
-                        // 3. Save NEW tokens
+                        // 3. Validate device binding: returned deviceId must match current device
+                        if (authResponse.deviceId != null && authResponse.deviceId != deviceId) {
+                            // Device binding mismatch - token was bound to different device or unbound
+                            logoutUser()
+                            return null
+                        }
+
+                        // 4. Save NEW tokens with updated device metadata if present
                         tokenManager.saveTokens(authResponse.token, authResponse.refreshToken)
 
-                        // 4. Retry the original request with the new access token
+                        // Update device metadata if returned
+                        if (authResponse.activeDevices != null && authResponse.maxDevices != null) {
+                            tokenManager.saveDeviceMetadata(authResponse.activeDevices, authResponse.maxDevices)
+                        }
+
+                        // 5. Retry the original request with the new access token
                         return response.request.newBuilder()
                             .header("Authorization", "Bearer ${authResponse.token}")
                             .build()
+                    }
+                } else {
+                    // Handle 400 (missing deviceId) or 409 (device limit exceeded) or 401 (token revoked)
+                    when (refreshResponse.code()) {
+                        400, 409, 401 -> {
+                            // Backend rejected refresh - likely device binding or limit issue
+                            // Force logout immediately
+                            logoutUser()
+                            return null
+                        }
                     }
                 }
             } catch (e: Exception) {
@@ -54,7 +79,7 @@ class TokenAuthenticator(
                 e.printStackTrace()
             }
 
-            // Refresh failed (token expired/revoked) -> Force Logout
+            // Refresh failed (token expired/revoked/device mismatch) -> Force Logout
             logoutUser()
             return null
         }
@@ -62,6 +87,7 @@ class TokenAuthenticator(
 
     private fun logoutUser() {
         tokenManager.clearTokens()
+        tokenManager.clearDeviceData()
         // Broadcast logout event
         val intent = Intent("net.libreguard.vpn.ACTION_LOGOUT")
         intent.setPackage(context.packageName)

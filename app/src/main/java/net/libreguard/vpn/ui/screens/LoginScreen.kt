@@ -32,12 +32,14 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.tooling.preview.Preview
 import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions
 import com.google.android.gms.auth.api.signin.GoogleSignInStatusCodes
 import com.google.android.gms.common.api.ApiException
 import com.google.android.gms.common.SignInButton
+import com.google.gson.Gson
+import net.libreguard.vpn.network.DeviceLimitErrorResponse
+import net.libreguard.vpn.util.DeviceIdManager
 import kotlinx.coroutines.launch
 import net.libreguard.vpn.R
 import net.libreguard.vpn.network.RetrofitClient
@@ -45,7 +47,10 @@ import net.libreguard.vpn.network.AuthRequest
 import net.libreguard.vpn.network.ResendConfirmationRequest
 import net.libreguard.vpn.network.GoogleLoginRequest
 import net.libreguard.vpn.network.GoogleLoginResponse
+import net.libreguard.vpn.network.AuthResponse
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.viewinterop.AndroidView
+import java.util.*
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -62,6 +67,7 @@ fun LoginScreen(
     var isPasswordVisible by remember { mutableStateOf(false) }
     var isEmailFocused by remember { mutableStateOf(false) }
     var isPasswordFocused by remember { mutableStateOf(false) }
+    var deviceLimitError by remember { mutableStateOf<DeviceLimitErrorResponse?>(null) }
     val isAnyFieldFocused = isEmailFocused || isPasswordFocused
 
     val coroutineScope = rememberCoroutineScope()
@@ -71,6 +77,43 @@ fun LoginScreen(
     val scrollState = rememberScrollState()
     val keyboardController = LocalSoftwareKeyboardController.current
     val context = LocalContext.current
+
+    val deviceIdManager = remember { DeviceIdManager(context) }
+    val deviceId = remember { deviceIdManager.getDeviceId() }
+    val appVersion = remember {
+        runCatching {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName
+        }.getOrDefault("1.0")
+    }
+    val gson = remember { Gson() }
+
+    val tokenManager = RetrofitClient.getTokenManager()
+
+    fun persistAuthResponse(authResponse: net.libreguard.vpn.network.AuthResponse?): Boolean {
+        val auth = authResponse ?: return false
+        val token = auth.token
+        val refreshToken = auth.refreshToken
+        if (token.isNullOrBlank()) return false
+        tokenManager.saveTokens(token, refreshToken ?: "")
+        auth.deviceId?.let { tokenManager.saveDeviceId(it) }
+        if (auth.activeDevices != null && auth.maxDevices != null) {
+            tokenManager.saveDeviceMetadata(auth.activeDevices, auth.maxDevices)
+        }
+        return true
+    }
+
+    fun handleDeviceLimitError(errorBody: String?) {
+        if (errorBody.isNullOrBlank()) {
+            deviceLimitError = null
+            return
+        }
+        deviceLimitError = try {
+            gson.fromJson(errorBody, DeviceLimitErrorResponse::class.java)
+        } catch (_: Exception) {
+            null
+        }
+        errorMessage = deviceLimitError?.message ?: "Device limit reached."
+    }
 
     // Keep only web client id for ID token
     val webClientId = stringResource(id = R.string.google_web_client_id)
@@ -88,43 +131,71 @@ fun LoginScreen(
 
     val googleLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         coroutineScope.launch {
-            googleLoading = false
-            val task = GoogleSignIn.getSignedInAccountFromIntent(result.data)
-            runCatching {
-                task.getResult(Exception::class.java)
-            }.onSuccess { account ->
-                val idToken = account.idToken
-                if (idToken.isNullOrBlank()) {
-                    errorMessage = context.getString(R.string.google_sign_in_error, "Missing ID token")
-                    return@launch
-                }
-                // Exchange with backend
-                isLoading = true
-                try {
-                    val resp = RetrofitClient.instance.loginWithGoogle(GoogleLoginRequest(idToken))
-                    if (resp.isSuccessful) {
-                        val body: GoogleLoginResponse? = resp.body()
-                        val token = body?.token
-                        val refreshToken = body?.refreshToken
-                        if (!token.isNullOrBlank()) {
-                            // CRITICAL: Save both access token and refresh token before calling onLoginSuccess
-                            // This ensures tokens are persisted in encrypted storage for later token validation/refresh
-                            RetrofitClient.getTokenManager().saveTokens(token, refreshToken ?: "")
-                            onLoginSuccess(token)
-                        } else {
-                            errorMessage = context.getString(R.string.google_sign_in_error, "No token returned")
-                        }
+            googleLoading = true
+            val account = runCatching {
+                GoogleSignIn.getSignedInAccountFromIntent(result.data)
+                    .getResult(Exception::class.java)
+            }.getOrElse {
+                googleLoading = false
+                errorMessage = context.getString(R.string.google_sign_in_error, it.localizedMessage ?: "Google sign-in failed")
+                return@launch
+            }
+
+            val idToken = account?.idToken
+            if (idToken.isNullOrBlank()) {
+                googleLoading = false
+                errorMessage = context.getString(R.string.google_sign_in_error, "Missing ID token")
+                return@launch
+            }
+
+            isLoading = true
+            try {
+                val resp = RetrofitClient.instance.loginWithGoogle(
+                    GoogleLoginRequest(
+                        idToken = idToken,
+                        deviceId = deviceId,
+                        appVersion = appVersion
+                    )
+                )
+                val errorBody = resp.errorBody()?.string()
+                if (resp.isSuccessful) {
+                    val body: GoogleLoginResponse? = resp.body()
+                    if (body != null && persistAuthResponse(
+                            AuthResponse(
+                                token = body.token,
+                                refreshToken = body.refreshToken,
+                                message = null,
+                                requiresTwoFactor = false,
+                                email = body.email,
+                                userId = body.userId,
+                                deviceId = body.deviceId,
+                                activeDevices = body.activeDevices,
+                                maxDevices = body.maxDevices,
+                                planType = body.planType
+                            )
+                        )) {
+                        deviceLimitError = null
+                        onLoginSuccess(body.token)
                     } else {
-                        errorMessage = context.getString(R.string.google_sign_in_error, "${resp.code()}")
+                        errorMessage = context.getString(R.string.google_sign_in_error, "No token returned")
                     }
-                } catch (e: Exception) {
-                    errorMessage = context.getString(R.string.google_sign_in_error, e.localizedMessage ?: "Unknown error")
-                } finally {
-                    isLoading = false
+                } else {
+                    when (resp.code()) {
+                        409 -> handleDeviceLimitError(errorBody)
+                        400 -> {
+                            handleDeviceLimitError(errorBody)
+                            if (errorMessage.isNullOrBlank()) {
+                                errorMessage = context.getString(R.string.google_sign_in_error, "Missing device information")
+                            }
+                        }
+                        else -> errorMessage = context.getString(R.string.google_sign_in_error, "${resp.code()}")
+                    }
                 }
-            }.onFailure { ex ->
-                val mapped = mapGoogleSignInFailure(ex)
-                errorMessage = context.getString(R.string.google_sign_in_error, mapped)
+            } catch (e: Exception) {
+                errorMessage = context.getString(R.string.google_sign_in_error, e.localizedMessage ?: "Unknown error")
+            } finally {
+                isLoading = false
+                googleLoading = false
             }
         }
     }
@@ -322,7 +393,7 @@ fun LoginScreen(
                             .height(50.dp)
                     ) {
                         AndroidView(
-                            factory = { ctx ->
+                            factory = { ctx: android.content.Context ->
                                 SignInButton(ctx).apply {
                                     setSize(SignInButton.SIZE_WIDE)
                                     setColorScheme(SignInButton.COLOR_DARK)
@@ -333,7 +404,9 @@ fun LoginScreen(
                                     }
                                 }
                             },
-                            update = { btn -> btn.isEnabled = !isLoading && !googleLoading },
+                            update = { btn: SignInButton ->
+                                btn.isEnabled = !isLoading && !googleLoading
+                            },
                             modifier = Modifier.matchParentSize()
                         )
                         if (googleLoading) {
@@ -451,35 +524,42 @@ fun LoginScreen(
                                 errorMessage = null
                                 try {
                                     val response = RetrofitClient.instance.login(
-                                        AuthRequest(email = email, password = password)
+                                        AuthRequest(
+                                            email = email,
+                                            password = password,
+                                            deviceId = deviceId,
+                                            appVersion = appVersion
+                                        )
                                     )
+                                    val errorBody = response.errorBody()?.string()
                                     if (response.isSuccessful) {
                                         val authResponse = response.body()
-
-                                        // Check if 2FA is required
                                         if (authResponse?.requiresTwoFactor == true) {
-                                            // Navigate to 2FA verification screen
                                             onRequires2FA(email)
+                                        } else if (persistAuthResponse(authResponse)) {
+                                            deviceLimitError = null
+                                            onLoginSuccess(authResponse!!.token!!)
                                         } else {
-                                            // Normal login flow
-                                            val token = authResponse?.token
-                                            val refreshToken = authResponse?.refreshToken
-                                            if (!token.isNullOrBlank()) {
-                                                RetrofitClient.getTokenManager().saveTokens(token, refreshToken ?: "")
-                                                onLoginSuccess(token)
-                                            } else {
-                                                errorMessage = authResponse?.message ?: "Login failed"
-                                            }
+                                            errorMessage = authResponse?.message ?: "Login failed"
                                         }
                                     } else {
-                                        if (response.code() == 401) {
-                                            // Treat as email not verified: resend confirmation and route to verification
-                                            runCatching {
-                                                RetrofitClient.instance.resendConfirmation(ResendConfirmationRequest(email))
+                                        when (response.code()) {
+                                            401 -> {
+                                                runCatching {
+                                                    RetrofitClient.instance.resendConfirmation(ResendConfirmationRequest(email))
+                                                }
+                                                onNavigateToEmailVerification(email, null)
                                             }
-                                            onNavigateToEmailVerification(email, null)
-                                        } else {
-                                            errorMessage = "Login failed: ${response.code()}"
+                                            409 -> handleDeviceLimitError(errorBody)
+                                            400 -> {
+                                                handleDeviceLimitError(errorBody)
+                                                if (errorMessage.isNullOrBlank()) {
+                                                    errorMessage = "Device identifier missing. Please reinstall the app."
+                                                }
+                                            }
+                                            else -> {
+                                                errorMessage = "Login failed: ${response.code()}"
+                                            }
                                         }
                                     }
                                 } catch (e: Exception) {
@@ -575,9 +655,21 @@ fun LoginScreen(
             Spacer(modifier = Modifier.height(20.dp))
         }
     }
+
+    // helper functions placed inside composable before Preview
 }
 
-// Enhanced animated background function
+@Preview(showBackground = true, showSystemUi = true)
+@Composable
+fun PreviewLoginScreen() {
+    LoginScreen(
+        onLoginSuccess = { },
+        onRequires2FA = { },
+        onNavigateToRegister = { },
+        onNavigateToEmailVerification = { _, _ -> }
+    )
+}
+
 private fun drawAnimatedBackground(
     drawScope: DrawScope,
     width: Float,
@@ -587,7 +679,6 @@ private fun drawAnimatedBackground(
     shadowBob: Float
 ) {
     with(drawScope) {
-        // Moving red diagonal stripe
         val stripePath = Path().apply {
             moveTo(redStripeOffset - 100f, 0f)
             lineTo(redStripeOffset + 200f, 0f)
@@ -611,7 +702,6 @@ private fun drawAnimatedBackground(
             )
         )
 
-        // Floating shadow figure
         rotate(degrees = 15f, pivot = Offset(shadowFigureOffset, height * 0.2f + shadowBob)) {
             val shadowPath = Path().apply {
                 moveTo(shadowFigureOffset, height * 0.15f + shadowBob)
@@ -636,7 +726,6 @@ private fun drawAnimatedBackground(
             )
         }
 
-        // Subtle grid pattern
         for (i in 0..10) {
             val x = (width / 10) * i
             drawLine(
@@ -659,7 +748,6 @@ private fun drawAnimatedBackground(
     }
 }
 
-// Map Google Sign-In failures into more actionable messages
 private fun mapGoogleSignInFailure(ex: Throwable): String {
     return if (ex is ApiException) {
         val code = ex.statusCode
@@ -687,15 +775,4 @@ private fun mapGoogleSignInFailure(ex: Throwable): String {
     } else {
         ex.localizedMessage ?: "Unknown error"
     }
-}
-
-@Preview(showBackground = true, showSystemUi = true)
-@Composable
-fun PreviewLoginScreen() {
-    LoginScreen(
-        onLoginSuccess = { },
-        onRequires2FA = { },
-        onNavigateToRegister = { },
-        onNavigateToEmailVerification = { _, _ -> }
-    )
 }

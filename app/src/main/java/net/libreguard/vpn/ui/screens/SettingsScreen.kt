@@ -27,6 +27,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
 import org.json.JSONObject
 import net.libreguard.vpn.viewmodel.SubscriptionViewModel
+import kotlinx.coroutines.flow.StateFlow
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -44,6 +45,10 @@ fun SettingsScreen(
 
     // Initialize subscription ViewModel
     val subscriptionViewModel: SubscriptionViewModel = viewModel()
+
+    // Device metadata from TokenManager
+    val tokenManager = remember { net.libreguard.vpn.network.RetrofitClient.getTokenManager() }
+    val deviceMetadata by tokenManager.deviceMetadataFlow.collectAsState()
 
     // Set auth token in subscription view model
     LaunchedEffect(token) {
@@ -137,6 +142,7 @@ fun SettingsScreen(
                 SubscriptionStatusCard(
                     subscriptionStatus = subscriptionStatus!!,
                     isPro = isPro,
+                    deviceMetadata = deviceMetadata,
                     onUpgradeClick = onNavigateToUpgrade
                 )
             }
@@ -296,6 +302,7 @@ fun SettingsScreen(
 fun SubscriptionStatusCard(
     subscriptionStatus: net.libreguard.vpn.network.SubscriptionStatusResponse,
     isPro: Boolean,
+    deviceMetadata: Pair<Int, Int>,
     onUpgradeClick: () -> Unit
 ) {
     Card(
@@ -371,6 +378,14 @@ fun SubscriptionStatusCard(
                     label = "Active Devices",
                     value = "${subscriptionStatus.activeDevices}/${subscriptionStatus.maxDevices}"
                 )
+
+                // Also show from TokenManager if available (real-time sync)
+                if (deviceMetadata.first > 0 || deviceMetadata.second > 0) {
+                    DetailRow(
+                        label = "Current Session",
+                        value = "${deviceMetadata.first}/${deviceMetadata.second}"
+                    )
+                }
 
                 if (!subscriptionStatus.currentPeriodEnd.isNullOrBlank()) {
                     DetailRow(

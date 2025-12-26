@@ -40,6 +40,7 @@ import android.content.IntentFilter
 import android.os.Build
 import kotlinx.coroutines.launch
 import net.libreguard.vpn.network.RetrofitClient
+import net.libreguard.vpn.util.LogoutManager
 
 class MainActivity : ComponentActivity() {
 
@@ -77,11 +78,24 @@ fun AppNavigation(modifier: Modifier = Modifier) {
     // Coroutine scope for async logout operations
     val coroutineScope = rememberCoroutineScope()
 
-    // Helper: perform full logout (Google + local state)
+    // Helper: perform full logout (API + Google + local state)
+    // This runs in the calling coroutine scope (non-blocking, best-effort)
     fun performLogout() {
-        // Clear stored token
-        RetrofitClient.getTokenManager().clearTokens()
+        // Call LogoutManager in background (non-blocking, best-effort)
+        coroutineScope.launch {
+            Log.d("MainActivity", "Starting async logout via LogoutManager")
+            try {
+                LogoutManager.logout()
+                Log.i("MainActivity", "Logout completed successfully")
+            } catch (e: Exception) {
+                Log.e("MainActivity", "LogoutManager.logout() failed: ${e.message}", e)
+                // Continue anyway - user is already navigating to login
+            }
+        }
+
+        // Clear in-memory auth token immediately for UI responsiveness
         authToken = null
+
         // Google Sign-Out (best-effort)
         val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
             .requestIdToken(context.getString(R.string.google_web_client_id))

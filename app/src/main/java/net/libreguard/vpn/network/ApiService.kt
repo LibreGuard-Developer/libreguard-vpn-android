@@ -141,6 +141,13 @@ interface ApiService {
     @POST("api/login/verify-recovery-code")
     suspend fun verifyRecoveryCode(@Body request: VerifyRecoveryRequest): Response<TokenResponse>
 
+    // Logout endpoint - mark device as inactive and revoke token
+    @POST("api/logout")
+    suspend fun logout(
+        @Header("Authorization") authorization: String,
+        @Body request: LogoutRequest
+    ): Response<LogoutResponse>
+
     @GET("api/vpn/servers")
     suspend fun getVpnServers(@Header("Authorization") authorization: String): Response<ServerResponse>
 
