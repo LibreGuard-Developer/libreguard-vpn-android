@@ -77,6 +77,7 @@ data class RegisterResponse(
     val message: String?,
     val userId: String?,
     val email: String?,
+    val deviceId: String? = null,
     val requiresEmailConfirmation: Boolean = true,
     val emailConfirmationToken: String? = null,
     val accountStatus: String? = null // "created" | "unverified" | "verified"
@@ -89,9 +90,10 @@ data class ConfirmEmailRequest(
 
 data class ConfirmEmailResponse(
     val message: String?,
-    val token: String?,
     val email: String?,
-    val userId: String?
+    val userId: String?,
+    val nextStep: String? = null,
+    val requiresDeviceId: String? = null
 )
 
 data class ResendConfirmationRequest(

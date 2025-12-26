@@ -29,6 +29,14 @@ class AuthInterceptor(
 
         // Handle 401: token is invalid or revoked
         if (response.code == 401) {
+            try {
+                val peekBody = response.peekBody(4096)
+                val responseBodyString = try { peekBody.string() } catch (_: Exception) { "" }
+                val hasAuthHeader = newRequest.header("Authorization") != null
+                Log.w(TAG, "Received 401 for request ${newRequest.method} ${newRequest.url}. HasAuthHeader=$hasAuthHeader. ResponseBody=${responseBodyString.take(1000)}")
+            } catch (ex: Exception) {
+                Log.w(TAG, "Received 401 - failed to read response body: ${ex.message}")
+            }
             Log.w(TAG, "Received 401 response - token is invalid or revoked. Triggering logout.")
             handleTokenRevocation()
             return response
@@ -75,13 +83,13 @@ class AuthInterceptor(
                     reason = responseBodyString.take(200)
                 }
 
-                Log.w(TAG, "Received 403 response - subscription/tier access issue. Broadcasting upgrade required.")
+                Log.w(TAG, "Received 403 response - subscription/tier access issue. Broadcasting upgrade required. Request=${newRequest.method} ${newRequest.url} ResponseBody=${responseBodyString.take(1000)}")
                 broadcastUpgradeRequired(reason, resourceType, resourceId, requiredTier)
                 return response
             }
 
             // Otherwise, treat as token revocation
-            Log.w(TAG, "Received 403 response - token likely revoked. Triggering logout.")
+            Log.w(TAG, "Received 403 response - token likely revoked. Triggering logout. Request=${newRequest.method} ${newRequest.url} ResponseBody=${responseBodyString.take(1000)}")
             handleTokenRevocation()
             return response
         }

@@ -2,6 +2,7 @@
 
 package net.libreguard.vpn.ui.screens
 
+import android.util.Log
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
@@ -20,6 +21,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import net.libreguard.vpn.R
 import net.libreguard.vpn.network.*
+import net.libreguard.vpn.util.DeviceIdManager
 import org.json.JSONObject
 
 private fun isValidEmail(email: String): Boolean =
@@ -35,7 +37,7 @@ private fun isValidPassword(pw: String): Boolean {
 @Composable
 fun RegisterScreen(
     onBack: () -> Unit,
-    onRegistrationNeedsConfirmation: (userId: String?, email: String, token: String?) -> Unit,
+    onRegistrationNeedsConfirmation: (userId: String?, email: String, password: String, token: String?) -> Unit,
 ) {
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
@@ -44,6 +46,7 @@ fun RegisterScreen(
 
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+
 
     Scaffold(
         topBar = {
@@ -113,13 +116,19 @@ fun RegisterScreen(
                                 error = context.getString(R.string.error_password_requirements)
                                 return@launch
                             }
-                            val resp = RetrofitClient.instance.register(RegisterRequest(email, password))
+                            val resp = RetrofitClient.instance.register(
+                                RegisterRequest(
+                                    email = email,
+                                    password = password
+                                )
+                            )
                             if (resp.isSuccessful) {
                                 val body = resp.body()
                                 if (body != null) {
                                     onRegistrationNeedsConfirmation(
                                         body.userId,
                                         body.email ?: email,
+                                        password,
                                         body.emailConfirmationToken
                                     )
                                 } else {
@@ -137,7 +146,7 @@ fun RegisterScreen(
                                 when (status) {
                                     // Unverified + CORRECT password: backend has already (re)sent email. Just navigate.
                                     "unverified" -> {
-                                        onRegistrationNeedsConfirmation(errUserId, errEmail, errToken)
+                                        onRegistrationNeedsConfirmation(errUserId, errEmail, password, errToken)
                                     }
                                     // Unverified + WRONG password: do not send email, show generic low-information message
                                     "unknown" -> {
@@ -210,8 +219,9 @@ fun RegisterScreen(
 fun ConfirmEmailScreen(
     userId: String?,
     email: String,
+    password: String,
     initialToken: String?,
-    onConfirmed: (token: String) -> Unit,
+    onConfirmed: (authResponse: net.libreguard.vpn.network.AuthResponse) -> Unit,
     onBackToLogin: () -> Unit
 ) {
     var info by remember { mutableStateOf<String?>(null) }
@@ -222,6 +232,42 @@ fun ConfirmEmailScreen(
 
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+
+    // Get deviceId and appVersion for login
+    val deviceIdManager = remember { DeviceIdManager(context) }
+    val deviceId = remember { deviceIdManager.getDeviceId() }
+    val appVersion = remember {
+        runCatching {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "1.0"
+        }.getOrDefault("1.0")
+    }
+    val tokenManager = remember { RetrofitClient.getTokenManager() }
+
+    // CRITICAL: Clear any existing tokens when entering this screen
+    // This prevents the app from using an old/invalid token when resuming
+    // The only valid token will come from the auto-login after email confirmation
+    LaunchedEffect(Unit) {
+        Log.d("ConfirmEmail", "Clearing any existing tokens to ensure clean state for auto-login")
+        tokenManager.clearTokens()
+        // Also clear from regular shared prefs used by ViewModel
+        context.getSharedPreferences("vpn_state_prefs", android.content.Context.MODE_PRIVATE)
+            .edit()
+            .remove("auth_token")
+            .apply()
+    }
+
+    fun persistAuthResponse(authResponse: net.libreguard.vpn.network.AuthResponse?): Boolean {
+        val auth = authResponse ?: return false
+        val token = auth.token
+        val refreshToken = auth.refreshToken
+        if (token.isNullOrBlank()) return false
+        tokenManager.saveTokens(token, refreshToken ?: "")
+        auth.deviceId?.let { tokenManager.saveDeviceId(it) }
+        if (auth.activeDevices != null && auth.maxDevices != null) {
+            tokenManager.saveDeviceMetadata(auth.activeDevices, auth.maxDevices)
+        }
+        return true
+    }
 
     // Countdown timer
     LaunchedEffect(Unit) {
@@ -236,34 +282,160 @@ fun ConfirmEmailScreen(
         }
     }
 
-    // Poll only if userId is present and not expired
-    LaunchedEffect(userId) {
+    // Poll only if userId and token are present and not expired
+    LaunchedEffect(userId, initialToken) {
+        android.util.Log.d("MainActivity", "ConfirmEmail: LaunchedEffect triggered")
+        Log.d("ConfirmEmail", "=== LaunchedEffect triggered ===")
+        Log.d("ConfirmEmail", "userId=$userId, initialToken=${initialToken?.take(20)}, email=$email, password=${if (password.isNotBlank()) "[present]" else "[MISSING]"}, deviceId=$deviceId")
+
         info = context.getString(R.string.polling_waiting_confirmation)
         val uid = userId
-        if (!uid.isNullOrBlank()) {
-            val start = System.currentTimeMillis()
-            while (System.currentTimeMillis() - start < 120_000 && !expired) { // 2 minutes
-                try {
-                    val resp = RetrofitClient.instance.checkConfirmation(uid)
-                    if (resp.isSuccessful) {
-                        val body = resp.body()
-                        if (body?.emailConfirmed == true) {
-                            val token = body.token
-                            if (!token.isNullOrBlank()) {
-                                onConfirmed(token)
-                                break
-                            } else {
-                                info = body?.message ?: context.getString(R.string.email_confirmed_logged_in)
-                                onBackToLogin()
-                                break
+        val token = initialToken
+        Log.d("ConfirmEmail", "Starting poll: uid=$uid email=$email deviceId=$deviceId appVersion=$appVersion")
+
+        if (!uid.isNullOrBlank() && !token.isNullOrBlank()) {
+            Log.d("ConfirmEmail", "Both uid and token present - proceeding with confirm/login flow")
+            try {
+                // Call confirmEmail endpoint with userId and token
+                val confirmResp = runCatching {
+                    RetrofitClient.instance.confirmEmail(
+                        net.libreguard.vpn.network.ConfirmEmailRequest(
+                            userId = uid,
+                            token = token
+                        )
+                    )
+                }.getOrNull()
+
+                Log.d("ConfirmEmail", "confirmEmail status=${confirmResp?.code()} body=${confirmResp?.body()} error=${confirmResp?.errorBody()?.string()}")
+
+                if (confirmResp?.isSuccessful == true || confirmResp?.code() == 200 || confirmResp?.code() == 409) {
+                    // Email confirmed (or already was confirmed), now perform automatic login with deviceId and appVersion
+                    val loginReq = AuthRequest(
+                        email = email,
+                        password = password,
+                        deviceId = deviceId,
+                        appVersion = appVersion
+                    )
+                    Log.d("ConfirmEmail", "auto-login request: email=$email deviceId=$deviceId appVersion=$appVersion")
+                    val loginResp = runCatching {
+                        RetrofitClient.instance.login(loginReq)
+                    }.getOrNull()
+
+                    Log.d("ConfirmEmail", "auto-login status=${loginResp?.code()} body=${loginResp?.body()} error=${loginResp?.errorBody()?.string()}")
+
+                    if (loginResp?.isSuccessful == true) {
+                        val authResponse = loginResp.body()
+                        if (authResponse != null && !authResponse.token.isNullOrBlank()) {
+                            Log.d("ConfirmEmail", "auto-login SUCCESS: token=${authResponse.token?.take(30)}... refreshToken=${authResponse.refreshToken?.take(30)}... deviceId=${authResponse.deviceId}")
+
+                            // Decode JWT to check for device_id claim
+                            try {
+                                val parts = authResponse.token!!.split(".")
+                                if (parts.size >= 2) {
+                                    val payload = String(android.util.Base64.decode(parts[1], android.util.Base64.URL_SAFE))
+                                    Log.d("ConfirmEmail", "JWT payload: $payload")
+                                    if (payload.contains("device_id")) {
+                                        Log.d("ConfirmEmail", "✓ JWT contains device_id claim")
+                                    } else {
+                                        Log.e("ConfirmEmail", "✗ JWT MISSING device_id claim! This will cause 401 on protected endpoints!")
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                Log.e("ConfirmEmail", "Failed to decode JWT: ${e.message}")
                             }
+
+                            val persisted = persistAuthResponse(authResponse)
+                            Log.d("ConfirmEmail", "Token persisted=$persisted, now verifying token in TokenManager...")
+                            val savedToken = tokenManager.getAccessToken()
+                            val savedRefresh = tokenManager.getRefreshToken()
+                            Log.d("ConfirmEmail", "TokenManager verification: accessToken=${savedToken?.take(30)}... refreshToken=${savedRefresh?.take(30)}...")
+                            if (persisted && savedToken != null) {
+                                onConfirmed(authResponse)
+                            } else {
+                                Log.e("ConfirmEmail", "Failed to persist token properly!")
+                                onBackToLogin()
+                            }
+                            return@LaunchedEffect
+                        }
+                    } else {
+                        Log.w("ConfirmEmail", "auto-login FAILED: code=${loginResp?.code()} error=${loginResp?.errorBody()?.string()}")
+                    }
+                    // If confirmEmail is successful but auto-login fails, navigate to login
+                    onBackToLogin()
+                } else {
+                    error = confirmResp?.body()?.message ?: "Failed to confirm email"
+                    onBackToLogin()
+                }
+            } catch (e: Throwable) {
+                Log.e("ConfirmEmail", "Error during confirm/login", e)
+                error = e.localizedMessage
+                onBackToLogin()
+            }
+        } else if (!uid.isNullOrBlank() || email.isNotBlank()) {
+            // We have userId or email but no confirmation token
+            // This happens when user clicks email link in browser (email already confirmed)
+            // Just try to login directly
+            Log.d("ConfirmEmail", "No confirmation token but have user info - attempting direct login")
+            Log.d("ConfirmEmail", "uid=$uid, email=$email, hasPassword=${password.isNotBlank()}")
+
+            if (email.isNotBlank() && password.isNotBlank()) {
+                val loginReq = AuthRequest(
+                    email = email,
+                    password = password,
+                    deviceId = deviceId,
+                    appVersion = appVersion
+                )
+                Log.d("ConfirmEmail", "auto-login request: email=$email deviceId=$deviceId appVersion=$appVersion")
+                val loginResp = runCatching {
+                    RetrofitClient.instance.login(loginReq)
+                }.getOrNull()
+
+                Log.d("ConfirmEmail", "auto-login status=${loginResp?.code()} body=${loginResp?.body()} error=${loginResp?.errorBody()?.string()}")
+
+                if (loginResp?.isSuccessful == true) {
+                    val authResponse = loginResp.body()
+                    if (authResponse != null && !authResponse.token.isNullOrBlank()) {
+                        Log.d("ConfirmEmail", "auto-login SUCCESS: token=${authResponse.token?.take(30)}... refreshToken=${authResponse.refreshToken?.take(30)}... deviceId=${authResponse.deviceId}")
+
+                        // Decode JWT to check for device_id claim
+                        try {
+                            val parts = authResponse.token!!.split(".")
+                            if (parts.size >= 2) {
+                                val payload = String(android.util.Base64.decode(parts[1], android.util.Base64.URL_SAFE))
+                                Log.d("ConfirmEmail", "JWT payload: $payload")
+                                if (payload.contains("device_id")) {
+                                    Log.d("ConfirmEmail", "✓ JWT contains device_id claim")
+                                } else {
+                                    Log.e("ConfirmEmail", "✗ JWT MISSING device_id claim! This will cause 401 on protected endpoints!")
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.e("ConfirmEmail", "Failed to decode JWT: ${e.message}")
+                        }
+
+                        val persisted = persistAuthResponse(authResponse)
+                        Log.d("ConfirmEmail", "Token persisted=$persisted, now verifying token in TokenManager...")
+                        val savedToken = tokenManager.getAccessToken()
+                        val savedRefresh = tokenManager.getRefreshToken()
+                        Log.d("ConfirmEmail", "TokenManager verification: accessToken=${savedToken?.take(30)}... refreshToken=${savedRefresh?.take(30)}...")
+                        if (persisted && savedToken != null) {
+                            onConfirmed(authResponse)
+                        } else {
+                            Log.e("ConfirmEmail", "Failed to persist token properly!")
+                            onBackToLogin()
                         }
                     }
-                } catch (_: Throwable) {
-                    // ignore transient errors
+                } else {
+                    Log.w("ConfirmEmail", "auto-login FAILED: code=${loginResp?.code()} error=${loginResp?.errorBody()?.string()}")
                 }
-                delay(3000)
+            } else {
+                Log.w("ConfirmEmail", "Missing email or password for login - email=${email.isNotBlank()}, password=${password.isNotBlank()}")
+                // Can't login without credentials, user needs to login manually
+                onBackToLogin()
             }
+        } else {
+            Log.w("ConfirmEmail", "Missing uid and token - cannot proceed with confirm flow.")
+            Log.w("ConfirmEmail", "Will wait for user to return to app after clicking email link...")
         }
     }
 

@@ -8,9 +8,9 @@ data class AuthRequest(
     val email: String,
     @SerializedName("Password") // Match the C# model property name
     val password: String,
-    @SerializedName("deviceId") // Device ID for enforcing device limits
+    @SerializedName("DeviceId") // Device ID for enforcing device limits - use PascalCase to match backend
     val deviceId: String? = null,
-    @SerializedName("appVersion")
+    @SerializedName("AppVersion")
     val appVersion: String? = null
 )
 
@@ -42,9 +42,9 @@ data class AuthResponse(
 data class GoogleLoginRequest(
     @SerializedName("idToken")
     val idToken: String,
-    @SerializedName("deviceId")
+    @SerializedName("DeviceId")
     val deviceId: String? = null,
-    @SerializedName("appVersion")
+    @SerializedName("AppVersion")
     val appVersion: String? = null
 )
 

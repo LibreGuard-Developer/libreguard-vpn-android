@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.*
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -29,6 +30,7 @@ import net.libreguard.vpn.ui.screens.CardPaymentScreen
 import net.libreguard.vpn.ui.screens.MoneroPaymentScreen
 import net.libreguard.vpn.ui.theme.LibreGuardVPNTheme
 import net.libreguard.vpn.viewmodel.VpnViewModel
+import net.libreguard.vpn.util.TokenManager
 import net.libreguard.vpn.viewmodel.SubscriptionViewModel
 import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions
@@ -67,10 +69,31 @@ fun AppNavigation(modifier: Modifier = Modifier) {
     var isCheckingToken by remember { mutableStateOf(true) }
     var pendingEmail by remember { mutableStateOf<String?>(null) }
 
+    // SharedPreferences for persisting registration flow state across process death
+    val regPrefs = remember { context.getSharedPreferences("registration_flow_prefs", android.content.Context.MODE_PRIVATE) }
+
+    // Load initial values from SharedPreferences (handles process death)
+    val initialRegEmail = remember { regPrefs.getString("reg_email", null) }
+    val initialRegPassword = remember { regPrefs.getString("reg_password", null) }
+    val initialRegUserId = remember { regPrefs.getString("reg_user_id", null) }
+    val initialRegToken = remember { regPrefs.getString("reg_token", null) }
+
     // New state for registration confirmation flow
-    var regUserId by remember { mutableStateOf<String?>(null) }
-    var regEmail by remember { mutableStateOf<String?>(null) }
-    var regToken by remember { mutableStateOf<String?>(null) }
+    // Using rememberSaveable to persist across Activity recreation (e.g., when user returns from browser)
+    var regUserId by rememberSaveable { mutableStateOf(initialRegUserId) }
+    var regEmail by rememberSaveable { mutableStateOf(initialRegEmail) }
+    var regPassword by rememberSaveable { mutableStateOf(initialRegPassword) }
+    var regToken by rememberSaveable { mutableStateOf(initialRegToken) }
+
+    // Persist registration flow state to SharedPreferences whenever it changes
+    LaunchedEffect(regEmail, regPassword, regUserId, regToken) {
+        regPrefs.edit()
+            .putString("reg_email", regEmail)
+            .putString("reg_password", regPassword)
+            .putString("reg_user_id", regUserId)
+            .putString("reg_token", regToken)
+            .apply()
+    }
 
     // ViewModel reference for VPN disconnect on logout - shared across all composables
     val vpnViewModel: VpnViewModel = viewModel()
@@ -163,18 +186,33 @@ fun AppNavigation(modifier: Modifier = Modifier) {
     LaunchedEffect(Unit) {
         val data: Uri? = (context as? MainActivity)?.intent?.data
         data?.let { uri ->
-            // We expect libreguardvpn://email/confirmed?userId=... optionally token
+            // We expect libreguardvpn://email/confirmed?userId=...&token=...
+            // The token here is a CONFIRMATION token, NOT an auth token
+            // We must go through proper login to get an auth token with device_id claim
             if (uri.scheme == "libreguardvpn" && uri.host == "email" && uri.path == "/confirmed") {
                 val uid = uri.getQueryParameter("userId")
-                val token = uri.getQueryParameter("token")
-                if (!token.isNullOrBlank()) {
-                    // If token provided directly, persist and enter app
-                    RetrofitClient.getTokenManager().saveTokens(token, "") // No refresh token from deep link usually
-                    authToken = token
-                    navController.navigate("main") { popUpTo("login") { inclusive = true } }
-                } else if (!uid.isNullOrBlank()) {
-                    // If only userId is present, navigate to confirmEmail and let polling finish
+                val confirmToken = uri.getQueryParameter("token")
+                android.util.Log.d("MainActivity", "Deep link received: userId=$uid, hasToken=${!confirmToken.isNullOrBlank()}")
+                android.util.Log.d("MainActivity", "Current registration state: regEmail=${regEmail}, regPassword=${if (!regPassword.isNullOrBlank()) "[set]" else "[EMPTY]"}, regUserId=$regUserId, regToken=${regToken?.take(10)}")
+
+                // IMPORTANT: Do NOT use the token directly - it's a confirmation token, not an auth token
+                // The auth token needs to be obtained via /api/login with DeviceId to get device_id claim
+                if (!uid.isNullOrBlank()) {
+                    // Store the confirmation token if provided, so ConfirmEmailScreen can use it
+                    if (!confirmToken.isNullOrBlank()) {
+                        regToken = confirmToken
+                    }
                     regUserId = uid
+
+                    // Verify we have email and password for auto-login
+                    if (regEmail.isNullOrBlank() || regPassword.isNullOrBlank()) {
+                        android.util.Log.e("MainActivity", "CRITICAL: Missing email or password for auto-login! email=${regEmail.isNullOrBlank()}, password=${regPassword.isNullOrBlank()}")
+                        android.util.Log.e("MainActivity", "User will need to login manually because credentials are not cached")
+                    } else {
+                        android.util.Log.d("MainActivity", "Credentials available for auto-login: email=$regEmail")
+                    }
+
+                    // Navigate to confirmEmail screen which will handle the proper login flow
                     navController.navigate("confirmEmail")
                 }
             }
@@ -183,6 +221,26 @@ fun AppNavigation(modifier: Modifier = Modifier) {
 
     // Check for persisted auth token on startup
     LaunchedEffect(Unit) {
+        // Skip auto-navigation if we're in the middle of email confirmation flow
+        // The user should complete the confirmation process to get a valid token
+        if (!regEmail.isNullOrBlank()) {
+            android.util.Log.d("MainActivity", "Skipping auto-navigation: email confirmation in progress for $regEmail")
+            // Clear any old tokens that might be invalid - from TokenManager
+            RetrofitClient.getTokenManager().clearTokens()
+            // Clear from SharedPreferences
+            context.getSharedPreferences("vpn_state_prefs", Context.MODE_PRIVATE)
+                .edit()
+                .remove("auth_token")
+                .apply()
+            // CRITICAL: Also clear the cached token from VpnViewModel
+            // Otherwise it will use the old token loaded during init
+            vpnViewModel.clearCachedAuthToken()
+            // Clear the local authToken variable too
+            authToken = null
+            isCheckingToken = false
+            return@LaunchedEffect
+        }
+
         val savedToken = RetrofitClient.getTokenManager().getAccessToken()
 
         if (!savedToken.isNullOrBlank()) {
@@ -241,9 +299,10 @@ fun AppNavigation(modifier: Modifier = Modifier) {
         composable("register") {
             RegisterScreen(
                 onBack = { navController.popBackStack() },
-                onRegistrationNeedsConfirmation = { userId, email, token ->
+                onRegistrationNeedsConfirmation = { userId, email, password, token ->
                     regUserId = userId
                     regEmail = email
+                    regPassword = password
                     regToken = token
                     navController.navigate("confirmEmail")
                 }
@@ -254,28 +313,63 @@ fun AppNavigation(modifier: Modifier = Modifier) {
             val uid = regUserId
             val emailParam = regEmail
             val tokenParam = regToken
+            val passwordParam = regPassword
+
+            android.util.Log.d("MainActivity", "confirmEmail composable: uid=$uid, email=$emailParam, password=${if (!passwordParam.isNullOrBlank()) "[set]" else "[EMPTY]"}, token=${tokenParam?.take(10)}")
+
             if (!emailParam.isNullOrBlank()) {
                 val emailNonNull: String = emailParam
+                android.util.Log.d("MainActivity", "Rendering ConfirmEmailScreen with email=$emailNonNull, hasPassword=${!passwordParam.isNullOrBlank()}")
                 ConfirmEmailScreen(
                     userId = uid ?: "",
                     email = emailNonNull,
+                    password = passwordParam ?: "",
                     initialToken = tokenParam,
-                    onConfirmed = { token ->
-                        // Persist token and go to main
-                        val sharedPrefs = context.getSharedPreferences("vpn_state_prefs", android.content.Context.MODE_PRIVATE)
-                        sharedPrefs.edit().putString("auth_token", token).apply()
-                        authToken = token
-                        regUserId = null; regEmail = null; regToken = null
+                    onConfirmed = { authResponse ->
+                        android.util.Log.d("MainActivity", "onConfirmed called with token=${authResponse.token?.take(30)}...")
+                        // Persist full auth response like LoginScreen does
+                        val tokenManager = TokenManager(context)
+                        if (authResponse.token != null) {
+                            tokenManager.saveTokens(authResponse.token, authResponse.refreshToken ?: "")
+                            authResponse.deviceId?.let { tokenManager.saveDeviceId(it) }
+                            if (authResponse.activeDevices != null && authResponse.maxDevices != null) {
+                                tokenManager.saveDeviceMetadata(authResponse.activeDevices, authResponse.maxDevices)
+                            }
+                            authToken = authResponse.token
+                            android.util.Log.d("MainActivity", "Token saved and authToken set, navigating to main")
+                        }
+                        // Navigate FIRST, then clear state after navigation completes
                         navController.navigate("main") {
                             popUpTo("login") { inclusive = true }
                         }
+                        // Clear registration state AFTER navigation to prevent recomposition with null values
+                        regUserId = null; regEmail = null; regToken = null; regPassword = null
                     },
                     onBackToLogin = {
+                        // Clear registration flow state
+                        regUserId = null; regEmail = null; regToken = null; regPassword = null
                         navController.navigate("login") {
                             popUpTo("login") { inclusive = true }
                         }
                     }
                 )
+            } else {
+                // Email is missing - can't do auto-login without credentials
+                // But only redirect if we haven't successfully logged in yet
+                if (authToken == null) {
+                    // This can happen if app was killed and credentials weren't persisted
+                    android.util.Log.e("MainActivity", "confirmEmail: Email is missing and not logged in! Redirecting to login.")
+                    LaunchedEffect(Unit) {
+                        regUserId = null; regEmail = null; regToken = null; regPassword = null
+                        navController.navigate("login") {
+                            popUpTo("confirmEmail") { inclusive = true }
+                        }
+                    }
+                } else {
+                    // Already logged in (authToken is set), just show nothing
+                    // This prevents redirect loop when state is cleared after successful login
+                    android.util.Log.d("MainActivity", "confirmEmail: Email is missing but already logged in (authToken present), doing nothing")
+                }
             }
         }
 

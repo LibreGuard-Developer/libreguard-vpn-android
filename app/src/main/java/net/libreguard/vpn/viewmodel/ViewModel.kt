@@ -223,6 +223,16 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
+     * Clear cached auth token - used when entering email confirmation flow
+     * to prevent the ViewModel from using an old/invalid token
+     */
+    fun clearCachedAuthToken() {
+        Log.d(TAG, "Clearing cached auth token from ViewModel")
+        authToken = null
+        currentUserId = null
+    }
+
+    /**
      * Load persisted connection state when app restarts
      */
     private fun loadPersistedState() {
