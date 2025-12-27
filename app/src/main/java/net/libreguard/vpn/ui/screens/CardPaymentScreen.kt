@@ -3,16 +3,21 @@ package net.libreguard.vpn.ui.screens
 import android.util.Log
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.compose.animation.core.*
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import net.libreguard.vpn.ui.components.LogoWithGradient
+import net.libreguard.vpn.ui.theme.*
 
 private const val TAG = "CardPaymentScreen"
 
@@ -27,146 +32,319 @@ fun CardPaymentScreen(
     var showWebView by remember { mutableStateOf(false) }
     var webViewError by remember { mutableStateOf<String?>(null) }
     var isWebViewLoading by remember { mutableStateOf(false) }
+    var loadingProgress by remember { mutableStateOf(0f) }
+
+    // Animate progress
+    val animatedProgress by animateFloatAsState(
+        targetValue = loadingProgress,
+        animationSpec = tween(300),
+        label = "progress"
+    )
 
     LaunchedEffect(checkoutUrl) {
-        Log.d(TAG, "LaunchedEffect triggered - checkoutUrl changed to: ${if (checkoutUrl.isNotEmpty()) checkoutUrl.take(100) + "..." else "EMPTY"}")
+        Log.d(TAG, "LaunchedEffect triggered - checkoutUrl changed")
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Secure Checkout") },
-                navigationIcon = {
-                    IconButton(onClick = onClose) {
-                        Icon(Icons.Default.Close, contentDescription = "Close")
-                    }
-                }
-            )
-        }
-    ) { paddingValues ->
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues),
-            contentAlignment = Alignment.Center
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Background)
+    ) {
+        Column(
+            modifier = Modifier.fillMaxSize()
         ) {
-            if (isLoading && !showWebView) {
-                // Initial loading state before showing WebView
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center,
-                    modifier = Modifier.fillMaxSize()
+            // Header
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(24.dp)
+            ) {
+                IconButton(
+                    onClick = onClose,
+                    modifier = Modifier.size(40.dp)
                 ) {
-                    CircularProgressIndicator()
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Text("Loading secure checkout...")
-                }
-            } else if (showWebView && checkoutUrl.isNotEmpty()) {
-                // WebView is active - show loading indicator while page loads
-                if (isWebViewLoading) {
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        CircularProgressIndicator()
-                    }
+                    Icon(
+                        imageVector = Icons.Default.ArrowBack,
+                        contentDescription = "Back",
+                        tint = MutedForeground
+                    )
                 }
 
-                AndroidView(
-                    modifier = Modifier.fillMaxSize(),
-                    factory = { context ->
-                        WebView(context).apply {
-                            settings.apply {
-                                javaScriptEnabled = true
-                                domStorageEnabled = true
-                                databaseEnabled = true
-                                mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-                                userAgentString = "LibreGuardVPN/1.0 Android"
-                            }
+                Spacer(modifier = Modifier.height(16.dp))
 
-                            webViewClient = object : WebViewClient() {
-                                override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
-                                    super.onPageStarted(view, url, favicon)
-                                    Log.d(TAG, "WebView page started loading: $url")
-                                    isWebViewLoading = true
-                                }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    LogoWithGradient(size = 40.dp)
+                    Text(
+                        text = "Card Payment",
+                        style = MaterialTheme.typography.headlineMedium,
+                        color = Foreground
+                    )
+                }
 
-                                override fun onPageFinished(view: WebView?, url: String?) {
-                                    super.onPageFinished(view, url)
-                                    Log.d(TAG, "WebView page finished loading: $url")
-                                    isWebViewLoading = false
-                                }
+                Text(
+                    text = "Complete your Pro subscription payment",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MutedForeground,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            }
 
-                                override fun onReceivedError(
-                                    view: WebView?,
-                                    request: android.webkit.WebResourceRequest?,
-                                    error: android.webkit.WebResourceError?
-                                ) {
-                                    super.onReceivedError(view, request, error)
-                                    val errorMsg = "WebView error: ${error?.description}"
-                                    Log.e(TAG, errorMsg)
-                                    webViewError = errorMsg
-                                    isWebViewLoading = false
-                                }
-                            }
-
-                            Log.d(TAG, "Loading checkout URL in WebView: ${checkoutUrl.take(100)}")
-                            loadUrl(checkoutUrl)
+            // Content
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 24.dp)
+                    .padding(bottom = 24.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                when {
+                    isLoading && !showWebView -> {
+                        // Loading state
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center
+                        ) {
+                            CircularProgressIndicator(
+                                color = Primary,
+                                modifier = Modifier.size(48.dp)
+                            )
+                            Spacer(modifier = Modifier.height(24.dp))
+                            Text(
+                                text = "Loading secure checkout...",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MutedForeground
+                            )
+                            Spacer(modifier = Modifier.height(16.dp))
+                            LinearProgressIndicator(
+                                progress = { animatedProgress },
+                                modifier = Modifier
+                                    .width(200.dp)
+                                    .height(4.dp)
+                                    .clip(RoundedCornerShape(2.dp)),
+                                color = Primary,
+                                trackColor = Secondary,
+                            )
                         }
                     }
-                )
-            } else {
-                // Button screen - before user clicks "Proceed to Payment"
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp)
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        if (webViewError != null) {
-                            Text(
-                                "Error loading checkout: $webViewError",
-                                color = Color.Red,
-                                modifier = Modifier.padding(bottom = 16.dp)
-                            )
-                            Button(
-                                onClick = {
-                                    Log.d(TAG, "User clicked Try Again")
-                                    webViewError = null
-                                    showWebView = false
-                                },
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Text("Try Again")
-                            }
-                        } else if (checkoutUrl.isEmpty()) {
-                            Text("Loading checkout URL...", color = Color.Gray)
-                            Spacer(modifier = Modifier.height(16.dp))
-                            CircularProgressIndicator()
-                        } else {
-                            Text("Opening LemonSqueezy Checkout")
-                            Spacer(modifier = Modifier.height(16.dp))
-                            Button(
-                                onClick = {
-                                    Log.d(TAG, "Proceed to Payment button clicked")
-                                    if (checkoutUrl.isNotEmpty() && (checkoutUrl.startsWith("https://") || checkoutUrl.startsWith("http://"))) {
-                                        Log.d(TAG, "Valid checkout URL detected, showing WebView")
-                                        showWebView = true
-                                    } else {
-                                        Log.e(TAG, "Invalid checkout URL format: $checkoutUrl")
-                                        webViewError = "Invalid checkout URL format"
+
+                    showWebView && checkoutUrl.isNotEmpty() -> {
+                        // WebView container
+                        Surface(
+                            modifier = Modifier.fillMaxSize(),
+                            shape = RoundedCornerShape(12.dp),
+                            color = CardBackground,
+                            border = ButtonDefaults.outlinedButtonBorder(enabled = true)
+                        ) {
+                            Column {
+                                // Mock browser bar
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .background(Secondary)
+                                        .padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    // Traffic lights
+                                    Box(
+                                        modifier = Modifier
+                                            .size(12.dp)
+                                            .background(Destructive, RoundedCornerShape(6.dp))
+                                    )
+                                    Box(
+                                        modifier = Modifier
+                                            .size(12.dp)
+                                            .background(StatusConnecting, RoundedCornerShape(6.dp))
+                                    )
+                                    Box(
+                                        modifier = Modifier
+                                            .size(12.dp)
+                                            .background(StatusConnected, RoundedCornerShape(6.dp))
+                                    )
+
+                                    // URL bar
+                                    Surface(
+                                        modifier = Modifier.weight(1f),
+                                        shape = RoundedCornerShape(4.dp),
+                                        color = Background
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(8.dp)
+                                                    .background(StatusConnected, RoundedCornerShape(4.dp))
+                                            )
+                                            Text(
+                                                text = "secure-checkout.libreguard.com",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MutedForeground
+                                            )
+                                        }
                                     }
                                 }
-                            ) {
-                                Text("Proceed to Payment")
+
+                                // WebView loading indicator
+                                if (isWebViewLoading) {
+                                    LinearProgressIndicator(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        color = Primary,
+                                        trackColor = Secondary
+                                    )
+                                }
+
+                                // Actual WebView
+                                AndroidView(
+                                    modifier = Modifier.fillMaxSize(),
+                                    factory = { context ->
+                                        WebView(context).apply {
+                                            settings.apply {
+                                                javaScriptEnabled = true
+                                                domStorageEnabled = true
+                                                databaseEnabled = true
+                                                mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                                                userAgentString = "LibreGuardVPN/1.0 Android"
+                                            }
+
+                                            webViewClient = object : WebViewClient() {
+                                                override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
+                                                    super.onPageStarted(view, url, favicon)
+                                                    Log.d(TAG, "WebView page started: $url")
+                                                    isWebViewLoading = true
+                                                }
+
+                                                override fun onPageFinished(view: WebView?, url: String?) {
+                                                    super.onPageFinished(view, url)
+                                                    Log.d(TAG, "WebView page finished: $url")
+                                                    isWebViewLoading = false
+                                                }
+
+                                                override fun onReceivedError(
+                                                    view: WebView?,
+                                                    request: android.webkit.WebResourceRequest?,
+                                                    error: android.webkit.WebResourceError?
+                                                ) {
+                                                    super.onReceivedError(view, request, error)
+                                                    val errorMsg = "Error: ${error?.description}"
+                                                    Log.e(TAG, errorMsg)
+                                                    webViewError = errorMsg
+                                                    isWebViewLoading = false
+                                                }
+                                            }
+
+                                            loadUrl(checkoutUrl)
+                                        }
+                                    }
+                                )
                             }
                         }
                     }
+
+                    else -> {
+                        // Initial state / error state
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp),
+                            color = CardBackground,
+                            border = ButtonDefaults.outlinedButtonBorder(enabled = true)
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(24.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                if (webViewError != null) {
+                                    Text(
+                                        text = "Error loading checkout",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        color = Destructive
+                                    )
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Text(
+                                        text = webViewError!!,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MutedForeground
+                                    )
+                                    Spacer(modifier = Modifier.height(16.dp))
+                                    Button(
+                                        onClick = {
+                                            webViewError = null
+                                            showWebView = false
+                                        },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        shape = RoundedCornerShape(12.dp),
+                                        colors = ButtonDefaults.buttonColors(containerColor = Primary)
+                                    ) {
+                                        Text("Try Again")
+                                    }
+                                } else if (checkoutUrl.isEmpty()) {
+                                    CircularProgressIndicator(
+                                        color = Primary,
+                                        modifier = Modifier.size(48.dp)
+                                    )
+                                    Spacer(modifier = Modifier.height(16.dp))
+                                    Text(
+                                        text = "Loading checkout URL...",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MutedForeground
+                                    )
+                                } else {
+                                    Text(
+                                        text = "Secure Payment",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        color = Foreground
+                                    )
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Text(
+                                        text = "You'll be redirected to our secure payment processor",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MutedForeground
+                                    )
+                                    Spacer(modifier = Modifier.height(24.dp))
+                                    Button(
+                                        onClick = {
+                                            if (checkoutUrl.isNotEmpty() && (checkoutUrl.startsWith("https://") || checkoutUrl.startsWith("http://"))) {
+                                                showWebView = true
+                                            } else {
+                                                webViewError = "Invalid checkout URL"
+                                            }
+                                        },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        shape = RoundedCornerShape(12.dp),
+                                        colors = ButtonDefaults.buttonColors(containerColor = Primary)
+                                    ) {
+                                        Text("Proceed to Payment")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Info notice at bottom
+            if (!showWebView) {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(24.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    color = CardBackground,
+                    border = ButtonDefaults.outlinedButtonBorder(enabled = true)
+                ) {
+                    Text(
+                        text = "Your payment information is encrypted and never stored on LibreGuard servers.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MutedForeground,
+                        modifier = Modifier.padding(16.dp)
+                    )
                 }
             }
         }

@@ -3,17 +3,29 @@
 package net.libreguard.vpn.ui.screens
 
 import android.util.Log
+import androidx.compose.animation.core.*
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Email
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
@@ -21,6 +33,8 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import net.libreguard.vpn.R
 import net.libreguard.vpn.network.*
+import net.libreguard.vpn.ui.components.LogoWithGradient
+import net.libreguard.vpn.ui.theme.*
 import net.libreguard.vpn.util.DeviceIdManager
 import org.json.JSONObject
 
@@ -41,59 +55,247 @@ fun RegisterScreen(
 ) {
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
+    var confirmPassword by remember { mutableStateOf("") }
     var isLoading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    var isPasswordVisible by remember { mutableStateOf(false) }
+    var isConfirmPasswordVisible by remember { mutableStateOf(false) }
 
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val scrollState = rememberScrollState()
 
+    // Button press animation
+    val buttonScale by animateFloatAsState(
+        targetValue = if (isLoading) 1f else 1f,
+        animationSpec = tween(100),
+        label = "buttonScale"
+    )
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text(stringResource(id = R.string.register_title)) },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.Filled.ArrowBack, contentDescription = null)
-                    }
-                }
-            )
-        }
-    ) { padding ->
+    val passwordsMatch = password == confirmPassword
+    val canSubmit = isValidEmail(email) && isValidPassword(password) && passwordsMatch && confirmPassword.isNotBlank()
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Background)
+    ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding)
+                .verticalScroll(scrollState)
                 .padding(24.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            OutlinedTextField(
-                value = email,
-                onValueChange = { email = it.trim() },
-                label = { Text(stringResource(id = R.string.email_label)) },
-                singleLine = true,
-                isError = email.isNotBlank() && !isValidEmail(email),
-                supportingText = {
-                    if (email.isNotBlank() && !isValidEmail(email)) {
-                        Text(stringResource(id = R.string.error_invalid_email))
-                    }
-                },
-                modifier = Modifier.fillMaxWidth()
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // Back button
+            Box(
+                modifier = Modifier.fillMaxWidth(),
+                contentAlignment = Alignment.CenterStart
+            ) {
+                IconButton(onClick = onBack) {
+                    Icon(
+                        imageVector = Icons.Default.ArrowBack,
+                        contentDescription = "Back",
+                        tint = MutedForeground
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Logo & Header
+            LogoWithGradient(size = 96.dp)
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Text(
+                text = "Create Account",
+                style = MaterialTheme.typography.headlineMedium,
+                color = Foreground
             )
-            OutlinedTextField(
-                value = password,
-                onValueChange = { password = it },
-                label = { Text(stringResource(id = R.string.password_label)) },
-                singleLine = true,
-                isError = password.isNotBlank() && !isValidPassword(password),
-                supportingText = {
-                    if (password.isNotBlank() && !isValidPassword(password)) {
-                        Text(stringResource(id = R.string.error_password_requirements))
-                    }
-                },
-                visualTransformation = PasswordVisualTransformation(),
-                modifier = Modifier.fillMaxWidth()
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            Text(
+                text = "Join LibreGuard for secure browsing",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MutedForeground
             )
+
+            Spacer(modifier = Modifier.height(32.dp))
+
+            // Email Field
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = "Email",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MutedForeground,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+                OutlinedTextField(
+                    value = email,
+                    onValueChange = { email = it.trim() },
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("you@example.com", color = MutedForeground) },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Default.Email,
+                            contentDescription = null,
+                            tint = MutedForeground
+                        )
+                    },
+                    isError = email.isNotBlank() && !isValidEmail(email),
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = Primary,
+                        unfocusedBorderColor = Border,
+                        errorBorderColor = Destructive,
+                        focusedContainerColor = CardBackground,
+                        unfocusedContainerColor = CardBackground,
+                        cursorColor = Primary
+                    )
+                )
+                if (email.isNotBlank() && !isValidEmail(email)) {
+                    Text(
+                        text = stringResource(id = R.string.error_invalid_email),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Destructive,
+                        modifier = Modifier.padding(top = 4.dp, start = 4.dp)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Password Field
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = "Password",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MutedForeground,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("••••••••", color = MutedForeground) },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Default.Lock,
+                            contentDescription = null,
+                            tint = MutedForeground
+                        )
+                    },
+                    trailingIcon = {
+                        IconButton(onClick = { isPasswordVisible = !isPasswordVisible }) {
+                            Icon(
+                                imageVector = if (isPasswordVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                contentDescription = if (isPasswordVisible) "Hide password" else "Show password",
+                                tint = MutedForeground
+                            )
+                        }
+                    },
+                    visualTransformation = if (isPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                    isError = password.isNotBlank() && !isValidPassword(password),
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = Primary,
+                        unfocusedBorderColor = Border,
+                        errorBorderColor = Destructive,
+                        focusedContainerColor = CardBackground,
+                        unfocusedContainerColor = CardBackground,
+                        cursorColor = Primary
+                    )
+                )
+                Text(
+                    text = "Must be at least 8 characters with a number and special character",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (password.isNotBlank() && !isValidPassword(password)) Destructive else MutedForeground,
+                    modifier = Modifier.padding(top = 4.dp, start = 4.dp)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Confirm Password Field
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = "Confirm Password",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MutedForeground,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+                OutlinedTextField(
+                    value = confirmPassword,
+                    onValueChange = { confirmPassword = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("••••••••", color = MutedForeground) },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Default.Lock,
+                            contentDescription = null,
+                            tint = MutedForeground
+                        )
+                    },
+                    trailingIcon = {
+                        IconButton(onClick = { isConfirmPasswordVisible = !isConfirmPasswordVisible }) {
+                            Icon(
+                                imageVector = if (isConfirmPasswordVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                contentDescription = if (isConfirmPasswordVisible) "Hide password" else "Show password",
+                                tint = MutedForeground
+                            )
+                        }
+                    },
+                    visualTransformation = if (isConfirmPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                    isError = confirmPassword.isNotBlank() && !passwordsMatch,
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = Primary,
+                        unfocusedBorderColor = Border,
+                        errorBorderColor = Destructive,
+                        focusedContainerColor = CardBackground,
+                        unfocusedContainerColor = CardBackground,
+                        cursorColor = Primary
+                    )
+                )
+                if (confirmPassword.isNotBlank() && !passwordsMatch) {
+                    Text(
+                        text = "Passwords do not match",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Destructive,
+                        modifier = Modifier.padding(top = 4.dp, start = 4.dp)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Terms Acceptance
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                color = CardBackground.copy(alpha = 0.5f),
+                border = ButtonDefaults.outlinedButtonBorder(enabled = true).copy(
+                    brush = androidx.compose.ui.graphics.SolidColor(Border.copy(alpha = 0.5f))
+                )
+            ) {
+                Text(
+                    text = "By creating an account, you agree to our Terms of Service and Privacy Policy",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MutedForeground,
+                    modifier = Modifier.padding(16.dp)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // Create Account Button
             Button(
                 onClick = {
                     scope.launch {
@@ -114,6 +316,10 @@ fun RegisterScreen(
                             }
                             if (!isValidPassword(password)) {
                                 error = context.getString(R.string.error_password_requirements)
+                                return@launch
+                            }
+                            if (!passwordsMatch) {
+                                error = "Passwords do not match"
                                 return@launch
                             }
                             val resp = RetrofitClient.instance.register(
@@ -144,19 +350,15 @@ fun RegisterScreen(
                                 val msg = obj?.optString("message")
 
                                 when (status) {
-                                    // Unverified + CORRECT password: backend has already (re)sent email. Just navigate.
                                     "unverified" -> {
                                         onRegistrationNeedsConfirmation(errUserId, errEmail, password, errToken)
                                     }
-                                    // Unverified + WRONG password: do not send email, show generic low-information message
                                     "unknown" -> {
                                         error = msg ?: context.getString(R.string.registration_generic_error)
                                     }
-                                    // Verified account: only show login suggestion if password is correct
                                     "exists" -> {
-                                        // Verified account: only show login suggestion if password is correct
                                         val loginResponse = runCatching {
-                                            RetrofitClient.instance.login(net.libreguard.vpn.network.AuthRequest(email = errEmail, password = password))
+                                            RetrofitClient.instance.login(AuthRequest(email = errEmail, password = password))
                                         }.getOrNull()
                                         if (loginResponse?.isSuccessful == true) {
                                             val auth = loginResponse.body()
@@ -171,7 +373,6 @@ fun RegisterScreen(
                                         }
                                     }
                                     else -> {
-                                        // Generic fallback to avoid info leakage
                                         error = msg ?: context.getString(R.string.registration_generic_error)
                                     }
                                 }
@@ -185,32 +386,76 @@ fun RegisterScreen(
                         }
                     }
                 },
-                enabled = !isLoading && isValidEmail(email) && isValidPassword(password),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(52.dp)
+                    .height(56.dp)
+                    .scale(buttonScale),
+                enabled = !isLoading && canSubmit,
+                shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Primary,
+                    contentColor = PrimaryForeground,
+                    disabledContainerColor = Primary.copy(alpha = 0.5f),
+                    disabledContentColor = PrimaryForeground.copy(alpha = 0.5f)
+                ),
+                elevation = ButtonDefaults.buttonElevation(defaultElevation = 4.dp)
             ) {
                 if (isLoading) {
-                    CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp)
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(24.dp),
+                        color = PrimaryForeground,
+                        strokeWidth = 2.dp
+                    )
                 } else {
-                    Text(stringResource(id = R.string.create_account), fontWeight = FontWeight.SemiBold)
+                    Text(
+                        text = "Create Account",
+                        style = MaterialTheme.typography.labelLarge
+                    )
                 }
             }
 
-            error?.let { msg ->
-                Text(
-                    text = msg,
-                    color = Color(0xFFEF5350),
+            // Error message
+            error?.let { message ->
+                Spacer(modifier = Modifier.height(16.dp))
+                Surface(
                     modifier = Modifier.fillMaxWidth(),
-                    textAlign = TextAlign.Center
+                    shape = RoundedCornerShape(12.dp),
+                    color = Destructive.copy(alpha = 0.1f),
+                    border = ButtonDefaults.outlinedButtonBorder(enabled = true).copy(
+                        brush = androidx.compose.ui.graphics.SolidColor(Destructive.copy(alpha = 0.5f))
+                    )
+                ) {
+                    Text(
+                        text = message,
+                        modifier = Modifier.padding(16.dp),
+                        color = Destructive,
+                        style = MaterialTheme.typography.bodySmall,
+                        textAlign = TextAlign.Center
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // Login Link
+            Row(
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Already have an account? ",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MutedForeground
+                )
+                Text(
+                    text = "Sign in",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Primary,
+                    modifier = Modifier.clickable { onBack() }
                 )
             }
 
-            Text(
-                text = stringResource(id = R.string.register_terms),
-                style = MaterialTheme.typography.bodySmall,
-                color = Color(0xFF888888)
-            )
+            Spacer(modifier = Modifier.height(48.dp))
         }
     }
 }
@@ -221,7 +466,7 @@ fun ConfirmEmailScreen(
     email: String,
     password: String,
     initialToken: String?,
-    onConfirmed: (authResponse: net.libreguard.vpn.network.AuthResponse) -> Unit,
+    onConfirmed: (authResponse: AuthResponse) -> Unit,
     onBackToLogin: () -> Unit
 ) {
     var info by remember { mutableStateOf<String?>(null) }
@@ -233,7 +478,6 @@ fun ConfirmEmailScreen(
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
 
-    // Get deviceId and appVersion for login
     val deviceIdManager = remember { DeviceIdManager(context) }
     val deviceId = remember { deviceIdManager.getDeviceId() }
     val appVersion = remember {
@@ -243,20 +487,16 @@ fun ConfirmEmailScreen(
     }
     val tokenManager = remember { RetrofitClient.getTokenManager() }
 
-    // CRITICAL: Clear any existing tokens when entering this screen
-    // This prevents the app from using an old/invalid token when resuming
-    // The only valid token will come from the auto-login after email confirmation
     LaunchedEffect(Unit) {
         Log.d("ConfirmEmail", "Clearing any existing tokens to ensure clean state for auto-login")
         tokenManager.clearTokens()
-        // Also clear from regular shared prefs used by ViewModel
         context.getSharedPreferences("vpn_state_prefs", android.content.Context.MODE_PRIVATE)
             .edit()
             .remove("auth_token")
             .apply()
     }
 
-    fun persistAuthResponse(authResponse: net.libreguard.vpn.network.AuthResponse?): Boolean {
+    fun persistAuthResponse(authResponse: AuthResponse?): Boolean {
         val auth = authResponse ?: return false
         val token = auth.token
         val refreshToken = auth.refreshToken
@@ -282,102 +522,54 @@ fun ConfirmEmailScreen(
         }
     }
 
-    // Poll only if userId and token are present and not expired
+    // Poll for confirmation
     LaunchedEffect(userId, initialToken) {
-        android.util.Log.d("MainActivity", "ConfirmEmail: LaunchedEffect triggered")
-        Log.d("ConfirmEmail", "=== LaunchedEffect triggered ===")
-        Log.d("ConfirmEmail", "userId=$userId, initialToken=${initialToken?.take(20)}, email=$email, password=${if (password.isNotBlank()) "[present]" else "[MISSING]"}, deviceId=$deviceId")
-
         info = context.getString(R.string.polling_waiting_confirmation)
         val uid = userId
         val token = initialToken
-        Log.d("ConfirmEmail", "Starting poll: uid=$uid email=$email deviceId=$deviceId appVersion=$appVersion")
 
         if (!uid.isNullOrBlank() && !token.isNullOrBlank()) {
-            Log.d("ConfirmEmail", "Both uid and token present - proceeding with confirm/login flow")
             try {
-                // Call confirmEmail endpoint with userId and token
                 val confirmResp = runCatching {
                     RetrofitClient.instance.confirmEmail(
-                        net.libreguard.vpn.network.ConfirmEmailRequest(
-                            userId = uid,
-                            token = token
-                        )
+                        ConfirmEmailRequest(userId = uid, token = token)
                     )
                 }.getOrNull()
 
-                Log.d("ConfirmEmail", "confirmEmail status=${confirmResp?.code()} body=${confirmResp?.body()} error=${confirmResp?.errorBody()?.string()}")
-
                 if (confirmResp?.isSuccessful == true || confirmResp?.code() == 200 || confirmResp?.code() == 409) {
-                    // Email confirmed (or already was confirmed), now perform automatic login with deviceId and appVersion
                     val loginReq = AuthRequest(
                         email = email,
                         password = password,
                         deviceId = deviceId,
                         appVersion = appVersion
                     )
-                    Log.d("ConfirmEmail", "auto-login request: email=$email deviceId=$deviceId appVersion=$appVersion")
                     val loginResp = runCatching {
                         RetrofitClient.instance.login(loginReq)
                     }.getOrNull()
 
-                    Log.d("ConfirmEmail", "auto-login status=${loginResp?.code()} body=${loginResp?.body()} error=${loginResp?.errorBody()?.string()}")
-
                     if (loginResp?.isSuccessful == true) {
                         val authResponse = loginResp.body()
                         if (authResponse != null && !authResponse.token.isNullOrBlank()) {
-                            Log.d("ConfirmEmail", "auto-login SUCCESS: token=${authResponse.token?.take(30)}... refreshToken=${authResponse.refreshToken?.take(30)}... deviceId=${authResponse.deviceId}")
-
-                            // Decode JWT to check for device_id claim
-                            try {
-                                val parts = authResponse.token!!.split(".")
-                                if (parts.size >= 2) {
-                                    val payload = String(android.util.Base64.decode(parts[1], android.util.Base64.URL_SAFE))
-                                    Log.d("ConfirmEmail", "JWT payload: $payload")
-                                    if (payload.contains("device_id")) {
-                                        Log.d("ConfirmEmail", "✓ JWT contains device_id claim")
-                                    } else {
-                                        Log.e("ConfirmEmail", "✗ JWT MISSING device_id claim! This will cause 401 on protected endpoints!")
-                                    }
-                                }
-                            } catch (e: Exception) {
-                                Log.e("ConfirmEmail", "Failed to decode JWT: ${e.message}")
-                            }
-
                             val persisted = persistAuthResponse(authResponse)
-                            Log.d("ConfirmEmail", "Token persisted=$persisted, now verifying token in TokenManager...")
                             val savedToken = tokenManager.getAccessToken()
-                            val savedRefresh = tokenManager.getRefreshToken()
-                            Log.d("ConfirmEmail", "TokenManager verification: accessToken=${savedToken?.take(30)}... refreshToken=${savedRefresh?.take(30)}...")
                             if (persisted && savedToken != null) {
                                 onConfirmed(authResponse)
                             } else {
-                                Log.e("ConfirmEmail", "Failed to persist token properly!")
                                 onBackToLogin()
                             }
                             return@LaunchedEffect
                         }
-                    } else {
-                        Log.w("ConfirmEmail", "auto-login FAILED: code=${loginResp?.code()} error=${loginResp?.errorBody()?.string()}")
                     }
-                    // If confirmEmail is successful but auto-login fails, navigate to login
                     onBackToLogin()
                 } else {
                     error = confirmResp?.body()?.message ?: "Failed to confirm email"
                     onBackToLogin()
                 }
             } catch (e: Throwable) {
-                Log.e("ConfirmEmail", "Error during confirm/login", e)
                 error = e.localizedMessage
                 onBackToLogin()
             }
         } else if (!uid.isNullOrBlank() || email.isNotBlank()) {
-            // We have userId or email but no confirmation token
-            // This happens when user clicks email link in browser (email already confirmed)
-            // Just try to login directly
-            Log.d("ConfirmEmail", "No confirmation token but have user info - attempting direct login")
-            Log.d("ConfirmEmail", "uid=$uid, email=$email, hasPassword=${password.isNotBlank()}")
-
             if (email.isNotBlank() && password.isNotBlank()) {
                 val loginReq = AuthRequest(
                     email = email,
@@ -385,107 +577,171 @@ fun ConfirmEmailScreen(
                     deviceId = deviceId,
                     appVersion = appVersion
                 )
-                Log.d("ConfirmEmail", "auto-login request: email=$email deviceId=$deviceId appVersion=$appVersion")
                 val loginResp = runCatching {
                     RetrofitClient.instance.login(loginReq)
                 }.getOrNull()
 
-                Log.d("ConfirmEmail", "auto-login status=${loginResp?.code()} body=${loginResp?.body()} error=${loginResp?.errorBody()?.string()}")
-
                 if (loginResp?.isSuccessful == true) {
                     val authResponse = loginResp.body()
                     if (authResponse != null && !authResponse.token.isNullOrBlank()) {
-                        Log.d("ConfirmEmail", "auto-login SUCCESS: token=${authResponse.token?.take(30)}... refreshToken=${authResponse.refreshToken?.take(30)}... deviceId=${authResponse.deviceId}")
-
-                        // Decode JWT to check for device_id claim
-                        try {
-                            val parts = authResponse.token!!.split(".")
-                            if (parts.size >= 2) {
-                                val payload = String(android.util.Base64.decode(parts[1], android.util.Base64.URL_SAFE))
-                                Log.d("ConfirmEmail", "JWT payload: $payload")
-                                if (payload.contains("device_id")) {
-                                    Log.d("ConfirmEmail", "✓ JWT contains device_id claim")
-                                } else {
-                                    Log.e("ConfirmEmail", "✗ JWT MISSING device_id claim! This will cause 401 on protected endpoints!")
-                                }
-                            }
-                        } catch (e: Exception) {
-                            Log.e("ConfirmEmail", "Failed to decode JWT: ${e.message}")
-                        }
-
                         val persisted = persistAuthResponse(authResponse)
-                        Log.d("ConfirmEmail", "Token persisted=$persisted, now verifying token in TokenManager...")
                         val savedToken = tokenManager.getAccessToken()
-                        val savedRefresh = tokenManager.getRefreshToken()
-                        Log.d("ConfirmEmail", "TokenManager verification: accessToken=${savedToken?.take(30)}... refreshToken=${savedRefresh?.take(30)}...")
                         if (persisted && savedToken != null) {
                             onConfirmed(authResponse)
                         } else {
-                            Log.e("ConfirmEmail", "Failed to persist token properly!")
                             onBackToLogin()
                         }
                     }
-                } else {
-                    Log.w("ConfirmEmail", "auto-login FAILED: code=${loginResp?.code()} error=${loginResp?.errorBody()?.string()}")
                 }
             } else {
-                Log.w("ConfirmEmail", "Missing email or password for login - email=${email.isNotBlank()}, password=${password.isNotBlank()}")
-                // Can't login without credentials, user needs to login manually
                 onBackToLogin()
             }
-        } else {
-            Log.w("ConfirmEmail", "Missing uid and token - cannot proceed with confirm flow.")
-            Log.w("ConfirmEmail", "Will wait for user to return to app after clicking email link...")
         }
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text(stringResource(id = R.string.confirm_email_title)) },
-                navigationIcon = {
-                    IconButton(onClick = onBackToLogin) {
-                        Icon(Icons.Filled.ArrowBack, contentDescription = null)
-                    }
-                }
-            )
-        }
-    ) { padding ->
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Background)
+    ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding)
                 .padding(24.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
         ) {
-            // Use Material Text instead of HtmlText for normal, readable layout
+            // Email icon with checkmark
+            Box(
+                modifier = Modifier
+                    .size(80.dp)
+                    .background(Primary.copy(alpha = 0.1f), RoundedCornerShape(20.dp)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Email,
+                    contentDescription = null,
+                    tint = Primary,
+                    modifier = Modifier.size(40.dp)
+                )
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .offset(x = 8.dp, y = (-8).dp)
+                        .size(32.dp)
+                        .background(Primary, RoundedCornerShape(16.dp)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.CheckCircle,
+                        contentDescription = null,
+                        tint = PrimaryForeground,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
             Text(
-                text = stringResource(id = R.string.confirm_email_description, email),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurface
+                text = "Check Your Email",
+                style = MaterialTheme.typography.headlineMedium,
+                color = Foreground
             )
 
-            // Time remaining label
-            val minutes = (remainingMillis / 1000L) / 60
-            val seconds = (remainingMillis / 1000L) % 60
-            val timeText = String.format("%02d:%02d", minutes, seconds)
-            if (!expired) {
-                Text(stringResource(id = R.string.time_remaining_label, timeText), style = MaterialTheme.typography.bodySmall)
-            } else {
-                Text(text = context.getString(R.string.verification_link_expired), color = Color(0xFFEF5350), style = MaterialTheme.typography.bodySmall)
-            }
+            Spacer(modifier = Modifier.height(8.dp))
 
-            Card(
-                colors = CardDefaults.cardColors(containerColor = Color(0x2222AA22)),
-                modifier = Modifier.fillMaxWidth()
+            Text(
+                text = "We've sent a confirmation link to",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MutedForeground
+            )
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            Text(
+                text = email,
+                style = MaterialTheme.typography.bodyMedium,
+                color = Foreground
+            )
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // Info Card
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                color = CardBackground,
+                border = ButtonDefaults.outlinedButtonBorder(enabled = true)
             ) {
-                Text(
-                    text = info ?: context.getString(R.string.polling_waiting_confirmation),
+                Column(
                     modifier = Modifier.padding(16.dp),
-                    style = MaterialTheme.typography.bodyMedium
-                )
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = "Click the link in the email to verify your account and start using LibreGuard",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MutedForeground,
+                        textAlign = TextAlign.Center
+                    )
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    // Countdown Timer
+                    val minutes = (remainingMillis / 1000L) / 60
+                    val seconds = (remainingMillis / 1000L) % 60
+                    val timeText = String.format("%02d:%02d", minutes, seconds)
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(48.dp)
+                                .background(
+                                    if (!expired) Primary.copy(alpha = 0.1f) else Secondary,
+                                    RoundedCornerShape(12.dp)
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "⏱",
+                                style = MaterialTheme.typography.titleLarge
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column {
+                            Text(
+                                text = timeText,
+                                style = MaterialTheme.typography.headlineSmall,
+                                color = if (!expired) Primary else MutedForeground
+                            )
+                            Text(
+                                text = if (!expired) "Time remaining" else "Expired",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MutedForeground
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Progress bar
+                    LinearProgressIndicator(
+                        progress = { (remainingMillis / 120_000f).coerceIn(0f, 1f) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(8.dp),
+                        color = Primary,
+                        trackColor = Secondary,
+                    )
+                }
             }
 
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // Resend Button
             Button(
                 onClick = {
                     scope.launch {
@@ -494,7 +750,6 @@ fun ConfirmEmailScreen(
                         try {
                             val resp = RetrofitClient.instance.resendConfirmation(ResendConfirmationRequest(email))
                             if (resp.isSuccessful) {
-                                // Reset timer on resend
                                 remainingMillis = 120_000L
                                 expired = false
                                 info = context.getString(R.string.confirmation_email_sent_again)
@@ -508,13 +763,79 @@ fun ConfirmEmailScreen(
                         }
                     }
                 },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp),
                 enabled = !isLoading,
-                modifier = Modifier.fillMaxWidth().height(52.dp)
+                shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (expired) Primary else Secondary,
+                    contentColor = if (expired) PrimaryForeground else Foreground,
+                    disabledContainerColor = Secondary.copy(alpha = 0.5f)
+                )
             ) {
-                if (isLoading) CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp) else Text(stringResource(id = R.string.resend_confirmation_email))
+                if (isLoading) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(24.dp),
+                        color = if (expired) PrimaryForeground else Primary,
+                        strokeWidth = 2.dp
+                    )
+                } else {
+                    Text(
+                        text = "Resend Confirmation Email",
+                        style = MaterialTheme.typography.labelLarge
+                    )
+                }
             }
 
-            error?.let { Text(it, color = Color(0xFFEF5350)) }
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Back to login button
+            OutlinedButton(
+                onClick = onBackToLogin,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp),
+                shape = RoundedCornerShape(12.dp),
+                border = ButtonDefaults.outlinedButtonBorder(enabled = true)
+            ) {
+                Text(
+                    text = "I've verified my email",
+                    style = MaterialTheme.typography.labelLarge
+                )
+            }
+
+            // Error message
+            error?.let { message ->
+                Spacer(modifier = Modifier.height(16.dp))
+                Text(
+                    text = message,
+                    color = Destructive,
+                    style = MaterialTheme.typography.bodySmall,
+                    textAlign = TextAlign.Center
+                )
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // Help text
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                color = CardBackground.copy(alpha = 0.5f),
+                border = ButtonDefaults.outlinedButtonBorder(enabled = true).copy(
+                    brush = androidx.compose.ui.graphics.SolidColor(Border.copy(alpha = 0.5f))
+                )
+            ) {
+                Text(
+                    text = "Didn't receive the email? Check your spam folder or contact support",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MutedForeground,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(16.dp)
+                )
+            }
         }
     }
 }
+

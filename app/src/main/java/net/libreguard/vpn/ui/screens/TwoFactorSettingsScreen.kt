@@ -9,27 +9,26 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.tooling.preview.Preview
-import net.libreguard.vpn.network.*
-import net.libreguard.vpn.ui.components.CodeInputField
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.EncodeHintType
 import com.google.zxing.qrcode.QRCodeWriter
 import kotlinx.coroutines.launch
-import androidx.compose.ui.window.Dialog
+import net.libreguard.vpn.network.*
+import net.libreguard.vpn.ui.components.CodeInputField
+import net.libreguard.vpn.ui.theme.*
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -51,135 +50,169 @@ fun TwoFactorSettingsScreen(
     var showRecoveryCodes by remember { mutableStateOf(false) }
 
     val coroutineScope = rememberCoroutineScope()
+    val scrollState = rememberScrollState()
 
     LaunchedEffect(Unit) {
         coroutineScope.launch {
             isLoading = true
             errorMessage = null
-
             try {
-                // Use Retrofit which already handles coroutines properly
                 val response = RetrofitClient.instance.get2faStatus("Bearer $authToken")
-
                 if (response.isSuccessful) {
                     response.body()?.let { status ->
                         is2faEnabled = status.is2faEnabled
                         hasAuthenticator = status.hasAuthenticator
                         recoveryCodesLeft = status.recoveryCodesLeft
-                        android.util.Log.d("2FA_DEBUG", "Successfully loaded 2FA status: is2faEnabled=$is2faEnabled, hasAuthenticator=$hasAuthenticator, recoveryCodesLeft=$recoveryCodesLeft")
-                    } ?: run {
-                        errorMessage = "Received empty response from server"
-                        android.util.Log.e("2FA_DEBUG", "Response body was null")
                     }
                 } else {
-                    val errorBody = response.errorBody()?.string()
-                    errorMessage = "Failed to load 2FA status (${response.code()}): ${errorBody ?: response.message()}"
-                    android.util.Log.e("2FA_DEBUG", "API Error - Code: ${response.code()}, Body: $errorBody")
+                    errorMessage = "Failed to load 2FA status"
                 }
-            } catch (e: com.google.gson.JsonSyntaxException) {
-                errorMessage = "Server returned invalid JSON. The API might be returning HTML or plain text instead of JSON. Check your backend endpoint."
-                android.util.Log.e("2FA_DEBUG", "JsonSyntaxException", e)
-            } catch (e: com.google.gson.stream.MalformedJsonException) {
-                errorMessage = "Server returned malformed response. Expected JSON but got something else. This usually means the API endpoint doesn't exist or is returning an error page."
-                android.util.Log.e("2FA_DEBUG", "MalformedJsonException", e)
             } catch (e: Exception) {
-                errorMessage = "Failed to load 2FA status: ${e.javaClass.simpleName} - ${e.message}"
-                android.util.Log.e("2FA_DEBUG", "Exception loading 2FA status", e)
+                errorMessage = "Error: ${e.localizedMessage}"
             } finally {
                 isLoading = false
             }
         }
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Two-Factor Authentication", color = Color.White) },
-                navigationIcon = {
-                    IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = Color.White)
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color(0xFF1A1A1A)
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Background)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(scrollState)
+                .padding(24.dp)
+        ) {
+            // Back Button
+            IconButton(
+                onClick = onNavigateBack,
+                modifier = Modifier.size(40.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.ArrowBack,
+                    contentDescription = "Back",
+                    tint = MutedForeground
                 )
-            )
-        },
-        containerColor = Color(0xFF0A0A0A)
-    ) { padding ->
-        if (isLoading) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding),
-                contentAlignment = Alignment.Center
-            ) {
-                CircularProgressIndicator(color = Color(0xFF00FF88))
             }
-        } else {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding)
-                    .verticalScroll(rememberScrollState())
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF1A1A1A)),
-                    shape = RoundedCornerShape(12.dp)
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Header
+            Text(
+                text = "Two-Factor Authentication",
+                style = MaterialTheme.typography.headlineMedium,
+                color = Foreground
+            )
+            Text(
+                text = "Add an extra layer of security to your account",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MutedForeground
+            )
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            if (isLoading) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(200.dp),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    CircularProgressIndicator(color = Primary)
+                }
+            } else {
+                // Status Card
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    color = if (is2faEnabled) Primary.copy(alpha = 0.1f) else CardBackground,
+                    border = ButtonDefaults.outlinedButtonBorder(enabled = true).copy(
+                        brush = androidx.compose.ui.graphics.SolidColor(if (is2faEnabled) Primary else Border)
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(20.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        Box(
+                            modifier = Modifier
+                                .size(48.dp)
+                                .background(
+                                    if (is2faEnabled) Primary else Secondary,
+                                    RoundedCornerShape(12.dp)
+                                ),
+                            contentAlignment = Alignment.Center
                         ) {
                             Icon(
-                                Icons.Default.Lock,
+                                imageVector = if (is2faEnabled) Icons.Default.Lock else Icons.Default.LockOpen,
                                 contentDescription = null,
-                                tint = if (is2faEnabled) Color(0xFF00FF88) else Color(0xFFAAAAAA)
-                            )
-                            Text(
-                                text = "Status: ${if (is2faEnabled) "Enabled" else "Disabled"}",
-                                color = Color.White,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 18.sp
+                                tint = if (is2faEnabled) PrimaryForeground else MutedForeground,
+                                modifier = Modifier.size(24.dp)
                             )
                         }
-
-                        if (is2faEnabled) {
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "Recovery codes remaining: $recoveryCodesLeft",
-                                color = if (recoveryCodesLeft < 3) Color(0xFFFF6666) else Color(0xFFAAAAAA),
-                                fontSize = 14.sp
+                                text = if (is2faEnabled) "2FA Enabled" else "2FA Disabled",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = if (is2faEnabled) Primary else Foreground
                             )
-
-                            if (recoveryCodesLeft < 3) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                ) {
-                                    Icon(
-                                        Icons.Default.Warning,
-                                        contentDescription = null,
-                                        tint = Color(0xFFFF6666),
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                    Text(
-                                        text = "Consider generating new recovery codes",
-                                        color = Color(0xFFFF6666),
-                                        fontSize = 12.sp
-                                    )
-                                }
+                            if (is2faEnabled) {
+                                Text(
+                                    text = "$recoveryCodesLeft recovery codes remaining",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = if (recoveryCodesLeft < 3) Destructive else MutedForeground
+                                )
+                            } else {
+                                Text(
+                                    text = "Your account is less secure",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MutedForeground
+                                )
                             }
                         }
                     }
                 }
 
+                // Warning for low recovery codes
+                if (is2faEnabled && recoveryCodesLeft < 3) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        color = Destructive.copy(alpha = 0.1f),
+                        border = ButtonDefaults.outlinedButtonBorder(enabled = true).copy(
+                            brush = androidx.compose.ui.graphics.SolidColor(Destructive.copy(alpha = 0.5f))
+                        )
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Warning,
+                                contentDescription = null,
+                                tint = Destructive,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Text(
+                                text = "Low recovery codes! Generate new ones to avoid being locked out.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Destructive
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(24.dp))
+
+                // Action Buttons
                 if (!is2faEnabled) {
                     Button(
                         onClick = {
@@ -207,53 +240,23 @@ fun TwoFactorSettingsScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(56.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00FF88)),
-                        shape = RoundedCornerShape(28.dp)
-                    ) {
-                        Text(
-                            text = "Enable Two-Factor Authentication",
-                            color = Color.Black,
-                            fontWeight = FontWeight.Bold
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Primary,
+                            contentColor = PrimaryForeground
                         )
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Lock,
+                            contentDescription = null,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Enable Two-Factor Authentication")
                     }
                 } else {
+                    // Generate Recovery Codes Button
                     Button(
-                        onClick = {
-                            coroutineScope.launch {
-                                isLoading = true
-                                errorMessage = null
-                                try {
-                                    val response = RetrofitClient.instance.disable2fa("Bearer $authToken")
-                                    if (response.isSuccessful) {
-                                        is2faEnabled = false
-                                        hasAuthenticator = false
-                                        recoveryCodesLeft = 0
-                                    } else {
-                                        errorMessage = "Failed to disable 2FA"
-                                    }
-                                } catch (e: Exception) {
-                                    errorMessage = "Error: ${e.localizedMessage}"
-                                } finally {
-                                    isLoading = false
-                                }
-                            }
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(56.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF4444)),
-                        shape = RoundedCornerShape(28.dp)
-                    ) {
-                        Text(
-                            text = "Disable Two-Factor Authentication",
-                            color = Color.White,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    OutlinedButton(
                         onClick = {
                             coroutineScope.launch {
                                 isLoading = true
@@ -279,12 +282,24 @@ fun TwoFactorSettingsScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(56.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF00CCFF)),
-                        shape = RoundedCornerShape(28.dp)
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Primary,
+                            contentColor = PrimaryForeground
+                        )
                     ) {
-                        Text(text = "Generate New Recovery Codes", fontWeight = FontWeight.Bold)
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = null,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Generate New Recovery Codes")
                     }
 
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Reset Authenticator Button
                     OutlinedButton(
                         onClick = {
                             coroutineScope.launch {
@@ -309,56 +324,113 @@ fun TwoFactorSettingsScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(56.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFFF6666)),
-                        shape = RoundedCornerShape(28.dp)
+                        shape = RoundedCornerShape(12.dp),
+                        border = ButtonDefaults.outlinedButtonBorder(enabled = true)
                     ) {
-                        Text(text = "Reset Authenticator", fontWeight = FontWeight.Bold)
+                        Icon(
+                            imageVector = Icons.Default.Smartphone,
+                            contentDescription = null,
+                            tint = MutedForeground,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Reset Authenticator", color = Foreground)
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Disable 2FA Button
+                    OutlinedButton(
+                        onClick = {
+                            coroutineScope.launch {
+                                isLoading = true
+                                errorMessage = null
+                                try {
+                                    val response = RetrofitClient.instance.disable2fa("Bearer $authToken")
+                                    if (response.isSuccessful) {
+                                        is2faEnabled = false
+                                        hasAuthenticator = false
+                                        recoveryCodesLeft = 0
+                                    } else {
+                                        errorMessage = "Failed to disable 2FA"
+                                    }
+                                } catch (e: Exception) {
+                                    errorMessage = "Error: ${e.localizedMessage}"
+                                } finally {
+                                    isLoading = false
+                                }
+                            }
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(56.dp),
+                        shape = RoundedCornerShape(12.dp),
+                        border = ButtonDefaults.outlinedButtonBorder(enabled = true).copy(
+                            brush = androidx.compose.ui.graphics.SolidColor(Destructive.copy(alpha = 0.5f))
+                        )
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.LockOpen,
+                            contentDescription = null,
+                            tint = Destructive,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Disable Two-Factor Authentication", color = Destructive)
                     }
                 }
 
+                // Error message
                 errorMessage?.let { message ->
-                    Card(
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Surface(
                         modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(containerColor = Color(0x33FF4444)),
-                        shape = RoundedCornerShape(8.dp)
+                        shape = RoundedCornerShape(12.dp),
+                        color = Destructive.copy(alpha = 0.1f),
+                        border = ButtonDefaults.outlinedButtonBorder(enabled = true).copy(
+                            brush = androidx.compose.ui.graphics.SolidColor(Destructive.copy(alpha = 0.5f))
+                        )
                     ) {
                         Text(
                             text = message,
-                            modifier = Modifier.padding(12.dp),
-                            color = Color(0xFFFF6666),
-                            fontSize = 14.sp
+                            modifier = Modifier.padding(16.dp),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Destructive
                         )
                     }
                 }
 
-                Card(
+                Spacer(modifier = Modifier.height(24.dp))
+
+                // Info Card
+                Surface(
                     modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF1A1A1A)),
-                    shape = RoundedCornerShape(12.dp)
+                    shape = RoundedCornerShape(12.dp),
+                    color = CardBackground,
+                    border = ButtonDefaults.outlinedButtonBorder(enabled = true)
                 ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
                         Text(
                             text = "About Two-Factor Authentication",
-                            color = Color.White,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 16.sp
+                            style = MaterialTheme.typography.titleSmall,
+                            color = Foreground
                         )
+                        Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            text = "Two-factor authentication adds an extra layer of security to your account. " +
-                                    "You'll need both your password and a verification code from your authenticator app to sign in.",
-                            color = Color(0xFFAAAAAA),
-                            fontSize = 14.sp
+                            text = "Two-factor authentication adds an extra layer of security to your account. You'll need both your password and a verification code from your authenticator app to sign in.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MutedForeground
                         )
                     }
                 }
+
+                Spacer(modifier = Modifier.height(32.dp))
             }
         }
 
+        // Setup Dialog
         if (showSetupDialog) {
-            SetupTwoFactorDialog(
+            SetupTwoFactorDialogNew(
                 qrCodeBitmap = qrCodeBitmap,
                 sharedKey = sharedKey,
                 verificationCode = verificationCode,
@@ -401,8 +473,9 @@ fun TwoFactorSettingsScreen(
             )
         }
 
+        // Recovery Codes Dialog
         if (showRecoveryCodes) {
-            RecoveryCodesDialog(
+            RecoveryCodesDialogNew(
                 recoveryCodes = recoveryCodes,
                 onDismiss = { showRecoveryCodes = false }
             )
@@ -411,7 +484,7 @@ fun TwoFactorSettingsScreen(
 }
 
 @Composable
-fun SetupTwoFactorDialog(
+private fun SetupTwoFactorDialogNew(
     qrCodeBitmap: Bitmap?,
     sharedKey: String,
     verificationCode: String,
@@ -420,83 +493,87 @@ fun SetupTwoFactorDialog(
     onDismiss: () -> Unit
 ) {
     Dialog(onDismissRequest = onDismiss) {
-        Card(
-            shape = RoundedCornerShape(24.dp),
-            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
+        Surface(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(16.dp)
+                .padding(16.dp),
+            shape = RoundedCornerShape(16.dp),
+            color = Background
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(20.dp)
+                    .padding(24.dp)
                     .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
-                    "Setup Authenticator",
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 22.sp,
-                    modifier = Modifier.fillMaxWidth()
+                    text = "Setup Authenticator",
+                    style = MaterialTheme.typography.headlineSmall,
+                    color = Foreground
                 )
+
+                Spacer(modifier = Modifier.height(8.dp))
 
                 Text(
-                    "Scan this QR code with your authenticator app:",
-                    color = Color(0xFF94A3B8),
-                    fontSize = 14.sp,
-                    modifier = Modifier.fillMaxWidth()
+                    text = "Scan this QR code with your authenticator app:",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MutedForeground,
+                    textAlign = TextAlign.Center
                 )
 
+                Spacer(modifier = Modifier.height(20.dp))
+
+                // QR Code
                 qrCodeBitmap?.let { bitmap ->
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(Color.White, RoundedCornerShape(16.dp))
-                            .padding(20.dp),
-                        contentAlignment = Alignment.Center
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = androidx.compose.ui.graphics.Color.White
                     ) {
                         Image(
                             bitmap = bitmap.asImageBitmap(),
                             contentDescription = "QR Code",
-                            modifier = Modifier.size(200.dp)
+                            modifier = Modifier
+                                .padding(16.dp)
+                                .size(200.dp)
                         )
                     }
                 }
 
+                Spacer(modifier = Modifier.height(16.dp))
+
                 Text(
-                    "Or enter this key manually:",
-                    color = Color(0xFF94A3B8),
-                    fontSize = 14.sp,
-                    modifier = Modifier.fillMaxWidth()
+                    text = "Or enter this key manually:",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MutedForeground
                 )
 
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A)),
-                    shape = RoundedCornerShape(12.dp)
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp),
+                    color = Secondary
                 ) {
                     Text(
                         text = sharedKey,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(12.dp),
-                        color = Color(0xFF6366F1),
-                        fontSize = 12.sp,
-                        textAlign = TextAlign.Center,
-                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                        maxLines = 2
+                        modifier = Modifier.padding(12.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Primary,
+                        fontFamily = FontFamily.Monospace,
+                        textAlign = TextAlign.Center
                     )
                 }
 
+                Spacer(modifier = Modifier.height(24.dp))
+
                 Text(
-                    "Enter the 6-digit code from your app:",
-                    color = Color.White,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.fillMaxWidth()
+                    text = "Enter the 6-digit code from your app:",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Foreground
                 )
+
+                Spacer(modifier = Modifier.height(12.dp))
 
                 CodeInputField(
                     code = verificationCode,
@@ -505,28 +582,27 @@ fun SetupTwoFactorDialog(
                     modifier = Modifier.fillMaxWidth()
                 )
 
+                Spacer(modifier = Modifier.height(24.dp))
+
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     OutlinedButton(
                         onClick = onDismiss,
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(12.dp)
                     ) {
-                        Text("Cancel", color = Color(0xFF94A3B8), fontWeight = FontWeight.Medium)
+                        Text("Cancel", color = MutedForeground)
                     }
                     Button(
                         onClick = onConfirm,
                         enabled = verificationCode.length == 6,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Color(0xFF6366F1),
-                            disabledContainerColor = Color(0xFF475569)
-                        ),
+                        modifier = Modifier.weight(1f),
                         shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.weight(1f)
+                        colors = ButtonDefaults.buttonColors(containerColor = Primary)
                     ) {
-                        Text("Verify & Enable", color = Color.White, fontWeight = FontWeight.SemiBold)
+                        Text("Verify & Enable")
                     }
                 }
             }
@@ -535,60 +611,91 @@ fun SetupTwoFactorDialog(
 }
 
 @Composable
-fun RecoveryCodesDialog(
+private fun RecoveryCodesDialogNew(
     recoveryCodes: List<String>,
     onDismiss: () -> Unit
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        containerColor = Color(0xFF2A2A2A),
+        containerColor = Background,
+        shape = RoundedCornerShape(16.dp),
+        icon = {
+            Box(
+                modifier = Modifier
+                    .size(56.dp)
+                    .background(Destructive.copy(alpha = 0.1f), RoundedCornerShape(28.dp)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Key,
+                    contentDescription = null,
+                    tint = Destructive,
+                    modifier = Modifier.size(28.dp)
+                )
+            }
+        },
         title = {
-            Text("Recovery Codes", color = Color.White, fontWeight = FontWeight.Bold)
+            Text(
+                text = "Save Your Recovery Codes",
+                style = MaterialTheme.typography.headlineSmall,
+                color = Foreground
+            )
         },
         text = {
             Column(
-                modifier = Modifier.verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                modifier = Modifier.verticalScroll(rememberScrollState())
             ) {
-                Text(
-                    "Save these recovery codes in a safe place. You can use them to access your account if you lose access to your authenticator app.",
-                    color = Color(0xFFFF6666),
-                    fontSize = 14.sp
-                )
-
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF1A1A1A)),
-                    shape = RoundedCornerShape(8.dp)
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    color = Destructive.copy(alpha = 0.1f)
                 ) {
-                    Column(
-                        modifier = Modifier.padding(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
+                    Text(
+                        text = "⚠️ Store these codes safely. You can use them to access your account if you lose your authenticator.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Destructive,
+                        modifier = Modifier.padding(12.dp)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    color = CardBackground,
+                    border = ButtonDefaults.outlinedButtonBorder(enabled = true)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
                         recoveryCodes.forEach { code ->
                             Text(
                                 text = code,
-                                color = Color(0xFF00FF88),
-                                fontSize = 14.sp,
-                                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = Primary,
+                                fontFamily = FontFamily.Monospace,
+                                modifier = Modifier.padding(vertical = 4.dp)
                             )
                         }
                     }
                 }
 
+                Spacer(modifier = Modifier.height(8.dp))
+
                 Text(
-                    "Each code can only be used once.",
-                    color = Color(0xFFAAAAAA),
-                    fontSize = 12.sp,
-                    fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
+                    text = "Each code can only be used once.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MutedForeground,
+                    fontStyle = FontStyle.Italic
                 )
             }
         },
         confirmButton = {
             Button(
                 onClick = onDismiss,
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00FF88))
+                shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Primary)
             ) {
-                Text("I've Saved These Codes", color = Color.Black)
+                Text("I've Saved These Codes")
             }
         }
     )
@@ -616,9 +723,10 @@ fun generateQRCode(text: String, size: Int = 512): Bitmap {
 
 @Preview(showBackground = true, showSystemUi = true)
 @Composable
-fun PreviewTwoFactorSettingsScreen() {
+fun PreviewTwoFactorSettingsScreenNew() {
     TwoFactorSettingsScreen(
         authToken = "test_token",
         onNavigateBack = { }
     )
 }
+

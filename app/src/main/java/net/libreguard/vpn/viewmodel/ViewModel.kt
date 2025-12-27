@@ -9,6 +9,8 @@ import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import net.libreguard.vpn.R
+import net.libreguard.vpn.data.ConnectionHistoryManager
+import net.libreguard.vpn.data.ConnectionRecord
 import net.libreguard.vpn.network.RemoteVpnServer
 import net.libreguard.vpn.network.RetrofitClient
 import net.libreguard.vpn.network.VpnConfigRequest
@@ -131,6 +133,11 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _dataUsageInfo = MutableStateFlow(DataUsageInfo())
     val dataUsageInfo: StateFlow<DataUsageInfo> = _dataUsageInfo
+
+    // Connection history tracking
+    private val connectionHistoryManager by lazy { ConnectionHistoryManager(getApplication()) }
+    private var currentConnectionStartTime: Long? = null
+    private var currentConnectionDataStart: Double = 0.0
 
     // Token validation for early revocation detection
     private var tokenValidationManager: TokenValidationManager? = null
@@ -1580,7 +1587,49 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         Log.d(TAG, "Successfully connected using OpenVPN")
         dataUsageManager.startMonitoring()
         Log.d(TAG, "Started data usage monitoring")
+
+        // Track connection for history
+        startConnectionTracking()
+
         saveConnectionState()
+    }
+
+    /**
+     * Start tracking connection for history
+     */
+    private fun startConnectionTracking() {
+        val server = _selectedServer.value ?: return
+        currentConnectionStartTime = System.currentTimeMillis()
+        currentConnectionDataStart = _dataUsageInfo.value.totalBytesUsed / (1024.0 * 1024.0) // Convert to MB
+
+        // Create connection record (will be updated on disconnect)
+        val record = ConnectionRecord(
+            serverName = server.serverName,
+            country = server.country,
+            connectedAt = currentConnectionStartTime!!,
+            disconnectedAt = null,
+            dataUsedMB = 0.0
+        )
+        connectionHistoryManager.addRecord(record)
+        Log.d(TAG, "Started tracking connection to ${server.serverName}")
+    }
+
+    /**
+     * Stop tracking connection and update history
+     */
+    private fun stopConnectionTracking() {
+        val startTime = currentConnectionStartTime ?: return
+        val currentDataMB = _dataUsageInfo.value.totalBytesUsed / (1024.0 * 1024.0)
+        val dataUsedMB = (currentDataMB - currentConnectionDataStart).coerceAtLeast(0.0)
+
+        connectionHistoryManager.updateLastRecord(
+            disconnectedAt = System.currentTimeMillis(),
+            dataUsedMB = dataUsedMB
+        )
+        Log.d(TAG, "Stopped tracking connection. Data used: ${String.format(java.util.Locale.US, "%.2f", dataUsedMB)} MB")
+
+        currentConnectionStartTime = null
+        currentConnectionDataStart = 0.0
     }
 
     // Observe active handler state (especially for OpenVPN) and reflect in UI
@@ -1824,6 +1873,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 Log.e(TAG, "Error during disconnect process", e)
                 _errorMessage.value = "Disconnect error: ${e.localizedMessage}"
             } finally {
+                // Stop connection history tracking
+                stopConnectionTracking()
+
                 // Stop data usage monitoring when VPN disconnects
                 dataUsageManager.stopMonitoring()
                 Log.d(TAG, "Stopped data usage monitoring")

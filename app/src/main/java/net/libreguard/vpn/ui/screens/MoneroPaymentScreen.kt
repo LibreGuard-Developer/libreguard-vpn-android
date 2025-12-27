@@ -2,25 +2,24 @@ package net.libreguard.vpn.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.CopyAll
-import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
-import net.libreguard.vpn.R
+import net.libreguard.vpn.ui.components.LogoWithGradient
+import net.libreguard.vpn.ui.theme.*
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -40,121 +39,361 @@ fun MoneroPaymentScreen(
 ) {
     val clipboardManager = LocalClipboardManager.current
     val context = LocalContext.current
+    val scrollState = rememberScrollState()
+    var copied by remember { mutableStateOf(false) }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Monero Checkout") },
-                navigationIcon = {
-                    IconButton(onClick = onClose) {
-                        Icon(Icons.Default.Close, contentDescription = "Close")
-                    }
-                }
-            )
-        }
-    ) { padding ->
-        Surface(
+    val confirmationPercent = remember(confirmations, requiredConfirmations) {
+        (confirmations.toFloat() / requiredConfirmations.coerceAtLeast(1)).coerceIn(0f, 1f)
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Background)
+    ) {
+        Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding),
-            color = MaterialTheme.colorScheme.background
+                .verticalScroll(scrollState)
+                .padding(24.dp)
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp)
-                    .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(12.dp))
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+            // Back Button
+            IconButton(
+                onClick = onClose,
+                modifier = Modifier.size(40.dp)
             ) {
-                Text(
-                    text = "Send Monero (XMR)",
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.Bold
+                Icon(
+                    imageVector = Icons.Default.ArrowBack,
+                    contentDescription = "Back",
+                    tint = MutedForeground
                 )
+            }
 
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-                    modifier = Modifier.fillMaxWidth()
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Header
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                LogoWithGradient(size = 40.dp)
+                Text(
+                    text = "Monero Payment",
+                    style = MaterialTheme.typography.headlineMedium,
+                    color = Foreground
+                )
+            }
+
+            Text(
+                text = "Send XMR to complete your Pro subscription",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MutedForeground,
+                modifier = Modifier.padding(top = 4.dp)
+            )
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // Timer Card
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                color = CardBackground,
+                border = ButtonDefaults.outlinedButtonBorder(enabled = true).copy(
+                    brush = androidx.compose.ui.graphics.SolidColor(Primary)
+                )
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text(text = "Amount (XMR)", fontWeight = FontWeight.SemiBold)
-                        Text(text = String.format("%.6f XMR", xmrAmount), fontSize = 22.sp, fontWeight = FontWeight.Bold)
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(text = String.format("≈ $%.2f", usdAmount))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Schedule,
+                            contentDescription = null,
+                            tint = Primary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Text(
+                            text = "Payment expires in:",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Foreground
+                        )
                     }
+                    Text(
+                        text = String.format("%02d:%02d", hoursRemaining, minutesRemaining),
+                        style = MaterialTheme.typography.headlineSmall,
+                        color = Primary
+                    )
                 }
+            }
 
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-                    modifier = Modifier.fillMaxWidth()
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Amount Card
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                color = CardBackground,
+                border = ButtonDefaults.outlinedButtonBorder(enabled = true)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(20.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text(text = "Payment Address", fontWeight = FontWeight.SemiBold)
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(text = paymentAddress, fontSize = 14.sp)
+                    Text(
+                        text = "Amount to send",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MutedForeground
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text("₿", style = MaterialTheme.typography.headlineMedium, color = Primary)
+                        Text(
+                            text = String.format("%.6f", xmrAmount),
+                            style = MaterialTheme.typography.headlineLarge,
+                            color = Foreground
+                        )
+                        Text(
+                            text = "XMR",
+                            style = MaterialTheme.typography.titleLarge,
+                            color = MutedForeground
+                        )
+                    }
+                    Text(
+                        text = String.format("≈ $%.2f USD", usdAmount),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MutedForeground
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Address Card
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                color = CardBackground,
+                border = ButtonDefaults.outlinedButtonBorder(enabled = true)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = "Monero Address",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = Foreground
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        color = Secondary
+                    ) {
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.End
+                            modifier = Modifier.padding(12.dp),
+                            verticalAlignment = Alignment.Top
                         ) {
-                            IconButton(onClick = {
-                                clipboardManager.setText(AnnotatedString(paymentAddress))
-                                ContextCompat.getMainExecutor(context).execute { }
-                            }) {
-                                Icon(Icons.Default.CopyAll, contentDescription = "Copy entire address")
+                            Text(
+                                text = paymentAddress,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Foreground,
+                                modifier = Modifier.weight(1f)
+                            )
+                            IconButton(
+                                onClick = {
+                                    clipboardManager.setText(AnnotatedString(paymentAddress))
+                                    copied = true
+                                },
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(
+                                    imageVector = if (copied) Icons.Default.Check else Icons.Default.ContentCopy,
+                                    contentDescription = "Copy address",
+                                    tint = if (copied) Primary else MutedForeground,
+                                    modifier = Modifier.size(18.dp)
+                                )
                             }
                         }
                     }
                 }
+            }
 
-                val confirmationPercent = remember(confirmations, requiredConfirmations) {
-                    (confirmations.toFloat() / requiredConfirmations.coerceAtLeast(1)).coerceIn(0f, 1f)
-                }
+            Spacer(modifier = Modifier.height(16.dp))
 
-                Column {
-                    Text(text = "Blockchain status", fontWeight = FontWeight.SemiBold)
-                    LinearProgressIndicator(
-                        progress = confirmationPercent,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(6.dp)
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(text = "$confirmations / $requiredConfirmations confirmations")
-                }
-
-                if (isWaitingForPayment) {
-                    Text(
-                        text = "Expires in: ${hoursRemaining}h ${minutesRemaining}m",
-                        color = MaterialTheme.colorScheme.error,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                }
-
-                if (isLoading) {
+            // Confirmation Status
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                color = CardBackground,
+                border = ButtonDefaults.outlinedButtonBorder(enabled = true)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.Center
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        CircularProgressIndicator()
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Waiting for wallet...")
+                        Text(
+                            text = "Blockchain Confirmations",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = Foreground
+                        )
+                        Text(
+                            text = "$confirmations / $requiredConfirmations",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = Primary
+                        )
                     }
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    if (onRefresh != null) {
-                        IconButton(onClick = onRefresh) {
-                            Icon(Icons.Default.Refresh, contentDescription = "Refresh payment status")
-                        }
-                    }
-                    Text(text = String.format("1 XMR ≈ $%.2f", xmrPrice))
+                    Spacer(modifier = Modifier.height(12.dp))
+                    LinearProgressIndicator(
+                        progress = { confirmationPercent },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(8.dp)
+                            .clip(RoundedCornerShape(4.dp)),
+                        color = Primary,
+                        trackColor = Secondary,
+                    )
                 }
             }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // Check Payment Button
+            Button(
+                onClick = { onRefresh?.invoke() },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp),
+                enabled = !isLoading,
+                shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Primary,
+                    contentColor = PrimaryForeground
+                )
+            ) {
+                if (isLoading) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(24.dp),
+                        color = PrimaryForeground,
+                        strokeWidth = 2.dp
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Checking payment...")
+                } else {
+                    Icon(
+                        imageVector = Icons.Default.Refresh,
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Check Payment Status")
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // Info Cards
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                color = CardBackground,
+                border = ButtonDefaults.outlinedButtonBorder(enabled = true)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Schedule,
+                            contentDescription = null,
+                            tint = Primary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Text(
+                            text = "Transaction Verification Time",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = Foreground
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Monero transactions typically require around 20 minutes for blockchain confirmation. Your subscription will be activated automatically once the payment is confirmed.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MutedForeground
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                color = CardBackground,
+                border = ButtonDefaults.outlinedButtonBorder(enabled = true)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text("₿", style = MaterialTheme.typography.titleSmall, color = Primary)
+                        Text(
+                            text = "Important",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = Foreground
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            text = "• Send exactly ${String.format("%.6f", xmrAmount)} XMR to the address above",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MutedForeground
+                        )
+                        Text(
+                            text = "• Do not close this page until payment is confirmed",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MutedForeground
+                        )
+                        Text(
+                            text = "• Network fees are included in the amount shown",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MutedForeground
+                        )
+                        Text(
+                            text = "• This address is valid for this transaction only",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MutedForeground
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Exchange rate
+            Text(
+                text = String.format("Current rate: 1 XMR ≈ $%.2f", xmrPrice),
+                style = MaterialTheme.typography.bodySmall,
+                color = MutedForeground,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            Spacer(modifier = Modifier.height(32.dp))
         }
     }
 }

@@ -5,23 +5,21 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.launch
 import net.libreguard.vpn.network.RetrofitClient
 import net.libreguard.vpn.network.Verify2faRequest
 import net.libreguard.vpn.network.VerifyRecoveryRequest
-import kotlinx.coroutines.launch
+import net.libreguard.vpn.ui.components.LogoWithGradient
+import net.libreguard.vpn.ui.theme.*
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -42,15 +40,7 @@ fun TwoFactorVerificationScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(
-                brush = Brush.verticalGradient(
-                    colors = listOf(
-                        Color(0xFF0A0A0A),
-                        Color(0xFF1A1A1A),
-                        Color(0xFF0A0A0A)
-                    )
-                )
-            )
+            .background(Background)
     ) {
         Column(
             modifier = Modifier
@@ -59,13 +49,25 @@ fun TwoFactorVerificationScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
-            // Icon
-            Icon(
-                imageVector = Icons.Default.Lock,
-                contentDescription = "2FA",
-                tint = Color(0xFF00FF88),
-                modifier = Modifier.size(64.dp)
-            )
+            // Logo
+            LogoWithGradient(size = 80.dp)
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // Lock icon
+            Box(
+                modifier = Modifier
+                    .size(64.dp)
+                    .background(Primary.copy(alpha = 0.1f), RoundedCornerShape(16.dp)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = if (showRecoveryCodeInput) Icons.Default.Key else Icons.Default.Lock,
+                    contentDescription = null,
+                    tint = Primary,
+                    modifier = Modifier.size(32.dp)
+                )
+            }
 
             Spacer(modifier = Modifier.height(24.dp))
 
@@ -73,8 +75,7 @@ fun TwoFactorVerificationScreen(
             Text(
                 text = if (showRecoveryCodeInput) "Recovery Code" else "Two-Factor Authentication",
                 style = MaterialTheme.typography.headlineMedium,
-                color = Color.White,
-                fontWeight = FontWeight.Bold
+                color = Foreground
             )
 
             Spacer(modifier = Modifier.height(8.dp))
@@ -82,57 +83,68 @@ fun TwoFactorVerificationScreen(
             // Subtitle
             Text(
                 text = if (showRecoveryCodeInput)
-                    "Enter one of your recovery codes"
+                    "Enter one of your saved recovery codes"
                 else
                     "Enter the 6-digit code from your authenticator app",
                 style = MaterialTheme.typography.bodyMedium,
-                color = Color(0xFFAAAAAA),
+                color = MutedForeground,
                 textAlign = TextAlign.Center
             )
 
             Spacer(modifier = Modifier.height(32.dp))
 
             // Input field
-            if (showRecoveryCodeInput) {
-                OutlinedTextField(
-                    value = recoveryCode,
-                    onValueChange = {
-                        recoveryCode = it
-                        errorMessage = null
-                    },
-                    label = { Text("Recovery Code", color = Color(0xFFAAAAAA)) },
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = Color.White,
-                        unfocusedTextColor = Color(0xFFCCCCCC),
-                        focusedBorderColor = Color(0xFF00FF88),
-                        unfocusedBorderColor = Color(0xFF333333),
-                        cursorColor = Color(0xFF00FF88)
-                    ),
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text)
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = if (showRecoveryCodeInput) "Recovery Code" else "Verification Code",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MutedForeground,
+                    modifier = Modifier.padding(bottom = 8.dp)
                 )
-            } else {
-                OutlinedTextField(
-                    value = code,
-                    onValueChange = {
-                        if (it.length <= 6) {
-                            code = it.filter { char -> char.isDigit() }
+
+                if (showRecoveryCodeInput) {
+                    OutlinedTextField(
+                        value = recoveryCode,
+                        onValueChange = {
+                            recoveryCode = it
                             errorMessage = null
-                        }
-                    },
-                    label = { Text("6-digit code", color = Color(0xFFAAAAAA)) },
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = Color.White,
-                        unfocusedTextColor = Color(0xFFCCCCCC),
-                        focusedBorderColor = Color(0xFF00FF88),
-                        unfocusedBorderColor = Color(0xFF333333),
-                        cursorColor = Color(0xFF00FF88)
-                    ),
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
-                )
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        placeholder = { Text("Enter recovery code", color = MutedForeground) },
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Primary,
+                            unfocusedBorderColor = Border,
+                            focusedContainerColor = CardBackground,
+                            unfocusedContainerColor = CardBackground,
+                            cursorColor = Primary
+                        ),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text)
+                    )
+                } else {
+                    OutlinedTextField(
+                        value = code,
+                        onValueChange = {
+                            if (it.length <= 6) {
+                                code = it.filter { char -> char.isDigit() }
+                                errorMessage = null
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        placeholder = { Text("000000", color = MutedForeground) },
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Primary,
+                            unfocusedBorderColor = Border,
+                            focusedContainerColor = CardBackground,
+                            unfocusedContainerColor = CardBackground,
+                            cursorColor = Primary
+                        ),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.height(24.dp))
@@ -145,7 +157,6 @@ fun TwoFactorVerificationScreen(
                         errorMessage = null
                         try {
                             if (showRecoveryCodeInput) {
-                                // Verify recovery code
                                 val response = RetrofitClient.instance.verifyRecoveryCode(
                                     VerifyRecoveryRequest(email = email, recoveryCode = recoveryCode)
                                 )
@@ -163,7 +174,6 @@ fun TwoFactorVerificationScreen(
                                     errorMessage = "Invalid recovery code"
                                 }
                             } else {
-                                // Verify 2FA code
                                 val response = RetrofitClient.instance.verify2fa(
                                     Verify2faRequest(email = email, twoFactorCode = code)
                                 )
@@ -189,39 +199,26 @@ fun TwoFactorVerificationScreen(
                     .fillMaxWidth()
                     .height(56.dp),
                 enabled = !isLoading && (if (showRecoveryCodeInput) recoveryCode.isNotBlank() else code.length == 6),
-                shape = RoundedCornerShape(28.dp),
+                shape = RoundedCornerShape(12.dp),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = Color.Transparent
+                    containerColor = Primary,
+                    contentColor = PrimaryForeground,
+                    disabledContainerColor = Primary.copy(alpha = 0.5f),
+                    disabledContentColor = PrimaryForeground.copy(alpha = 0.5f)
                 ),
-                contentPadding = PaddingValues(0.dp)
+                elevation = ButtonDefaults.buttonElevation(defaultElevation = 4.dp)
             ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(
-                            brush = Brush.horizontalGradient(
-                                colors = listOf(
-                                    Color(0xFF00FF88),
-                                    Color(0xFF00CCFF)
-                                )
-                            ),
-                            shape = RoundedCornerShape(28.dp)
-                        ),
-                    contentAlignment = Alignment.Center
-                ) {
-                    if (isLoading) {
-                        CircularProgressIndicator(
-                            color = Color.White,
-                            modifier = Modifier.size(24.dp)
-                        )
-                    } else {
-                        Text(
-                            text = "Verify",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = Color.White,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
+                if (isLoading) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(24.dp),
+                        color = PrimaryForeground,
+                        strokeWidth = 2.dp
+                    )
+                } else {
+                    Text(
+                        text = "Verify",
+                        style = MaterialTheme.typography.labelLarge
+                    )
                 }
             }
 
@@ -236,27 +233,36 @@ fun TwoFactorVerificationScreen(
                     recoveryCode = ""
                 }
             ) {
+                Icon(
+                    imageVector = if (showRecoveryCodeInput) Icons.Default.Lock else Icons.Default.Key,
+                    contentDescription = null,
+                    tint = Primary,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     text = if (showRecoveryCodeInput) "Use authenticator code" else "Use recovery code",
-                    color = Color(0xFF00CCFF)
+                    color = Primary
                 )
             }
 
             // Error message
             errorMessage?.let { message ->
                 Spacer(modifier = Modifier.height(16.dp))
-                Card(
+                Surface(
                     modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(
-                        containerColor = Color(0x33FF4444)
-                    ),
-                    shape = RoundedCornerShape(8.dp)
+                    shape = RoundedCornerShape(12.dp),
+                    color = Destructive.copy(alpha = 0.1f),
+                    border = ButtonDefaults.outlinedButtonBorder(enabled = true).copy(
+                        brush = androidx.compose.ui.graphics.SolidColor(Destructive.copy(alpha = 0.5f))
+                    )
                 ) {
                     Text(
                         text = message,
-                        modifier = Modifier.padding(12.dp),
-                        color = Color(0xFFFF6666),
-                        fontSize = 14.sp
+                        modifier = Modifier.padding(16.dp),
+                        color = Destructive,
+                        style = MaterialTheme.typography.bodySmall,
+                        textAlign = TextAlign.Center
                     )
                 }
             }
@@ -265,9 +271,16 @@ fun TwoFactorVerificationScreen(
 
             // Back to login button
             TextButton(onClick = onBackToLogin) {
+                Icon(
+                    imageVector = Icons.Default.ArrowBack,
+                    contentDescription = null,
+                    tint = MutedForeground,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = "← Back to Login",
-                    color = Color(0xFFAAAAAA)
+                    text = "Back to Login",
+                    color = MutedForeground
                 )
             }
 
@@ -275,19 +288,46 @@ fun TwoFactorVerificationScreen(
             if (showRecoveryWarning) {
                 AlertDialog(
                     onDismissRequest = { showRecoveryWarning = false },
-                    title = { Text("Warning", color = Color.White) },
+                    icon = {
+                        Box(
+                            modifier = Modifier
+                                .size(56.dp)
+                                .background(StatusConnecting.copy(alpha = 0.1f), RoundedCornerShape(28.dp)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Warning,
+                                contentDescription = null,
+                                tint = StatusConnecting,
+                                modifier = Modifier.size(28.dp)
+                            )
+                        }
+                    },
+                    title = {
+                        Text(
+                            text = "Recovery Code Used",
+                            style = MaterialTheme.typography.headlineSmall,
+                            color = Foreground
+                        )
+                    },
                     text = {
                         Text(
-                            "You've used a recovery code. Please generate new recovery codes in your account settings.",
-                            color = Color(0xFFCCCCCC)
+                            text = "You've used a recovery code to sign in. Please generate new recovery codes in your account settings to ensure you can always access your account.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MutedForeground
                         )
                     },
                     confirmButton = {
-                        TextButton(onClick = { showRecoveryWarning = false }) {
-                            Text("OK", color = Color(0xFF00FF88))
+                        Button(
+                            onClick = { showRecoveryWarning = false },
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Primary)
+                        ) {
+                            Text("I Understand")
                         }
                     },
-                    containerColor = Color(0xFF2A2A2A)
+                    containerColor = Background,
+                    shape = RoundedCornerShape(24.dp)
                 )
             }
         }
@@ -296,10 +336,11 @@ fun TwoFactorVerificationScreen(
 
 @Preview(showBackground = true, showSystemUi = true)
 @Composable
-fun PreviewTwoFactorVerificationScreen() {
+fun PreviewTwoFactorVerificationScreenNew() {
     TwoFactorVerificationScreen(
         email = "test@example.com",
         onVerificationSuccess = { },
         onBackToLogin = { }
     )
 }
+

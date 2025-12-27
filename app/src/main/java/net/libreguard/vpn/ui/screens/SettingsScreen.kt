@@ -4,30 +4,27 @@ import android.util.Base64
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.ChevronRight
-import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import org.json.JSONObject
+import net.libreguard.vpn.network.RetrofitClient
+import net.libreguard.vpn.network.SubscriptionStatusResponse
+import net.libreguard.vpn.ui.theme.*
 import net.libreguard.vpn.viewmodel.SubscriptionViewModel
-import kotlinx.coroutines.flow.StateFlow
+import org.json.JSONObject
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -43,14 +40,10 @@ fun SettingsScreen(
     val sharedPrefs = remember { context.getSharedPreferences("vpn_state_prefs", android.content.Context.MODE_PRIVATE) }
     val token = remember { sharedPrefs.getString("auth_token", null) }
 
-    // Initialize subscription ViewModel
     val subscriptionViewModel: SubscriptionViewModel = viewModel()
-
-    // Device metadata from TokenManager
-    val tokenManager = remember { net.libreguard.vpn.network.RetrofitClient.getTokenManager() }
+    val tokenManager = remember { RetrofitClient.getTokenManager() }
     val deviceMetadata by tokenManager.deviceMetadataFlow.collectAsState()
 
-    // Set auth token in subscription view model
     LaunchedEffect(token) {
         token?.let { subscriptionViewModel.setAuthToken(it) }
         subscriptionViewModel.fetchSubscriptionStatus()
@@ -60,7 +53,6 @@ fun SettingsScreen(
     val isPro by subscriptionViewModel.isPro.collectAsState()
     val isLoading by subscriptionViewModel.isLoading.collectAsState()
 
-    // Try to extract email from JWT token (sub, email, or username)
     val userEmail by remember(token) {
         mutableStateOf(runCatching {
             if (token.isNullOrBlank()) return@runCatching null
@@ -76,165 +68,180 @@ fun SettingsScreen(
         }.getOrNull())
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Text(
-                            "Settings",
-                            color = Color.White,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 22.sp
-                        )
-                        userEmail?.let {
-                            Text(
-                                text = it,
-                                color = Color(0xFFE0E7FF),
-                                fontSize = 12.sp
-                            )
-                        }
-                    }
-                },
-                navigationIcon = {
-                    IconButton(onClick = onNavigateBack) {
-                        Icon(
-                            imageVector = Icons.Filled.ArrowBack,
-                            contentDescription = "Back",
-                            tint = Color.White
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color.Transparent
-                ),
-                modifier = Modifier.background(
-                    brush = Brush.horizontalGradient(
-                        colors = listOf(
-                            Color(0xFF1E88E5),
-                            Color(0xFF1565C0)
-                        )
-                    )
-                )
-            )
-        },
-        containerColor = Color(0xFFF5F7FA)
-    ) { padding ->
+    val scrollState = rememberScrollState()
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Background)
+    ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding)
+                .verticalScroll(scrollState)
         ) {
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Subscription Status Section
-            if (isLoading) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp)
-                        .height(120.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    CircularProgressIndicator()
-                }
-            } else if (subscriptionStatus != null) {
-                SubscriptionStatusCard(
-                    subscriptionStatus = subscriptionStatus!!,
-                    isPro = isPro,
-                    deviceMetadata = deviceMetadata,
-                    onUpgradeClick = onNavigateToUpgrade
+            // Header
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(24.dp)
+            ) {
+                Text(
+                    text = "Settings",
+                    style = MaterialTheme.typography.headlineMedium,
+                    color = Foreground
+                )
+                Text(
+                    text = "Configure your VPN preferences",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MutedForeground
                 )
             }
 
-            Spacer(modifier = Modifier.height(24.dp))
+            // Plan Upgrade Card (only show if not Pro)
+            if (!isPro && !isLoading) {
+                UpgradeCard(
+                    onUpgradeClick = onNavigateToUpgrade,
+                    modifier = Modifier.padding(horizontal = 24.dp)
+                )
+                Spacer(modifier = Modifier.height(24.dp))
+            }
+
+            // Pro Plan Display (if Pro)
+            if (isPro && subscriptionStatus != null) {
+                ProPlanCard(
+                    subscriptionStatus = subscriptionStatus!!,
+                    modifier = Modifier.padding(horizontal = 24.dp)
+                )
+                Spacer(modifier = Modifier.height(24.dp))
+            }
 
             // Security Section
-            Text(
-                text = "SECURITY",
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                color = Color(0xFF64748B),
-                letterSpacing = 1.2.sp,
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
-            )
+            SectionHeader(title = "Security", modifier = Modifier.padding(horizontal = 24.dp))
 
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp)
-                    .shadow(
-                        elevation = 4.dp,
-                        shape = RoundedCornerShape(16.dp),
-                        ambientColor = Color.Black.copy(alpha = 0.05f)
-                    ),
-                colors = CardDefaults.cardColors(
-                    containerColor = Color.White
-                ),
-                shape = RoundedCornerShape(16.dp)
-            ) {
-                ModernSettingsItem(
-                    icon = Icons.Default.Lock,
-                    iconTint = Color(0xFF6366F1),
-                    iconBackground = Color(0xFFEEF2FF),
+            SettingsCard(modifier = Modifier.padding(horizontal = 24.dp)) {
+                SettingsItemRow(
+                    icon = Icons.Default.Smartphone,
                     title = "Two-Factor Authentication",
-                    subtitle = "Secure your account with 2FA",
+                    subtitle = "Add extra layer of security",
                     onClick = onNavigateToTwoFactor
                 )
             }
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            // Account Section
-            Text(
-                text = "ACCOUNT",
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                color = Color(0xFF64748B),
-                letterSpacing = 1.2.sp,
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
-            )
+            // Connection Section
+            SectionHeader(title = "Connection", modifier = Modifier.padding(horizontal = 24.dp))
 
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp)
-                    .shadow(
-                        elevation = 4.dp,
-                        shape = RoundedCornerShape(16.dp),
-                        ambientColor = Color.Black.copy(alpha = 0.05f)
-                    ),
-                colors = CardDefaults.cardColors(
-                    containerColor = Color.White
-                ),
-                shape = RoundedCornerShape(16.dp)
-            ) {
-                ModernSettingsItem(
-                    icon = Icons.Default.Close,
-                    iconTint = Color(0xFFEF4444),
-                    iconBackground = Color(0xFFFEE2E2),
-                    title = "Logout",
-                    subtitle = "Sign out of your account",
-                    onClick = { showLogoutDialog = true },
-                    showDivider = false
+            SettingsCard(modifier = Modifier.padding(horizontal = 24.dp)) {
+                SettingsToggleRow(
+                    icon = Icons.Default.Power,
+                    title = "Auto-Connect",
+                    subtitle = "Connect on app launch",
+                    checked = false, // TODO: Connect to actual setting
+                    onCheckedChange = { }
+                )
+                HorizontalDivider(color = Border, modifier = Modifier.padding(start = 68.dp))
+                SettingsToggleRow(
+                    icon = Icons.Default.Shield,
+                    title = "Kill Switch",
+                    subtitle = "Block internet if VPN drops",
+                    checked = false, // TODO: Connect to actual setting
+                    onCheckedChange = { }
                 )
             }
 
-            Spacer(modifier = Modifier.weight(1f))
+            Spacer(modifier = Modifier.height(24.dp))
 
-            // App Info Footer
-            Text(
-                text = "LibreGuard VPN v1.0",
-                fontSize = 12.sp,
-                color = Color(0xFF94A3B8),
+            // Support Section
+            SectionHeader(title = "Support", modifier = Modifier.padding(horizontal = 24.dp))
+
+            SettingsCard(modifier = Modifier.padding(horizontal = 24.dp)) {
+                SettingsItemRow(
+                    icon = Icons.Default.Help,
+                    title = "Help & Support",
+                    onClick = { }
+                )
+                HorizontalDivider(color = Border, modifier = Modifier.padding(start = 68.dp))
+                SettingsItemRow(
+                    icon = Icons.Default.Description,
+                    title = "Privacy Policy",
+                    onClick = { }
+                )
+                HorizontalDivider(color = Border, modifier = Modifier.padding(start = 68.dp))
+                SettingsItemRow(
+                    icon = Icons.Default.Description,
+                    title = "Terms of Service",
+                    onClick = { }
+                )
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // Logout Button
+            Surface(
                 modifier = Modifier
-                    .align(Alignment.CenterHorizontally)
-                    .padding(bottom = 16.dp)
-            )
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp)
+                    .clickable { showLogoutDialog = true },
+                shape = RoundedCornerShape(12.dp),
+                color = Destructive.copy(alpha = 0.1f),
+                border = ButtonDefaults.outlinedButtonBorder(enabled = true).copy(
+                    brush = androidx.compose.ui.graphics.SolidColor(Destructive.copy(alpha = 0.5f))
+                )
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Logout,
+                        contentDescription = null,
+                        tint = Destructive,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Text(
+                        text = "Sign Out",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = Destructive
+                    )
+                    Spacer(modifier = Modifier.weight(1f))
+                    Icon(
+                        imageVector = Icons.Default.ChevronRight,
+                        contentDescription = null,
+                        tint = Destructive,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // App Info
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 32.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = "LibreGuard v1.0.0",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MutedForeground
+                )
+                Text(
+                    text = "Open-source privacy VPN",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MutedForeground
+                )
+            }
         }
     }
 
-    // Logout confirmation dialog
+    // Logout Confirmation Dialog
     if (showLogoutDialog) {
         AlertDialog(
             onDismissRequest = { showLogoutDialog = false },
@@ -242,32 +249,29 @@ fun SettingsScreen(
                 Box(
                     modifier = Modifier
                         .size(56.dp)
-                        .background(
-                            color = Color(0xFFFEE2E2),
-                            shape = RoundedCornerShape(28.dp)
-                        ),
+                        .background(Destructive.copy(alpha = 0.1f), RoundedCornerShape(28.dp)),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        imageVector = Icons.Filled.Close,
-                        contentDescription = "Logout",
-                        tint = Color(0xFFEF4444),
+                        imageVector = Icons.Default.Logout,
+                        contentDescription = null,
+                        tint = Destructive,
                         modifier = Modifier.size(28.dp)
                     )
                 }
             },
             title = {
                 Text(
-                    "Logout",
+                    "Sign Out",
                     style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold
+                    color = Foreground
                 )
             },
             text = {
                 Text(
-                    "Are you sure you want to logout? This will disconnect your VPN and clear all saved data.",
+                    "Are you sure you want to sign out? This will disconnect your VPN.",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = Color(0xFF64748B)
+                    color = MutedForeground
                 )
             },
             confirmButton = {
@@ -276,12 +280,10 @@ fun SettingsScreen(
                         showLogoutDialog = false
                         onLogout()
                     },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFFEF4444)
-                    ),
+                    colors = ButtonDefaults.buttonColors(containerColor = Destructive),
                     shape = RoundedCornerShape(12.dp)
                 ) {
-                    Text("Logout", fontWeight = FontWeight.SemiBold)
+                    Text("Sign Out")
                 }
             },
             dismissButton = {
@@ -289,246 +291,275 @@ fun SettingsScreen(
                     onClick = { showLogoutDialog = false },
                     shape = RoundedCornerShape(12.dp)
                 ) {
-                    Text("Cancel", color = Color(0xFF64748B), fontWeight = FontWeight.SemiBold)
+                    Text("Cancel", color = MutedForeground)
                 }
             },
-            containerColor = Color.White,
+            containerColor = Background,
             shape = RoundedCornerShape(24.dp)
         )
     }
 }
 
 @Composable
-fun SubscriptionStatusCard(
-    subscriptionStatus: net.libreguard.vpn.network.SubscriptionStatusResponse,
-    isPro: Boolean,
-    deviceMetadata: Pair<Int, Int>,
-    onUpgradeClick: () -> Unit
+private fun SectionHeader(title: String, modifier: Modifier = Modifier) {
+    Text(
+        text = title,
+        style = MaterialTheme.typography.bodySmall,
+        color = MutedForeground,
+        modifier = modifier.padding(bottom = 12.dp)
+    )
+}
+
+@Composable
+private fun SettingsCard(
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit
 ) {
-    Card(
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        color = CardBackground,
+        border = ButtonDefaults.outlinedButtonBorder(enabled = true)
+    ) {
+        Column(content = content)
+    }
+}
+
+@Composable
+private fun SettingsItemRow(
+    icon: ImageVector,
+    title: String,
+    subtitle: String? = null,
+    onClick: () -> Unit
+) {
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp)
-            .shadow(
-                elevation = 4.dp,
-                shape = RoundedCornerShape(16.dp),
-                ambientColor = Color.Black.copy(alpha = 0.05f)
-            ),
-        colors = CardDefaults.cardColors(
-            containerColor = if (isPro) Color(0xFFFFF3E0) else Color.White
-        ),
-        shape = RoundedCornerShape(16.dp)
+            .clickable { onClick() }
+            .padding(16.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Column(
+        Box(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+                .size(40.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(Primary.copy(alpha = 0.1f)),
+            contentAlignment = Alignment.Center
         ) {
-            // Plan Title Row
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(48.dp)
-                            .background(
-                                color = if (isPro) Color(0xFFFFB74D) else Color(0xFFE0E7FF),
-                                shape = RoundedCornerShape(12.dp)
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = if (isPro) Icons.Default.Star else Icons.Default.Lock,
-                            contentDescription = null,
-                            tint = if (isPro) Color(0xFFF57C00) else Color(0xFF6366F1),
-                            modifier = Modifier.size(24.dp)
-                        )
-                    }
-
-                    Column(
-                        verticalArrangement = Arrangement.spacedBy(2.dp)
-                    ) {
-                        Text(
-                            text = if (isPro) "Pro Plan" else "Free Plan",
-                            fontSize = 18.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFF0F172A)
-                        )
-                        Text(
-                            text = subscriptionStatus.status,
-                            fontSize = 12.sp,
-                            color = Color(0xFF64748B)
-                        )
-                    }
-                }
-            }
-
-            // Plan Details
-            Column(
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                DetailRow(
-                    label = "Active Devices",
-                    value = "${subscriptionStatus.activeDevices}/${subscriptionStatus.maxDevices}"
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = Primary,
+                modifier = Modifier.size(20.dp)
+            )
+        }
+        Spacer(modifier = Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleSmall,
+                color = Foreground
+            )
+            if (subtitle != null) {
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MutedForeground
                 )
-
-                // Also show from TokenManager if available (real-time sync)
-                if (deviceMetadata.first > 0 || deviceMetadata.second > 0) {
-                    DetailRow(
-                        label = "Current Session",
-                        value = "${deviceMetadata.first}/${deviceMetadata.second}"
-                    )
-                }
-
-                if (!subscriptionStatus.currentPeriodEnd.isNullOrBlank()) {
-                    DetailRow(
-                        label = "Period End",
-                        value = subscriptionStatus.currentPeriodEnd ?: "N/A"
-                    )
-                }
-
-                if (!subscriptionStatus.paymentType.isNullOrBlank()) {
-                    DetailRow(
-                        label = "Payment Method",
-                        value = subscriptionStatus.paymentType ?: "N/A"
-                    )
-                }
-            }
-
-            // Upgrade Button (only if Free)
-            if (!isPro) {
-                Button(
-                    onClick = onUpgradeClick,
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFF2196F3)
-                    ),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier.padding(vertical = 8.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Star,
-                            contentDescription = null,
-                            tint = Color.White,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Text(
-                            "Upgrade to Pro",
-                            fontWeight = FontWeight.SemiBold,
-                            fontSize = 16.sp
-                        )
-                    }
-                }
             }
         }
-    }
-}
-
-@Composable
-fun DetailRow(label: String, value: String) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween
-    ) {
-        Text(
-            text = label,
-            fontSize = 13.sp,
-            color = Color(0xFF64748B)
-        )
-        Text(
-            text = value,
-            fontSize = 13.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = Color(0xFF0F172A)
+        Icon(
+            imageVector = Icons.Default.ChevronRight,
+            contentDescription = null,
+            tint = MutedForeground,
+            modifier = Modifier.size(20.dp)
         )
     }
 }
 
 @Composable
-fun ModernSettingsItem(
+private fun SettingsToggleRow(
     icon: ImageVector,
-    iconTint: Color,
-    iconBackground: Color,
     title: String,
     subtitle: String,
-    onClick: () -> Unit,
-    showDivider: Boolean = false
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
 ) {
-    Column {
-        Row(
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(16.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
             modifier = Modifier
-                .fillMaxWidth()
-                .clickable(onClick = onClick)
-                .padding(horizontal = 20.dp, vertical = 16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+                .size(40.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(Primary.copy(alpha = 0.1f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = Primary,
+                modifier = Modifier.size(20.dp)
+            )
+        }
+        Spacer(modifier = Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleSmall,
+                color = Foreground
+            )
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MutedForeground
+            )
+        }
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = PrimaryForeground,
+                checkedTrackColor = Primary,
+                uncheckedThumbColor = PrimaryForeground,
+                uncheckedTrackColor = SwitchBackground
+            )
+        )
+    }
+}
+
+@Composable
+private fun UpgradeCard(
+    onUpgradeClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        color = Primary.copy(alpha = 0.05f),
+        border = ButtonDefaults.outlinedButtonBorder(enabled = true).copy(
+            brush = androidx.compose.ui.graphics.SolidColor(Primary)
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(20.dp)
         ) {
             Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
-                modifier = Modifier.weight(1f)
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                // Icon Container
                 Box(
                     modifier = Modifier
-                        .size(48.dp)
-                        .background(
-                            color = iconBackground,
-                            shape = RoundedCornerShape(12.dp)
-                        ),
+                        .size(40.dp)
+                        .background(Primary, RoundedCornerShape(8.dp)),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        imageVector = icon,
+                        imageVector = Icons.Default.Star,
                         contentDescription = null,
-                        tint = iconTint,
-                        modifier = Modifier.size(24.dp)
+                        tint = PrimaryForeground,
+                        modifier = Modifier.size(20.dp)
                     )
                 }
-
-                // Text Content
-                Column(
-                    verticalArrangement = Arrangement.spacedBy(2.dp)
-                ) {
+                Spacer(modifier = Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = title,
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = Color(0xFF0F172A)
+                        text = "Upgrade to Pro",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = Foreground
                     )
                     Text(
-                        text = subtitle,
-                        fontSize = 13.sp,
-                        color = Color(0xFF64748B)
+                        text = "Unlock unlimited data, faster servers, and premium features",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MutedForeground
                     )
                 }
             }
 
-            // Chevron Icon
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                Text(
+                    text = "✓ Unlimited bandwidth",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MutedForeground
+                )
+                Text(
+                    text = "✓ Priority servers",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MutedForeground
+                )
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Button(
+                onClick = onUpgradeClick,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Primary,
+                    contentColor = PrimaryForeground
+                )
+            ) {
+                Text("Upgrade Now", style = MaterialTheme.typography.labelLarge)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProPlanCard(
+    subscriptionStatus: SubscriptionStatusResponse,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        color = CardBackground,
+        border = ButtonDefaults.outlinedButtonBorder(enabled = true).copy(
+            brush = androidx.compose.ui.graphics.SolidColor(Primary)
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .background(Primary, RoundedCornerShape(8.dp)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Star,
+                    contentDescription = null,
+                    tint = PrimaryForeground,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Pro Plan",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = Foreground
+                )
+                Text(
+                    text = "Active subscription",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MutedForeground
+                )
+            }
             Icon(
                 imageVector = Icons.Default.ChevronRight,
-                contentDescription = "Navigate",
-                tint = Color(0xFFCBD5E1),
-                modifier = Modifier.size(24.dp)
-            )
-        }
-
-        if (showDivider) {
-            HorizontalDivider(
-                modifier = Modifier.padding(start = 84.dp, end = 20.dp),
-                color = Color(0xFFE2E8F0),
-                thickness = 1.dp
+                contentDescription = null,
+                tint = MutedForeground,
+                modifier = Modifier.size(20.dp)
             )
         }
     }
@@ -536,7 +567,7 @@ fun ModernSettingsItem(
 
 @Preview(showBackground = true, showSystemUi = true)
 @Composable
-fun PreviewSettingsScreen() {
+fun PreviewSettingsScreenNew() {
     SettingsScreen(
         onNavigateBack = { },
         onNavigateToTwoFactor = { },
@@ -544,3 +575,4 @@ fun PreviewSettingsScreen() {
         onLogout = { }
     )
 }
+
