@@ -36,7 +36,9 @@ fun BottomNavigationBar(
     modifier: Modifier = Modifier
 ) {
     Surface(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier
+            .fillMaxWidth()
+            .navigationBarsPadding(),
         color = CardBackground,
         shadowElevation = 8.dp,
         shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)
@@ -93,9 +95,10 @@ fun BottomNavScaffold(
                 onTabSelected = onTabSelected
             )
         },
-        containerColor = Background
+        containerColor = Background,
+        // Reduce extra safe-area padding; our screens already control their own spacing.
+        contentWindowInsets = WindowInsets(0)
     ) { paddingValues ->
         content(paddingValues)
     }
 }
-

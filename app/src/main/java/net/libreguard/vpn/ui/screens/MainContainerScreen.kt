@@ -51,7 +51,13 @@ fun MainContainerScreen(
             currentTab = currentTab,
             onTabSelected = { currentTab = it }
         ) { paddingValues ->
-            Box(modifier = Modifier.padding(paddingValues)) {
+            // Apply bottom padding so content doesn't disappear under the bottom nav bar.
+            // We only apply bottom padding (not top) to avoid extra gaps at the top.
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(bottom = paddingValues.calculateBottomPadding())
+            ) {
                 when (currentTab) {
                     MainTab.DASHBOARD -> {
                         DashboardScreen(

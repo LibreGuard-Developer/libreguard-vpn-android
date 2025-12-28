@@ -158,7 +158,7 @@ fun DashboardScreen(
             .fillMaxSize()
             .background(Background)
             .padding(horizontal = 20.dp)
-            .padding(top = 16.dp, bottom = 80.dp)
+            .padding(top = 0.dp, bottom = 0.dp)
     ) {
         // Header - Compact
         Row(
@@ -267,11 +267,19 @@ fun DashboardScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier = Modifier.size(36.dp).background(Primary.copy(alpha = 0.1f), RoundedCornerShape(8.dp)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(Icons.Default.Bolt, null, tint = Primary, modifier = Modifier.size(18.dp))
+                        // Show country flag if server selected, otherwise show bolt icon
+                        if (selectedServer != null) {
+                            Text(
+                                text = getFlagEmoji(selectedServer?.country ?: ""),
+                                style = MaterialTheme.typography.headlineSmall
+                            )
+                        } else {
+                            Box(
+                                modifier = Modifier.size(36.dp).background(Primary.copy(alpha = 0.1f), RoundedCornerShape(8.dp)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(Icons.Default.Bolt, null, tint = Primary, modifier = Modifier.size(18.dp))
+                            }
                         }
                         Column {
                             Text("Quick Connect", style = MaterialTheme.typography.titleSmall, color = Foreground)
@@ -287,27 +295,42 @@ fun DashboardScreen(
             }
         }
 
-        // Center content area with shield and button
+        // Main center section (matches design: "flex-1 flex flex-col items-center justify-center")
         Column(
-            modifier = Modifier.weight(1f).fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
-            // Status Indicator Circle - REDUCED SIZE
+            // Status Indicator Circle
+            val shieldSize = when {
+                isConnected -> 140.dp
+                isConnecting -> 140.dp
+                else -> 150.dp
+            }
+            val innerShieldSize = 112.dp
+            val iconSize = 64.dp
+
             Box(
-                modifier = Modifier.size(120.dp),
+                modifier = Modifier
+                    .size(shieldSize),
                 contentAlignment = Alignment.Center
             ) {
                 Box(
-                    modifier = Modifier.size(120.dp).clip(CircleShape)
+                    modifier = Modifier
+                        .size(shieldSize)
+                        .clip(CircleShape)
                         .background(statusConfig.color.copy(alpha = 0.15f))
                 )
                 Box(
-                    modifier = Modifier.size(96.dp).clip(CircleShape)
+                    modifier = Modifier
+                        .size(innerShieldSize)
+                        .clip(CircleShape)
                         .background(statusConfig.color.copy(alpha = 0.25f)),
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(Icons.Default.Shield, null, tint = statusConfig.color, modifier = Modifier.size(48.dp))
+                    Icon(Icons.Default.Shield, null, tint = statusConfig.color, modifier = Modifier.size(iconSize))
                 }
 
                 if (isConnecting) {
@@ -322,20 +345,32 @@ fun DashboardScreen(
                         label = "ringScale"
                     )
                     Box(
-                        modifier = Modifier.size((120 * animatedScale).dp).clip(CircleShape)
+                        modifier = Modifier
+                            .size((shieldSize.value * animatedScale).dp)
+                            .clip(CircleShape)
                             .background(statusConfig.color.copy(alpha = animatedAlpha * 0.3f))
                     )
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
-
-            Text(text = statusConfig.text, style = MaterialTheme.typography.headlineSmall, color = statusConfig.color)
-            Text(text = statusConfig.description, style = MaterialTheme.typography.bodySmall, color = MutedForeground)
-
             Spacer(modifier = Modifier.height(20.dp))
 
-            // Connect/Disconnect Button - NORMAL SIZE
+            // Status text
+            Text(
+                text = statusConfig.text,
+                style = MaterialTheme.typography.headlineMedium,
+                color = statusConfig.color
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = statusConfig.description,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MutedForeground
+            )
+
+            Spacer(modifier = Modifier.height(18.dp))
+
+            // Connect/Disconnect button (design: big rounded)
             Button(
                 onClick = {
                     if (isConnected) viewModel.disconnect()
@@ -344,84 +379,112 @@ fun DashboardScreen(
                     }
                 },
                 enabled = !isConnecting,
-                modifier = Modifier.height(48.dp),
-                shape = RoundedCornerShape(14.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Primary, contentColor = PrimaryForeground),
-                contentPadding = PaddingValues(horizontal = 40.dp)
+                modifier = Modifier
+                    .height(56.dp)
+                    .padding(horizontal = 18.dp),
+                shape = RoundedCornerShape(16.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Primary, contentColor = PrimaryForeground)
             ) {
-                Text(text = statusConfig.buttonText, style = MaterialTheme.typography.titleSmall)
-            }
-        }
-
-        // Stats when connected - COMPACT VERSION
-        if (isConnected) {
-            // Connection Stats Row - Compact
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly
-            ) {
-                StatItemCompact(icon = Icons.Default.Schedule, value = connectionTime, label = "Duration")
-                StatItemCompact(icon = Icons.Default.Speed, value = "${downloadSpeed.toFixed(1)}", label = "Mbps")
-                StatItemCompact(icon = Icons.Default.Language, value = selectedServer?.country ?: "-", label = "Location")
+                Text(text = statusConfig.buttonText, style = MaterialTheme.typography.titleMedium)
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
+            // Connected-only stats block (kept in the weighted center section so it doesn't leave bottom whitespace)
+            if (isConnected) {
+                Spacer(modifier = Modifier.height(18.dp))
 
-            // Bandwidth Usage Card - Compact
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(10.dp),
-                color = CardBackground,
-                border = ButtonDefaults.outlinedButtonBorder(enabled = true)
-            ) {
-                Column(modifier = Modifier.padding(12.dp)) {
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("Bandwidth", style = MaterialTheme.typography.labelMedium, color = Foreground)
-                        Text("${totalPercentage.toFixed(1)}% of ${(monthlyLimit / 1024).toFixed(0)}GB",
-                            style = MaterialTheme.typography.labelSmall, color = MutedForeground)
-                    }
+                // Connection stats row
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 10.dp),
+                    horizontalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    StatItemCompact(icon = Icons.Default.Schedule, value = connectionTime, label = "Duration")
+                    StatItemCompact(icon = Icons.Default.Speed, value = "${downloadSpeed.toFixed(1)} Mbps", label = "Speed")
+                    StatItemCompact(icon = Icons.Default.Language, value = selectedServer?.country ?: "-", label = "Location")
+                }
 
-                    Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(14.dp))
 
-                    // Usage bar
-                    Box(
-                        modifier = Modifier.fillMaxWidth().height(8.dp)
-                            .clip(RoundedCornerShape(4.dp)).background(Secondary.copy(alpha = 0.3f))
-                    ) {
+                // Bandwidth card
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 10.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    color = CardBackground,
+                    border = ButtonDefaults.outlinedButtonBorder(enabled = true)
+                ) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("Bandwidth Usage", style = MaterialTheme.typography.labelLarge, color = Foreground)
+                            Text(
+                                "${totalPercentage.toFixed(1)}% of ${(monthlyLimit / 1024).toFixed(0)}GB",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MutedForeground
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // Multi-layer bar (monthly = gray, session = primary)
                         Box(
-                            modifier = Modifier.fillMaxHeight()
-                                .fillMaxWidth((monthlyPercentage / 100f).coerceIn(0f, 1f))
-                                .clip(RoundedCornerShape(4.dp)).background(MutedForeground.copy(alpha = 0.4f))
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    // Legend row - compact
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(MutedForeground.copy(alpha = 0.4f)))
-                            Text("Total: ${(monthlyData / 1024.0).toFixed(2)}GB", style = MaterialTheme.typography.labelSmall, color = MutedForeground)
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(10.dp)
+                                .clip(RoundedCornerShape(5.dp))
+                                .background(Secondary.copy(alpha = 0.3f))
+                        ) {
+                            // Monthly
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxHeight()
+                                    .fillMaxWidth((monthlyPercentage / 100f).coerceIn(0f, 1f))
+                                    .clip(RoundedCornerShape(5.dp))
+                                    .background(MutedForeground.copy(alpha = 0.4f))
+                            )
+                            // Session
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxHeight()
+                                    .fillMaxWidth(((sessionData / monthlyLimit)).toFloat().coerceIn(0f, 1f))
+                                    .clip(RoundedCornerShape(5.dp))
+                                    .background(Primary)
+                            )
                         }
-                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(Primary))
-                            Text("Session: ${sessionData.toFixed(1)}MB", style = MaterialTheme.typography.labelSmall, color = Primary)
-                        }
-                    }
 
-                    Spacer(modifier = Modifier.height(6.dp))
-                    HorizontalDivider(color = Border)
-                    Spacer(modifier = Modifier.height(6.dp))
+                        Spacer(modifier = Modifier.height(10.dp))
 
-                    // Speeds row - compact
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceAround) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.ArrowDownward, null, tint = MutedForeground, modifier = Modifier.size(14.dp))
-                            Text("${downloadSpeed.toFixed(1)} Mbps", style = MaterialTheme.typography.labelSmall, color = Foreground)
+                        // Legend
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(MutedForeground.copy(alpha = 0.4f)))
+                                Text("Monthly total", style = MaterialTheme.typography.labelSmall, color = MutedForeground)
+                            }
+                            Text("${(monthlyData / 1024).toFixed(2)} GB", style = MaterialTheme.typography.labelSmall, color = Foreground)
                         }
-                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.ArrowUpward, null, tint = MutedForeground, modifier = Modifier.size(14.dp))
-                            Text("${uploadSpeed.toFixed(1)} Mbps", style = MaterialTheme.typography.labelSmall, color = Foreground)
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(Primary))
+                                Text("This session", style = MaterialTheme.typography.labelSmall, color = MutedForeground)
+                            }
+                            Text("${sessionData.toFixed(1)} MB", style = MaterialTheme.typography.labelSmall, color = Primary)
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+                        HorizontalDivider(color = Border)
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceAround) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.ArrowDownward, null, tint = MutedForeground, modifier = Modifier.size(16.dp))
+                                Text("${downloadSpeed.toFixed(1)} Mbps", style = MaterialTheme.typography.bodySmall, color = Foreground)
+                            }
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.ArrowUpward, null, tint = MutedForeground, modifier = Modifier.size(16.dp))
+                                Text("${uploadSpeed.toFixed(1)} Mbps", style = MaterialTheme.typography.bodySmall, color = Foreground)
+                            }
                         }
                     }
                 }
@@ -493,5 +556,34 @@ fun getConnectionStatusConfig(status: ConnectionStatus): StatusConfig {
             description = "Your connection is not secure",
             buttonText = "Connect"
         )
+    }
+}
+
+/**
+ * Get flag emoji from country name
+ */
+private fun getFlagEmoji(country: String): String {
+    return when (country.lowercase()) {
+        "usa", "united states" -> "🇺🇸"
+        "uk", "united kingdom" -> "🇬🇧"
+        "japan" -> "🇯🇵"
+        "germany" -> "🇩🇪"
+        "netherlands" -> "🇳🇱"
+        "canada" -> "🇨🇦"
+        "france" -> "🇫🇷"
+        "australia" -> "🇦🇺"
+        "singapore" -> "🇸🇬"
+        "switzerland" -> "🇨🇭"
+        "sweden" -> "🇸🇪"
+        "norway" -> "🇳🇴"
+        "italy" -> "🇮🇹"
+        "spain" -> "🇪🇸"
+        "brazil" -> "🇧🇷"
+        "india" -> "🇮🇳"
+        "south korea", "korea" -> "🇰🇷"
+        "hong kong" -> "🇭🇰"
+        "ireland" -> "🇮🇪"
+        "poland" -> "🇵🇱"
+        else -> "🏳️"
     }
 }

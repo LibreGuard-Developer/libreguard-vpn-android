@@ -80,13 +80,13 @@ fun ServerListScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(Background)
-            .padding(bottom = 80.dp)
     ) {
         // Header with title and protocol selector
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 24.dp, vertical = 24.dp)
+                // Greatly reduce top/bottom padding to bring the title closer to the top.
+                .padding(horizontal = 24.dp, vertical = 4.dp)
         ) {
             Text(
                 text = "Server Locations",
@@ -583,4 +583,3 @@ private fun getFlagEmoji(country: String): String {
         else -> "🏳️"
     }
 }
-
