@@ -368,7 +368,7 @@ fun DashboardScreen(
                 color = MutedForeground
             )
 
-            Spacer(modifier = Modifier.height(18.dp))
+            Spacer(modifier = Modifier.height(14.dp))
 
             // Connect/Disconnect button (design: big rounded)
             Button(
@@ -380,7 +380,7 @@ fun DashboardScreen(
                 },
                 enabled = !isConnecting,
                 modifier = Modifier
-                    .height(56.dp)
+                    .height(if (isConnected) 48.dp else 56.dp)
                     .padding(horizontal = 18.dp),
                 shape = RoundedCornerShape(16.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = Primary, contentColor = PrimaryForeground)
@@ -390,7 +390,7 @@ fun DashboardScreen(
 
             // Connected-only stats block (kept in the weighted center section so it doesn't leave bottom whitespace)
             if (isConnected) {
-                Spacer(modifier = Modifier.height(18.dp))
+                Spacer(modifier = Modifier.height(12.dp))
 
                 // Connection stats row
                 Row(
@@ -415,7 +415,7 @@ fun DashboardScreen(
                     color = CardBackground,
                     border = ButtonDefaults.outlinedButtonBorder(enabled = true)
                 ) {
-                    Column(modifier = Modifier.padding(14.dp)) {
+                    Column(modifier = Modifier.padding(12.dp)) {
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                             Text("Bandwidth Usage", style = MaterialTheme.typography.labelLarge, color = Foreground)
                             Text(
@@ -425,14 +425,14 @@ fun DashboardScreen(
                             )
                         }
 
-                        Spacer(modifier = Modifier.height(10.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
 
                         // Multi-layer bar (monthly = gray, session = primary)
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(10.dp)
-                                .clip(RoundedCornerShape(5.dp))
+                                .height(8.dp)
+                                .clip(RoundedCornerShape(4.dp))
                                 .background(Secondary.copy(alpha = 0.3f))
                         ) {
                             // Monthly
@@ -440,7 +440,7 @@ fun DashboardScreen(
                                 modifier = Modifier
                                     .fillMaxHeight()
                                     .fillMaxWidth((monthlyPercentage / 100f).coerceIn(0f, 1f))
-                                    .clip(RoundedCornerShape(5.dp))
+                                    .clip(RoundedCornerShape(4.dp))
                                     .background(MutedForeground.copy(alpha = 0.4f))
                             )
                             // Session
@@ -448,41 +448,41 @@ fun DashboardScreen(
                                 modifier = Modifier
                                     .fillMaxHeight()
                                     .fillMaxWidth(((sessionData / monthlyLimit)).toFloat().coerceIn(0f, 1f))
-                                    .clip(RoundedCornerShape(5.dp))
+                                    .clip(RoundedCornerShape(4.dp))
                                     .background(Primary)
                             )
                         }
 
-                        Spacer(modifier = Modifier.height(10.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
 
                         // Legend
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(MutedForeground.copy(alpha = 0.4f)))
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(MutedForeground.copy(alpha = 0.4f)))
                                 Text("Monthly total", style = MaterialTheme.typography.labelSmall, color = MutedForeground)
                             }
                             Text("${(monthlyData / 1024).toFixed(2)} GB", style = MaterialTheme.typography.labelSmall, color = Foreground)
                         }
-                        Spacer(modifier = Modifier.height(6.dp))
+                        Spacer(modifier = Modifier.height(4.dp))
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(Primary))
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(Primary))
                                 Text("This session", style = MaterialTheme.typography.labelSmall, color = MutedForeground)
                             }
                             Text("${sessionData.toFixed(1)} MB", style = MaterialTheme.typography.labelSmall, color = Primary)
                         }
 
-                        Spacer(modifier = Modifier.height(10.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
                         HorizontalDivider(color = Border)
-                        Spacer(modifier = Modifier.height(10.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
 
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceAround) {
-                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.ArrowDownward, null, tint = MutedForeground, modifier = Modifier.size(16.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.ArrowDownward, null, tint = MutedForeground, modifier = Modifier.size(14.dp))
                                 Text("${downloadSpeed.toFixed(1)} Mbps", style = MaterialTheme.typography.bodySmall, color = Foreground)
                             }
-                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.ArrowUpward, null, tint = MutedForeground, modifier = Modifier.size(16.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.ArrowUpward, null, tint = MutedForeground, modifier = Modifier.size(14.dp))
                                 Text("${uploadSpeed.toFixed(1)} Mbps", style = MaterialTheme.typography.bodySmall, color = Foreground)
                             }
                         }
