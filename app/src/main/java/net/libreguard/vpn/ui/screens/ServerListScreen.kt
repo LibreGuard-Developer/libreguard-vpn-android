@@ -14,10 +14,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import net.libreguard.vpn.network.RemoteVpnServer
 import net.libreguard.vpn.ui.theme.*
 import net.libreguard.vpn.viewmodel.VpnProtocol
@@ -25,7 +26,7 @@ import net.libreguard.vpn.viewmodel.VpnViewModel
 
 /**
  * Server List Screen - Select server and protocol
- * Based on design from ServerList.tsx
+ * EXACTLY matching ServerList.tsx design
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -45,6 +46,7 @@ fun ServerListScreen(
 
     var searchQuery by remember { mutableStateOf("") }
     var favoriteServers by remember { mutableStateOf(setOf<String>()) }
+    var isRefreshing by remember { mutableStateOf(false) }
 
     LaunchedEffect(authToken) {
         viewModel.setAuthToken(authToken)
@@ -78,38 +80,123 @@ fun ServerListScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(Background)
+            .padding(bottom = 80.dp)
     ) {
-        // Header - reduced padding
+        // Header with title and protocol selector
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp)
+                .padding(horizontal = 24.dp, vertical = 24.dp)
         ) {
             Text(
                 text = "Server Locations",
                 style = MaterialTheme.typography.headlineSmall,
                 color = Foreground
             )
-            Text(
-                text = "Select a server to connect",
-                style = MaterialTheme.typography.bodySmall,
-                color = MutedForeground
-            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Connection Protocol Toggle
+            Column {
+                Text(
+                    text = "Connection Protocol",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MutedForeground
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    // IKEv2/IPSec Button
+                    Surface(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(44.dp),
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (selectedProtocol == VpnProtocol.IKEV2_IPSEC) Primary else CardBackground,
+                        border = if (selectedProtocol != VpnProtocol.IKEV2_IPSEC)
+                            ButtonDefaults.outlinedButtonBorder(enabled = true) else null,
+                        onClick = { viewModel.selectProtocol(VpnProtocol.IKEV2_IPSEC) }
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Text(
+                                text = "IKEv2/IPSec",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = if (selectedProtocol == VpnProtocol.IKEV2_IPSEC) PrimaryForeground else Foreground
+                            )
+                        }
+                    }
+
+                    // OpenVPN Button with PRO badge
+                    Box(modifier = Modifier.weight(1f)) {
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(44.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            color = if (selectedProtocol == VpnProtocol.OPENVPN) Primary else CardBackground,
+                            border = if (selectedProtocol != VpnProtocol.OPENVPN)
+                                ButtonDefaults.outlinedButtonBorder(enabled = true) else null,
+                            onClick = {
+                                if (!isPro) {
+                                    onNavigateToUpgrade?.invoke()
+                                } else {
+                                    viewModel.selectProtocol(VpnProtocol.OPENVPN)
+                                }
+                            }
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text(
+                                    text = "OpenVPN",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = if (selectedProtocol == VpnProtocol.OPENVPN) PrimaryForeground else Foreground
+                                )
+                            }
+                        }
+                        // PRO badge
+                        if (!isPro) {
+                            Surface(
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .offset(x = 4.dp, y = (-4).dp),
+                                shape = RoundedCornerShape(8.dp),
+                                color = Primary
+                            ) {
+                                Text(
+                                    text = "PRO",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = PrimaryForeground,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
         }
 
-        // Search Bar + Refresh Button in same row
+        // Search Bar with Refresh Button
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp),
+                .padding(horizontal = 24.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             OutlinedTextField(
                 value = searchQuery,
                 onValueChange = { searchQuery = it },
-                modifier = Modifier.weight(1f),
-                placeholder = { Text("Search locations...", color = MutedForeground) },
+                modifier = Modifier
+                    .weight(1f)
+                    .height(56.dp),
+                placeholder = {
+                    Text(
+                        "Search locations...",
+                        color = MutedForeground,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                },
                 leadingIcon = {
                     Icon(
                         imageVector = Icons.Default.Search,
@@ -133,6 +220,9 @@ fun ServerListScreen(
                 singleLine = true,
                 shape = RoundedCornerShape(12.dp),
                 colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = Foreground,
+                    unfocusedTextColor = Foreground,
+                    cursorColor = Primary,
                     focusedBorderColor = Primary,
                     unfocusedBorderColor = Border,
                     focusedContainerColor = CardBackground,
@@ -140,14 +230,32 @@ fun ServerListScreen(
                 )
             )
 
-            // Refresh Button inline
+            // Refresh Button
+            val coroutineScope = rememberCoroutineScope()
             Surface(
                 modifier = Modifier.size(56.dp),
                 shape = RoundedCornerShape(12.dp),
                 color = Primary,
-                onClick = { viewModel.refreshServers() }
+                onClick = {
+                    isRefreshing = true
+                    viewModel.refreshServers()
+                    // Reset after animation
+                    coroutineScope.launch {
+                        delay(1000)
+                        isRefreshing = false
+                    }
+                }
             ) {
                 Box(contentAlignment = Alignment.Center) {
+                    val rotation by rememberInfiniteTransition(label = "refresh").animateFloat(
+                        initialValue = 0f,
+                        targetValue = if (isRefreshing) 360f else 0f,
+                        animationSpec = infiniteRepeatable(
+                            animation = tween(1000, easing = LinearEasing),
+                            repeatMode = RepeatMode.Restart
+                        ),
+                        label = "rotation"
+                    )
                     Icon(
                         imageVector = Icons.Default.Refresh,
                         contentDescription = "Refresh servers",
@@ -158,81 +266,7 @@ fun ServerListScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(12.dp))
-
-        // Protocol Selector
-        Surface(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp),
-            shape = RoundedCornerShape(12.dp),
-            color = CardBackground,
-            border = ButtonDefaults.outlinedButtonBorder(enabled = true)
-        ) {
-            Column(
-                modifier = Modifier.padding(12.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Text(
-                    text = "Connection Protocol",
-                    style = MaterialTheme.typography.titleSmall,
-                    color = Foreground,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    VpnProtocol.entries
-                        .filter { !it.displayName.equals("WireGuard", ignoreCase = true) }
-                        .forEach { protocol ->
-                            val isOpenVpn = protocol.displayName.equals("OpenVPN", ignoreCase = true)
-
-                            FilterChip(
-                                onClick = {
-                                    if (isOpenVpn && !isPro) {
-                                        // Navigate to upgrade screen for non-Pro users
-                                        onNavigateToUpgrade?.invoke()
-                                    } else {
-                                        viewModel.selectProtocol(protocol)
-                                    }
-                                },
-                                label = {
-                                    Row(
-                                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Text(
-                                            text = protocol.displayName,
-                                            color = if (selectedProtocol == protocol) PrimaryForeground else Foreground
-                                        )
-                                        if (isOpenVpn && !isPro) {
-                                            Icon(
-                                                imageVector = Icons.Default.Star,
-                                                contentDescription = "Pro",
-                                                modifier = Modifier.size(12.dp),
-                                                tint = if (selectedProtocol == protocol) PrimaryForeground else Primary
-                                            )
-                                        }
-                                    }
-                                },
-                                selected = selectedProtocol == protocol,
-                                modifier = Modifier.weight(1f),
-                                colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = Primary,
-                                    selectedLabelColor = PrimaryForeground,
-                                    containerColor = Secondary,
-                                    labelColor = Foreground
-                                )
-                            )
-                        }
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(16.dp))
 
         // Server List
         if (isLoadingServers) {
@@ -249,9 +283,8 @@ fun ServerListScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
-                    .padding(horizontal = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-                contentPadding = PaddingValues(bottom = 8.dp)
+                    .padding(horizontal = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 // Favorites Section
                 if (favoriteServersList.isNotEmpty() && searchQuery.isBlank()) {
@@ -259,13 +292,13 @@ fun ServerListScreen(
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            modifier = Modifier.padding(vertical = 4.dp)
+                            modifier = Modifier.padding(vertical = 8.dp)
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Star,
                                 contentDescription = null,
                                 tint = Primary,
-                                modifier = Modifier.size(14.dp)
+                                modifier = Modifier.size(16.dp)
                             )
                             Text(
                                 text = "Favorites",
@@ -297,12 +330,26 @@ fun ServerListScreen(
                 // All Servers by Country
                 regularServersByCountry.forEach { (country, countryServers) ->
                     item {
-                        Text(
-                            text = "${getFlagEmoji(country)} $country",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MutedForeground,
-                            modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.padding(top = 16.dp, bottom = 8.dp)
+                        ) {
+                            Text(
+                                text = getFlagEmoji(country),
+                                style = MaterialTheme.typography.headlineSmall
+                            )
+                            Text(
+                                text = country,
+                                style = MaterialTheme.typography.titleSmall,
+                                color = Foreground
+                            )
+                            Text(
+                                text = "(${countryServers.size})",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MutedForeground
+                            )
+                        }
                     }
                     items(countryServers) { server ->
                         ServerCard(
@@ -357,19 +404,22 @@ private fun ServerCard(
     onSelect: () -> Unit,
     onToggleFavorite: () -> Unit
 ) {
+    val ping = remember { (10..150).random() }
+    val load = remember { (20..80).random() }
+
     Surface(
         modifier = Modifier
             .fillMaxWidth()
             .clickable { onSelect() },
         shape = RoundedCornerShape(12.dp),
-        color = if (isSelected) Primary.copy(alpha = 0.1f) else CardBackground,
+        color = if (isSelected) Primary.copy(alpha = 0.05f) else CardBackground,
         border = ButtonDefaults.outlinedButtonBorder(enabled = true).copy(
             brush = androidx.compose.ui.graphics.SolidColor(
                 if (isSelected) Primary else Border
             )
         )
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
+        Column(modifier = Modifier.padding(12.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
@@ -377,87 +427,80 @@ private fun ServerCard(
                 // Flag
                 Text(
                     text = getFlagEmoji(server.country),
-                    style = MaterialTheme.typography.headlineMedium
+                    style = MaterialTheme.typography.headlineSmall
                 )
 
                 Spacer(modifier = Modifier.width(12.dp))
 
-                // Server info
+                // Server info - city and country + server name
                 Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = server.serverName,
+                        style = MaterialTheme.typography.titleSmall,
+                        color = if (isSelected) Primary else Foreground,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
                     Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        if (server.pricingTier == "Premium") {
-                            Icon(
-                                imageVector = Icons.Default.Star,
-                                contentDescription = "Premium",
-                                tint = Primary,
-                                modifier = Modifier.size(14.dp)
-                            )
-                        }
                         Text(
-                            text = server.serverName,
-                            style = MaterialTheme.typography.titleSmall,
-                            color = if (isSelected) Primary else Foreground,
+                            text = server.country,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MutedForeground,
                             maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
                         )
                     }
-                    Text(
-                        text = server.country,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MutedForeground
-                    )
                 }
 
-                // Stats
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                // Stats - Vertical layout
+                Column(
+                    modifier = Modifier.width(58.dp),
+                    horizontalAlignment = Alignment.End
                 ) {
-                    // Ping (simulated)
                     Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
                         Icon(
                             imageVector = Icons.Default.SignalCellularAlt,
                             contentDescription = null,
-                            tint = StatusConnected,
-                            modifier = Modifier.size(16.dp)
+                            tint = getPingColor(ping),
+                            modifier = Modifier.size(14.dp)
                         )
                         Text(
-                            text = "${(10..100).random()}ms",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MutedForeground
+                            text = "${ping}ms",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MutedForeground,
+                            maxLines = 1
                         )
                     }
-
-                    // Load
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        val load = (20..80).random()
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Icon(
                             imageVector = Icons.Default.Storage,
                             contentDescription = null,
-                            tint = when {
-                                load < 40 -> StatusConnected
-                                load < 70 -> StatusConnecting
-                                else -> Destructive
-                            },
+                            tint = getLoadColor(load),
                             modifier = Modifier.size(16.dp)
                         )
                         Text(
                             text = "$load%",
-                            style = MaterialTheme.typography.bodySmall,
+                            style = MaterialTheme.typography.labelSmall,
                             color = MutedForeground
                         )
                     }
+                }
 
-                    // Favorite button
+                Spacer(modifier = Modifier.width(8.dp))
+
+                // Actions
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     IconButton(
                         onClick = onToggleFavorite,
                         modifier = Modifier.size(32.dp)
@@ -466,51 +509,78 @@ private fun ServerCard(
                             imageVector = if (isFavorite) Icons.Default.Star else Icons.Default.StarBorder,
                             contentDescription = if (isFavorite) "Remove from favorites" else "Add to favorites",
                             tint = if (isFavorite) Primary else MutedForeground,
-                            modifier = Modifier.size(20.dp)
+                            modifier = Modifier.size(16.dp)
                         )
                     }
-
-                    // Chevron
                     Icon(
                         imageVector = Icons.Default.ChevronRight,
                         contentDescription = null,
                         tint = if (isSelected) Primary else MutedForeground,
-                        modifier = Modifier.size(20.dp)
+                        modifier = Modifier.size(16.dp)
                     )
                 }
             }
 
             // Load bar
-            Spacer(modifier = Modifier.height(12.dp))
-            val load = (20..80).random()
-            LinearProgressIndicator(
-                progress = { load / 100f },
+            Spacer(modifier = Modifier.height(8.dp))
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(4.dp)
-                    .clip(RoundedCornerShape(2.dp)),
-                color = when {
-                    load < 40 -> StatusConnected
-                    load < 70 -> StatusConnecting
-                    else -> Destructive
-                },
-                trackColor = Secondary,
-            )
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(Secondary)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .fillMaxWidth(load / 100f)
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(getLoadColor(load))
+                )
+            }
         }
     }
 }
 
+private fun getPingColor(ping: Int): androidx.compose.ui.graphics.Color {
+    return when {
+        ping < 50 -> StatusConnected
+        ping < 100 -> StatusConnecting
+        else -> MutedForeground
+    }
+}
+
+private fun getLoadColor(load: Int): androidx.compose.ui.graphics.Color {
+    return when {
+        load < 40 -> StatusConnected
+        load < 70 -> StatusConnecting
+        else -> Destructive
+    }
+}
+
 private fun getFlagEmoji(country: String): String {
-    return when (country) {
-        "USA", "United States" -> "🇺🇸"
-        "UK", "United Kingdom" -> "🇬🇧"
-        "Japan" -> "🇯🇵"
-        "Germany" -> "🇩🇪"
-        "Netherlands" -> "🇳🇱"
-        "Canada" -> "🇨🇦"
-        "France" -> "🇫🇷"
-        "Australia" -> "🇦🇺"
-        "Singapore" -> "🇸🇬"
+    return when (country.lowercase()) {
+        "usa", "united states" -> "🇺🇸"
+        "uk", "united kingdom" -> "🇬🇧"
+        "japan" -> "🇯🇵"
+        "germany" -> "🇩🇪"
+        "netherlands" -> "🇳🇱"
+        "canada" -> "🇨🇦"
+        "france" -> "🇫🇷"
+        "australia" -> "🇦🇺"
+        "singapore" -> "🇸🇬"
+        "switzerland" -> "🇨🇭"
+        "sweden" -> "🇸🇪"
+        "norway" -> "🇳🇴"
+        "italy" -> "🇮🇹"
+        "spain" -> "🇪🇸"
+        "brazil" -> "🇧🇷"
+        "india" -> "🇮🇳"
+        "south korea", "korea" -> "🇰🇷"
+        "hong kong" -> "🇭🇰"
+        "ireland" -> "🇮🇪"
+        "poland" -> "🇵🇱"
         else -> "🏳️"
     }
 }
+

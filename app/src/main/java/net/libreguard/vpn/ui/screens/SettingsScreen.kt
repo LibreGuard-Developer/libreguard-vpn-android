@@ -32,6 +32,9 @@ fun SettingsScreen(
     onNavigateBack: () -> Unit,
     onNavigateToTwoFactor: () -> Unit,
     onNavigateToUpgrade: () -> Unit,
+    onNavigateToHelp: () -> Unit = {},
+    onNavigateToPrivacy: () -> Unit = {},
+    onNavigateToTerms: () -> Unit = {},
     onLogout: () -> Unit
 ) {
     var showLogoutDialog by remember { mutableStateOf(false) }
@@ -160,19 +163,19 @@ fun SettingsScreen(
                 SettingsItemRow(
                     icon = Icons.Default.Help,
                     title = "Help & Support",
-                    onClick = { }
+                    onClick = onNavigateToHelp
                 )
                 HorizontalDivider(color = Border, modifier = Modifier.padding(start = 68.dp))
                 SettingsItemRow(
                     icon = Icons.Default.Description,
                     title = "Privacy Policy",
-                    onClick = { }
+                    onClick = onNavigateToPrivacy
                 )
                 HorizontalDivider(color = Border, modifier = Modifier.padding(start = 68.dp))
                 SettingsItemRow(
                     icon = Icons.Default.Description,
                     title = "Terms of Service",
-                    onClick = { }
+                    onClick = onNavigateToTerms
                 )
             }
 

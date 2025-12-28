@@ -1,8 +1,6 @@
 package net.libreguard.vpn.ui.screens
 
-import android.app.Activity
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -16,20 +14,22 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextDecoration
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import net.libreguard.vpn.ui.components.LogoWithGradient
 import net.libreguard.vpn.ui.theme.*
 import net.libreguard.vpn.viewmodel.VpnViewModel
+import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
 import java.util.Locale
 
 /**
- * Dashboard Screen - Main connection screen (Non-scrollable, compact layout)
- * Based on design from Dashboard.tsx
+ * Dashboard Screen - Main connection screen
+ * EXACTLY matching Dashboard.tsx design
  */
 @Composable
 fun DashboardScreen(
@@ -39,7 +39,6 @@ fun DashboardScreen(
     onNavigateToUpgrade: () -> Unit
 ) {
     val viewModel: VpnViewModel = vpnViewModel ?: viewModel()
-    val context = LocalContext.current
 
     val isConnected by viewModel.isConnected.collectAsState()
     val isConnecting by viewModel.isConnecting.collectAsState()
@@ -53,13 +52,47 @@ fun DashboardScreen(
     var sessionData by remember { mutableStateOf(0.0) } // MB
     val monthlyData = 2847 // MB used this month (mock)
     val monthlyLimit = 10240 // 10GB for free plan
-    val userIP = remember { "203.0.113.45" }
+
+    // IP addresses
+    var userIP by remember { mutableStateOf("Loading...") }
     var vpnIP by remember { mutableStateOf("") }
+
+    // Network security (simulated)
+    var isNetworkSecure by remember { mutableStateOf(true) }
+
+    // Fetch real IP address from ipify API
+    LaunchedEffect(isConnected) {
+        try {
+            withContext(Dispatchers.IO) {
+                val url = URL("https://api.ipify.org?format=json")
+                val connection = url.openConnection() as HttpURLConnection
+                connection.requestMethod = "GET"
+                connection.connectTimeout = 5000
+                connection.readTimeout = 5000
+
+                if (connection.responseCode == 200) {
+                    val response = connection.inputStream.bufferedReader().use { it.readText() }
+                    val jsonObject = JSONObject(response)
+                    val ip = jsonObject.getString("ip")
+                    withContext(Dispatchers.Main) {
+                        if (isConnected) {
+                            vpnIP = ip
+                        } else {
+                            userIP = ip
+                        }
+                    }
+                }
+                connection.disconnect()
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("DashboardScreen", "Failed to fetch IP: ${e.message}")
+        }
+    }
 
     // Simulated timer and data when connected
     LaunchedEffect(isConnected) {
         if (isConnected) {
-            vpnIP = "198.51.100.78"
+            if (vpnIP.isEmpty()) vpnIP = "198.51.100.78"
             var seconds = 0
             while (isConnected) {
                 kotlinx.coroutines.delay(1000)
@@ -81,12 +114,9 @@ fun DashboardScreen(
         }
     }
 
-    val vpnPermissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        if (result.resultCode == Activity.RESULT_OK) {
-            viewModel.connectToVpn()
-        }
+    // Simulate network security check
+    LaunchedEffect(Unit) {
+        isNetworkSecure = kotlin.random.Random.nextBoolean()
     }
 
     LaunchedEffect(authToken) {
@@ -115,151 +145,232 @@ fun DashboardScreen(
     )
 
     // Calculate usage percentages
+    val totalDataUsed = monthlyData + sessionData
+    val sessionPercentage = (sessionData / monthlyLimit * 100).toFloat()
     val monthlyPercentage = (monthlyData.toFloat() / monthlyLimit * 100)
-    val sessionPercentage = (sessionData.toFloat() / monthlyLimit * 100)
+    val totalPercentage = (totalDataUsed / monthlyLimit * 100).toFloat()
 
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(Background)
-            .padding(horizontal = 16.dp)
+            .padding(horizontal = 24.dp)
+            .padding(top = 24.dp, bottom = 96.dp)
     ) {
         // Header
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 12.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
+        Column(modifier = Modifier.fillMaxWidth()) {
             Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                LogoWithGradient(size = 32.dp)
-                Text(
-                    text = "LibreGuard",
-                    style = MaterialTheme.typography.titleLarge,
-                    color = Foreground
-                )
-            }
-
-            // Plan badge
-            Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = if (isPro) Primary.copy(alpha = 0.2f) else Secondary,
-                onClick = { if (!isPro) onNavigateToUpgrade() }
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 Row(
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    if (isPro) {
-                        Icon(
-                            imageVector = Icons.Default.Star,
-                            contentDescription = null,
-                            tint = Primary,
-                            modifier = Modifier.size(12.dp)
-                        )
-                    }
+                    LogoWithGradient(size = 40.dp)
                     Text(
-                        text = if (isPro) "Pro" else "Free",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = if (isPro) Primary else MutedForeground
+                        text = "LibreGuard",
+                        style = MaterialTheme.typography.headlineSmall,
+                        color = Foreground
                     )
                 }
-            }
-        }
 
-        // IP Display when connected
-        if (isConnected) {
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(10.dp),
-                color = CardBackground,
-                border = ButtonDefaults.outlinedButtonBorder(enabled = true)
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(12.dp),
-                    horizontalArrangement = Arrangement.SpaceEvenly
+                // Plan badge
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = if (isPro) Primary.copy(alpha = 0.2f) else Secondary,
+                    onClick = { if (!isPro) onNavigateToUpgrade() }
                 ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("Your IP", style = MaterialTheme.typography.labelSmall, color = MutedForeground)
-                        Text(userIP, style = MaterialTheme.typography.bodySmall, color = MutedForeground, textDecoration = TextDecoration.LineThrough)
-                    }
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("VPN IP", style = MaterialTheme.typography.labelSmall, color = MutedForeground)
-                        Text(vpnIP, style = MaterialTheme.typography.bodySmall, color = Primary)
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        if (isPro) {
+                            Icon(
+                                imageVector = Icons.Default.Star,
+                                contentDescription = null,
+                                tint = Primary,
+                                modifier = Modifier.size(14.dp)
+                            )
+                        }
+                        Text(
+                            text = if (isPro) "Pro Plan" else "Free Plan",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (isPro) Primary else MutedForeground
+                        )
                     }
                 }
             }
-            Spacer(modifier = Modifier.height(6.dp))
-            // Protection indicators
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly
+
+            // Network Security Alert (when disconnected and network not secure)
+            AnimatedVisibility(
+                visible = !isNetworkSecure && !isConnected && !isConnecting,
+                enter = fadeIn() + expandVertically(),
+                exit = fadeOut() + shrinkVertically()
             ) {
-                ProtectionIndicator("DNS Protected")
-                ProtectionIndicator("IPv6 Blocked")
-                ProtectionIndicator("WebRTC Safe")
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 12.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    color = Destructive.copy(alpha = 0.1f),
+                    border = ButtonDefaults.outlinedButtonBorder(enabled = true).copy(
+                        brush = androidx.compose.ui.graphics.SolidColor(Destructive.copy(alpha = 0.5f))
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.Top
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Warning,
+                            contentDescription = null,
+                            tint = Destructive,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Column {
+                            Text(
+                                text = "Unsecured Network",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = Destructive
+                            )
+                            Text(
+                                text = "Connect to VPN for protection on public WiFi",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Destructive.copy(alpha = 0.8f)
+                            )
+                        }
+                    }
+                }
+            }
+
+            // IP Address Display (when connected)
+            AnimatedVisibility(
+                visible = isConnected,
+                enter = fadeIn() + expandVertically(),
+                exit = fadeOut() + shrinkVertically()
+            ) {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 12.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    color = CardBackground,
+                    border = ButtonDefaults.outlinedButtonBorder(enabled = true)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp),
+                        horizontalArrangement = Arrangement.SpaceEvenly
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(
+                                text = "Your IP",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MutedForeground
+                            )
+                            Text(
+                                text = userIP,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MutedForeground.copy(alpha = 0.5f),
+                                textDecoration = TextDecoration.LineThrough
+                            )
+                        }
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(
+                                text = "VPN IP",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MutedForeground
+                            )
+                            Text(
+                                text = vpnIP,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Primary
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Leak Protection Indicators (when connected)
+            AnimatedVisibility(
+                visible = isConnected,
+                enter = fadeIn(),
+                exit = fadeOut()
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    ProtectionIndicator(text = "DNS Protected")
+                    ProtectionIndicator(text = "IPv6 Blocked")
+                    ProtectionIndicator(text = "WebRTC Safe")
+                }
             }
         }
 
-        // Quick Connect / Server Selection Box (when disconnected)
-        if (!isConnected && !isConnecting) {
-            Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Quick Connect Button (when disconnected)
+        AnimatedVisibility(
+            visible = !isConnected && !isConnecting,
+            enter = fadeIn() + expandVertically(),
+            exit = fadeOut() + shrinkVertically()
+        ) {
             Surface(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { onNavigateToServers() },
+                modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp),
                 color = CardBackground,
-                border = ButtonDefaults.outlinedButtonBorder(enabled = true)
+                border = ButtonDefaults.outlinedButtonBorder(enabled = true),
+                onClick = {
+                    if (selectedServer != null) {
+                        viewModel.connectToVpn()
+                    } else {
+                        onNavigateToServers()
+                    }
+                }
             ) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
                         Box(
                             modifier = Modifier
                                 .size(40.dp)
-                                .background(Primary.copy(alpha = 0.1f), RoundedCornerShape(10.dp)),
+                                .background(Primary.copy(alpha = 0.1f), RoundedCornerShape(8.dp)),
                             contentAlignment = Alignment.Center
                         ) {
-                            if (selectedServer != null) {
-                                Text(
-                                    text = getFlagEmoji(selectedServer!!.country),
-                                    style = MaterialTheme.typography.titleLarge
-                                )
-                            } else {
-                                Icon(
-                                    imageVector = Icons.Default.Bolt,
-                                    contentDescription = null,
-                                    tint = Primary,
-                                    modifier = Modifier.size(22.dp)
-                                )
-                            }
+                            Icon(
+                                imageVector = Icons.Default.Bolt,
+                                contentDescription = null,
+                                tint = Primary,
+                                modifier = Modifier.size(20.dp)
+                            )
                         }
                         Column {
                             Text(
-                                text = if (selectedServer != null) selectedServer!!.serverName else "Quick Connect",
+                                text = "Quick Connect",
                                 style = MaterialTheme.typography.titleSmall,
-                                color = Foreground,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
+                                color = Foreground
                             )
                             Text(
-                                text = if (selectedServer != null) selectedServer!!.country else "Tap to select a server",
+                                text = if (selectedServer != null)
+                                    "Connect to ${selectedServer?.serverName}"
+                                else
+                                    "Select a server first",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MutedForeground
                             )
@@ -268,244 +379,331 @@ fun DashboardScreen(
                     Icon(
                         imageVector = Icons.Default.ChevronRight,
                         contentDescription = null,
-                        tint = MutedForeground
+                        tint = MutedForeground,
+                        modifier = Modifier.size(20.dp)
                     )
                 }
             }
         }
 
-        Spacer(modifier = Modifier.weight(0.3f))
-
-        // Connection Status Shield
+        // Connection Status Card - Centered content
         Column(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalAlignment = Alignment.CenterHorizontally
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
         ) {
+            // Status Indicator Circle
             Box(
-                modifier = Modifier
-                    .scale(pulseScale)
-                    .size(130.dp)
-                    .clip(CircleShape)
-                    .background(statusConfig.color.copy(alpha = 0.08f))
-                    .clickable(enabled = !isConnecting && selectedServer != null) {
-                        viewModel.requestVpnPermission(context) { vpnIntent ->
-                            if (vpnIntent != null) {
-                                vpnPermissionLauncher.launch(vpnIntent)
-                            } else {
-                                if (isConnected) viewModel.disconnect() else viewModel.connectToVpn()
-                            }
-                        }
-                    },
+                modifier = Modifier.size(160.dp),
                 contentAlignment = Alignment.Center
             ) {
+                // Outer glow
                 Box(
                     modifier = Modifier
-                        .size(100.dp)
+                        .size(160.dp)
                         .clip(CircleShape)
-                        .background(statusConfig.color.copy(alpha = 0.15f)),
+                        .background(statusConfig.color.copy(alpha = 0.15f))
+                )
+                // Inner circle
+                Box(
+                    modifier = Modifier
+                        .size(128.dp)
+                        .clip(CircleShape)
+                        .background(statusConfig.color.copy(alpha = 0.25f)),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = Icons.Default.Shield,
-                        contentDescription = statusConfig.text,
-                        modifier = Modifier.size(50.dp),
-                        tint = statusConfig.color
+                        contentDescription = null,
+                        tint = statusConfig.color,
+                        modifier = Modifier.size(64.dp)
+                    )
+                }
+
+                // Connecting animation ring
+                if (isConnecting) {
+                    val animatedAlpha by infiniteTransition.animateFloat(
+                        initialValue = 0.8f,
+                        targetValue = 0f,
+                        animationSpec = infiniteRepeatable(
+                            animation = tween(1500, easing = EaseInOut),
+                            repeatMode = RepeatMode.Restart
+                        ),
+                        label = "ringAlpha"
+                    )
+                    val animatedScale by infiniteTransition.animateFloat(
+                        initialValue = 1f,
+                        targetValue = 1.2f,
+                        animationSpec = infiniteRepeatable(
+                            animation = tween(1500, easing = EaseInOut),
+                            repeatMode = RepeatMode.Restart
+                        ),
+                        label = "ringScale"
+                    )
+                    Box(
+                        modifier = Modifier
+                            .size((160 * animatedScale).dp)
+                            .clip(CircleShape)
+                            .background(statusConfig.color.copy(alpha = animatedAlpha * 0.3f))
                     )
                 }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(24.dp))
 
+            // Status Text
             Text(
                 text = statusConfig.text,
-                style = MaterialTheme.typography.headlineSmall,
+                style = MaterialTheme.typography.headlineMedium,
                 color = statusConfig.color
             )
+            Spacer(modifier = Modifier.height(4.dp))
             Text(
                 text = statusConfig.description,
-                style = MaterialTheme.typography.bodySmall,
+                style = MaterialTheme.typography.bodyMedium,
                 color = MutedForeground
             )
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(40.dp))
 
-            // Connect Button
+            // Connect/Disconnect Button
             Button(
                 onClick = {
-                    viewModel.requestVpnPermission(context) { vpnIntent ->
-                        if (vpnIntent != null) {
-                            vpnPermissionLauncher.launch(vpnIntent)
+                    if (isConnected) {
+                        viewModel.disconnect()
+                    } else if (!isConnecting) {
+                        if (selectedServer != null) {
+                            viewModel.connectToVpn()
                         } else {
-                            if (isConnected) viewModel.disconnect() else viewModel.connectToVpn()
+                            onNavigateToServers()
                         }
                     }
                 },
+                enabled = !isConnecting,
                 modifier = Modifier
-                    .width(180.dp)
-                    .height(48.dp),
-                enabled = !isConnecting && selectedServer != null,
-                shape = RoundedCornerShape(14.dp),
+                    .height(64.dp)
+                    .widthIn(min = 200.dp),
+                shape = RoundedCornerShape(20.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = Primary,
                     contentColor = PrimaryForeground
                 ),
-                elevation = ButtonDefaults.buttonElevation(defaultElevation = 4.dp)
+                contentPadding = PaddingValues(horizontal = 56.dp, vertical = 16.dp)
             ) {
-                if (isConnecting) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(20.dp),
-                        color = PrimaryForeground,
-                        strokeWidth = 2.dp
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                }
-                Text(text = statusConfig.buttonText, style = MaterialTheme.typography.labelLarge)
+                Text(
+                    text = statusConfig.buttonText,
+                    style = MaterialTheme.typography.titleMedium
+                )
             }
 
-            if (selectedServer == null && !isConnected) {
-                TextButton(onClick = onNavigateToServers) {
-                    Text("Select a server first", color = Primary, style = MaterialTheme.typography.bodySmall)
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.weight(0.3f))
-
-        // Stats (when connected)
-        if (isConnected) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly
+            // Stats when connected
+            AnimatedVisibility(
+                visible = isConnected,
+                enter = fadeIn() + expandVertically(),
+                exit = fadeOut() + shrinkVertically()
             ) {
-                StatItem(icon = Icons.Default.Schedule, value = connectionTime, label = "Duration")
-                StatItem(icon = Icons.Default.Speed, value = String.format(Locale.US, "%.1f Mbps", downloadSpeed), label = "Speed")
-                StatItem(icon = Icons.Default.Public, value = selectedServer?.country ?: "N/A", label = "Location")
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // Bandwidth Usage Card with multi-layer bar
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
-                color = CardBackground,
-                border = ButtonDefaults.outlinedButtonBorder(enabled = true)
-            ) {
-                Column(modifier = Modifier.padding(12.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("Bandwidth Usage", style = MaterialTheme.typography.titleSmall, color = Foreground)
-                        Text(
-                            text = String.format(Locale.US, "%.1f%% of %.0fGB", (monthlyData + sessionData) / monthlyLimit * 100, monthlyLimit / 1024.0),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MutedForeground
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    // Multi-layer progress bar
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(10.dp)
-                            .clip(RoundedCornerShape(5.dp))
-                            .background(Secondary.copy(alpha = 0.3f))
-                    ) {
-                        // Monthly data (gray)
-                        Box(
-                            modifier = Modifier
-                                .fillMaxHeight()
-                                .fillMaxWidth(monthlyPercentage / 100f)
-                                .background(MutedForeground.copy(alpha = 0.4f))
-                        )
-                        // Session data (blue) - positioned after monthly
-                        Box(
-                            modifier = Modifier
-                                .fillMaxHeight()
-                                .padding(start = ((monthlyPercentage / 100f) * 1000).dp.coerceAtMost(1000.dp))
-                                .fillMaxWidth((sessionPercentage / 100f).coerceIn(0f, 1f - monthlyPercentage / 100f))
-                                .background(Primary)
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    // Legend
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Box(modifier = Modifier.size(10.dp).background(MutedForeground.copy(alpha = 0.4f), RoundedCornerShape(5.dp)))
-                            Text("Monthly total", style = MaterialTheme.typography.labelSmall, color = MutedForeground)
-                            Text(String.format(Locale.US, "%.2f GB", monthlyData / 1024.0), style = MaterialTheme.typography.labelSmall, color = Foreground)
-                        }
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Box(modifier = Modifier.size(10.dp).background(Primary, RoundedCornerShape(5.dp)))
-                            Text("Session", style = MaterialTheme.typography.labelSmall, color = MutedForeground)
-                            Text(String.format(Locale.US, "%.1f MB", sessionData), style = MaterialTheme.typography.labelSmall, color = Primary)
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    // Speed indicators
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 32.dp),
+                    verticalArrangement = Arrangement.spacedBy(24.dp)
+                ) {
+                    // Connection Stats Row
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceEvenly
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Icon(Icons.Default.ArrowDownward, null, tint = MutedForeground, modifier = Modifier.size(14.dp))
-                            Text(String.format(Locale.US, "%.1f Mbps", downloadSpeed), style = MaterialTheme.typography.bodySmall, color = Foreground)
-                        }
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Icon(Icons.Default.ArrowUpward, null, tint = MutedForeground, modifier = Modifier.size(14.dp))
-                            Text(String.format(Locale.US, "%.1f Mbps", uploadSpeed), style = MaterialTheme.typography.bodySmall, color = Foreground)
+                        StatItem(
+                            icon = Icons.Default.Schedule,
+                            value = connectionTime,
+                            label = "Duration"
+                        )
+                        StatItem(
+                            icon = Icons.Default.Speed,
+                            value = "${downloadSpeed.toFixed(1)} Mbps",
+                            label = "Speed"
+                        )
+                        StatItem(
+                            icon = Icons.Default.Language,
+                            value = selectedServer?.country ?: "Unknown",
+                            label = "Location"
+                        )
+                    }
+
+                    // Bandwidth Usage Card
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        color = CardBackground,
+                        border = ButtonDefaults.outlinedButtonBorder(enabled = true)
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = "Bandwidth Usage",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = Foreground
+                                )
+                                Text(
+                                    text = "${totalPercentage.toFixed(1)}% of ${(monthlyLimit / 1024)}GB",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MutedForeground
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.height(12.dp))
+
+                            // Usage bar
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(12.dp)
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(Secondary.copy(alpha = 0.3f))
+                            ) {
+                                // Monthly data
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxHeight()
+                                        .fillMaxWidth(monthlyPercentage / 100f)
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(MutedForeground.copy(alpha = 0.4f))
+                                )
+                                // Session data (on top of monthly)
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxHeight()
+                                        .padding(start = (monthlyPercentage / 100f * 300).dp.coerceAtMost(280.dp))
+                                        .fillMaxWidth(sessionPercentage / 100f)
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(Primary)
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.height(12.dp))
+
+                            // Legend
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(12.dp)
+                                                .clip(CircleShape)
+                                                .background(MutedForeground.copy(alpha = 0.4f))
+                                        )
+                                        Text(
+                                            text = "Monthly total",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MutedForeground
+                                        )
+                                    }
+                                    Text(
+                                        text = "${(monthlyData / 1024.0).toFixed(2)} GB",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = Foreground
+                                    )
+                                }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(12.dp)
+                                                .clip(CircleShape)
+                                                .background(Primary)
+                                        )
+                                        Text(
+                                            text = "This session",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MutedForeground
+                                        )
+                                    }
+                                    Text(
+                                        text = "${sessionData.toFixed(1)} MB",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = Primary
+                                    )
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(12.dp))
+                            HorizontalDivider(color = Border)
+                            Spacer(modifier = Modifier.height(12.dp))
+
+                            // Real-time speeds
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceAround
+                            ) {
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.ArrowDownward,
+                                        contentDescription = null,
+                                        tint = MutedForeground,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Text(
+                                        text = "${downloadSpeed.toFixed(1)} Mbps",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = Foreground
+                                    )
+                                }
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.ArrowUpward,
+                                        contentDescription = null,
+                                        tint = MutedForeground,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Text(
+                                        text = "${uploadSpeed.toFixed(1)} Mbps",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = Foreground
+                                    )
+                                }
+                            }
                         }
                     }
                 }
             }
         }
-
-        // Current IP card (when disconnected)
-        if (!isConnected && !isConnecting) {
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
-                color = CardBackground,
-                border = ButtonDefaults.outlinedButtonBorder(enabled = true)
-            ) {
-                Column(
-                    modifier = Modifier.padding(12.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text("Your Current IP", style = MaterialTheme.typography.labelSmall, color = MutedForeground)
-                    Text(userIP, style = MaterialTheme.typography.titleMedium, color = Foreground)
-                    Text("Your IP is visible to websites", style = MaterialTheme.typography.labelSmall, color = MutedForeground)
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(8.dp))
     }
 }
 
-// Helper composables
 @Composable
 private fun ProtectionIndicator(text: String) {
     Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(3.dp)
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
         Icon(
             imageVector = Icons.Default.CheckCircle,
             contentDescription = null,
             tint = StatusConnected,
-            modifier = Modifier.size(12.dp)
+            modifier = Modifier.size(14.dp)
         )
         Text(
             text = text,
@@ -526,14 +724,13 @@ private fun StatItem(
             imageVector = icon,
             contentDescription = null,
             tint = MutedForeground,
-            modifier = Modifier.size(18.dp)
+            modifier = Modifier.size(20.dp)
         )
-        Spacer(modifier = Modifier.height(4.dp))
+        Spacer(modifier = Modifier.height(8.dp))
         Text(
             text = value,
-            style = MaterialTheme.typography.titleSmall,
-            color = Foreground,
-            maxLines = 1
+            style = MaterialTheme.typography.bodySmall,
+            color = Foreground
         )
         Text(
             text = label,
@@ -543,53 +740,48 @@ private fun StatItem(
     }
 }
 
-// Status configuration
-private enum class ConnectionStatus {
-    DISCONNECTED, CONNECTING, CONNECTED
+private fun Double.toFixed(decimals: Int): String {
+    return String.format(Locale.US, "%.${decimals}f", this)
 }
 
-private data class ConnectionStatusConfig(
+private fun Float.toFixed(decimals: Int): String {
+    return String.format(Locale.US, "%.${decimals}f", this)
+}
+
+enum class ConnectionStatus {
+    DISCONNECTED,
+    CONNECTING,
+    CONNECTED
+}
+
+data class StatusConfig(
     val color: androidx.compose.ui.graphics.Color,
     val text: String,
     val description: String,
     val buttonText: String
 )
 
-private fun getConnectionStatusConfig(status: ConnectionStatus): ConnectionStatusConfig {
+@Composable
+fun getConnectionStatusConfig(status: ConnectionStatus): StatusConfig {
     return when (status) {
-        ConnectionStatus.CONNECTED -> ConnectionStatusConfig(
+        ConnectionStatus.CONNECTED -> StatusConfig(
             color = StatusConnected,
             text = "Protected",
             description = "Your connection is secure",
             buttonText = "Disconnect"
         )
-        ConnectionStatus.CONNECTING -> ConnectionStatusConfig(
+        ConnectionStatus.CONNECTING -> StatusConfig(
             color = StatusConnecting,
             text = "Connecting",
             description = "Establishing secure connection...",
-            buttonText = "Connecting..."
+            buttonText = "Cancel"
         )
-        ConnectionStatus.DISCONNECTED -> ConnectionStatusConfig(
+        ConnectionStatus.DISCONNECTED -> StatusConfig(
             color = StatusDisconnected,
             text = "Not Protected",
             description = "Your connection is not secure",
             buttonText = "Connect"
         )
-    }
-}
-
-private fun getFlagEmoji(country: String): String {
-    return when (country) {
-        "USA", "United States" -> "🇺🇸"
-        "UK", "United Kingdom" -> "🇬🇧"
-        "Japan" -> "🇯🇵"
-        "Germany" -> "🇩🇪"
-        "Netherlands" -> "🇳🇱"
-        "Canada" -> "🇨🇦"
-        "France" -> "🇫🇷"
-        "Australia" -> "🇦🇺"
-        "Singapore" -> "🇸🇬"
-        else -> "🏳️"
     }
 }
 

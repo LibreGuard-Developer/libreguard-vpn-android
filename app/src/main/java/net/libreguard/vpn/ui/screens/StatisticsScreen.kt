@@ -6,6 +6,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.ripple
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material.icons.filled.*
@@ -361,12 +362,20 @@ private fun StatSummaryCard(
     modifier: Modifier = Modifier,
     onClick: () -> Unit = {}
 ) {
+    val interactionSource = remember { MutableInteractionSource() }
+
     Surface(
-        modifier = modifier,
+        modifier = modifier.clickable(
+            interactionSource = interactionSource,
+            indication = ripple(
+                bounded = true,
+                color = Primary.copy(alpha = 0.3f)
+            ),
+            onClick = onClick
+        ),
         shape = RoundedCornerShape(12.dp),
         color = CardBackground,
-        border = ButtonDefaults.outlinedButtonBorder(enabled = true),
-        onClick = onClick
+        border = ButtonDefaults.outlinedButtonBorder(enabled = true)
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
             Box(

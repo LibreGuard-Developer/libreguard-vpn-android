@@ -1,12 +1,22 @@
 package net.libreguard.vpn.ui.screens
 
+import androidx.compose.animation.*
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewmodel.compose.viewModel
 import net.libreguard.vpn.ui.navigation.BottomNavScaffold
 import net.libreguard.vpn.ui.navigation.MainTab
+import net.libreguard.vpn.ui.theme.Background
 import net.libreguard.vpn.viewmodel.VpnViewModel
+
+/**
+ * Legal/Support screen overlay types
+ */
+enum class LegalScreen {
+    NONE, HELP, PRIVACY, TERMS
+}
 
 /**
  * Main Container Screen with Bottom Navigation
@@ -21,6 +31,7 @@ fun MainContainerScreen(
 ) {
     val vpnViewModel: VpnViewModel = viewModel()
     var currentTab by remember { mutableStateOf(MainTab.DASHBOARD) }
+    var legalScreen by remember { mutableStateOf(LegalScreen.NONE) }
 
     // Set auth token
     LaunchedEffect(authToken) {
@@ -35,38 +46,75 @@ fun MainContainerScreen(
         }
     }
 
-    BottomNavScaffold(
-        currentTab = currentTab,
-        onTabSelected = { currentTab = it }
-    ) { paddingValues ->
-        Box(modifier = Modifier.padding(paddingValues)) {
-            when (currentTab) {
-                MainTab.DASHBOARD -> {
-                    DashboardScreen(
-                        authToken = authToken,
-                        vpnViewModel = vpnViewModel,
-                        onNavigateToServers = { currentTab = MainTab.SERVERS },
-                        onNavigateToUpgrade = onNavigateToUpgrade
-                    )
+    Box(modifier = Modifier.fillMaxSize()) {
+        BottomNavScaffold(
+            currentTab = currentTab,
+            onTabSelected = { currentTab = it }
+        ) { paddingValues ->
+            Box(modifier = Modifier.padding(paddingValues)) {
+                when (currentTab) {
+                    MainTab.DASHBOARD -> {
+                        DashboardScreen(
+                            authToken = authToken,
+                            vpnViewModel = vpnViewModel,
+                            onNavigateToServers = { currentTab = MainTab.SERVERS },
+                            onNavigateToUpgrade = onNavigateToUpgrade
+                        )
+                    }
+                    MainTab.SERVERS -> {
+                        ServerListScreen(
+                            authToken = authToken,
+                            vpnViewModel = vpnViewModel,
+                            onServerSelected = { currentTab = MainTab.DASHBOARD },
+                            onNavigateToUpgrade = onNavigateToUpgrade
+                        )
+                    }
+                    MainTab.STATISTICS -> {
+                        StatisticsScreen()
+                    }
+                    MainTab.SETTINGS -> {
+                        SettingsScreen(
+                            onNavigateBack = { currentTab = MainTab.DASHBOARD },
+                            onNavigateToTwoFactor = onNavigateToTwoFactor,
+                            onNavigateToUpgrade = onNavigateToUpgrade,
+                            onNavigateToHelp = { legalScreen = LegalScreen.HELP },
+                            onNavigateToPrivacy = { legalScreen = LegalScreen.PRIVACY },
+                            onNavigateToTerms = { legalScreen = LegalScreen.TERMS },
+                            onLogout = onLogout
+                        )
+                    }
                 }
-                MainTab.SERVERS -> {
-                    ServerListScreen(
-                        authToken = authToken,
-                        vpnViewModel = vpnViewModel,
-                        onServerSelected = { currentTab = MainTab.DASHBOARD },
-                        onNavigateToUpgrade = onNavigateToUpgrade
-                    )
-                }
-                MainTab.STATISTICS -> {
-                    StatisticsScreen()
-                }
-                MainTab.SETTINGS -> {
-                    SettingsScreen(
-                        onNavigateBack = { currentTab = MainTab.DASHBOARD },
-                        onNavigateToTwoFactor = onNavigateToTwoFactor,
-                        onNavigateToUpgrade = onNavigateToUpgrade,
-                        onLogout = onLogout
-                    )
+            }
+        }
+
+        // Legal/Support Screens Overlay
+        AnimatedVisibility(
+            visible = legalScreen != LegalScreen.NONE,
+            enter = fadeIn() + slideInHorizontally(initialOffsetX = { it }),
+            exit = fadeOut() + slideOutHorizontally(targetOffsetX = { it })
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Background)
+            ) {
+                when (legalScreen) {
+                    LegalScreen.HELP -> {
+                        HelpSupportScreen(
+                            onBack = { legalScreen = LegalScreen.NONE }
+                        )
+                    }
+                    LegalScreen.PRIVACY -> {
+                        PrivacyPolicyScreen(
+                            onBack = { legalScreen = LegalScreen.NONE }
+                        )
+                    }
+                    LegalScreen.TERMS -> {
+                        TermsOfServiceScreen(
+                            onBack = { legalScreen = LegalScreen.NONE }
+                        )
+                    }
+                    LegalScreen.NONE -> { /* Do nothing */ }
                 }
             }
         }
@@ -93,4 +141,3 @@ fun MainScreen(
         onNavigateToTwoFactor = { /* Navigate to 2FA settings */ }
     )
 }
-
