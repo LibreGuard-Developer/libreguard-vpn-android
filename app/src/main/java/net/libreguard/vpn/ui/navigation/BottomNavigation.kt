@@ -37,8 +37,7 @@ fun BottomNavigationBar(
 ) {
     Surface(
         modifier = modifier
-            .fillMaxWidth()
-            .navigationBarsPadding(),
+            .fillMaxWidth(),
         color = CardBackground,
         shadowElevation = 8.dp,
         shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)
