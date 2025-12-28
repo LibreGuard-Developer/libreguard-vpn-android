@@ -76,7 +76,7 @@ fun MainContainerScreen(
                         )
                     }
                     MainTab.STATISTICS -> {
-                        StatisticsScreen()
+                        StatisticsScreen(viewModel = vpnViewModel)
                     }
                     MainTab.SETTINGS -> {
                         SettingsScreen(

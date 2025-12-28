@@ -20,6 +20,7 @@ import androidx.compose.ui.unit.dp
 import net.libreguard.vpn.data.ConnectionHistoryManager
 import net.libreguard.vpn.data.DailyUsage
 import net.libreguard.vpn.ui.theme.*
+import net.libreguard.vpn.viewmodel.VpnViewModel
 import java.util.Locale
 
 /**
@@ -28,37 +29,33 @@ import java.util.Locale
  * Features: Ripple effects on cards, real connection history
  */
 @Composable
-fun StatisticsScreen() {
+fun StatisticsScreen(viewModel: VpnViewModel) {
     val context = LocalContext.current
     val historyManager = remember { ConnectionHistoryManager(context) }
 
     var timeRange by remember { mutableStateOf("week") }
 
-    // Get real data from history manager
+    // Get real data from history manager based on selected time range
     val recentConnections = remember { historyManager.getRecentConnections(5) }
-    val dailyStats = remember { historyManager.getDailyStats() }
-    val totalDataThisWeek = remember { historyManager.getTotalDataThisWeek() }
-    val totalDurationThisWeek = remember { historyManager.getTotalDurationThisWeek() }
+    val hasData = recentConnections.isNotEmpty()
+
+    // Reactive data that changes with timeRange
+    val dailyStats = remember(timeRange) {
+        if (timeRange == "week") historyManager.getDailyStats()
+        else historyManager.getDailyStatsForMonth()
+    }
+
+    val totalDuration = remember(timeRange) {
+        if (timeRange == "week") historyManager.getTotalDurationThisWeek()
+        else historyManager.getTotalDurationThisMonth()
+    }
+
     val mostActiveDay = remember { historyManager.getMostActiveDay() }
+    val peakUsageTime = remember { historyManager.getPeakUsageTime() }
 
-    // Calculate totals (use mock data if no history)
-    val hasMockData = recentConnections.isEmpty()
-
-    // Mock data for demo when no real history exists
-    val mockDailyData = listOf(
-        DailyUsage("Mon", 1240.0, 245.0, 142),
-        DailyUsage("Tue", 1580.0, 310.0, 198),
-        DailyUsage("Wed", 890.0, 189.0, 95),
-        DailyUsage("Thu", 2100.0, 420.0, 245),
-        DailyUsage("Fri", 1920.0, 380.0, 210),
-        DailyUsage("Sat", 780.0, 156.0, 87),
-        DailyUsage("Today", 450.0, 98.0, 52)
-    )
-
-    val displayDailyStats = if (hasMockData) mockDailyData else dailyStats
-    val totalUpload = displayDailyStats.sumOf { it.upload }
-    val totalDownload = displayDailyStats.sumOf { it.download }
-    val totalDuration = if (hasMockData) displayDailyStats.sumOf { it.duration } else totalDurationThisWeek
+    // Calculate totals
+    val totalUpload = dailyStats.sumOf { it.upload }
+    val totalDownload = dailyStats.sumOf { it.download }
     val totalData = totalUpload + totalDownload
 
     Column(
@@ -202,10 +199,40 @@ fun StatisticsScreen() {
 
                         Spacer(modifier = Modifier.height(12.dp))
 
-                        val maxValue = displayDailyStats.maxOfOrNull { it.upload + it.download } ?: 1.0
-                        displayDailyStats.forEach { day ->
-                            UsageBar(day = day, maxValue = maxValue)
-                            Spacer(modifier = Modifier.height(8.dp))
+                        if (dailyStats.isNotEmpty() && totalData > 0) {
+                            val maxValue = dailyStats.maxOfOrNull { it.upload + it.download } ?: 1.0
+                            dailyStats.forEach { day ->
+                                UsageBar(day = day, maxValue = maxValue)
+                                Spacer(modifier = Modifier.height(8.dp))
+                            }
+                        } else {
+                            // Empty state
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 24.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Icon(
+                                        imageVector = Icons.Default.DataUsage,
+                                        contentDescription = null,
+                                        tint = MutedForeground,
+                                        modifier = Modifier.size(48.dp)
+                                    )
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Text(
+                                        text = "No usage data yet",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MutedForeground
+                                    )
+                                    Text(
+                                        text = "Connect to VPN to start tracking",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MutedForeground
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -253,21 +280,31 @@ fun StatisticsScreen() {
                                 }
                             }
                         } else {
-                            // Mock data
-                            listOf(
-                                MockConnection("New York, US", "2 hours ago", "1h 42m", "450 MB"),
-                                MockConnection("London, UK", "Yesterday", "3h 15m", "1.2 GB"),
-                                MockConnection("Tokyo, JP", "2 days ago", "45m", "280 MB"),
-                                MockConnection("Frankfurt, DE", "3 days ago", "2h 08m", "890 MB")
-                            ).forEachIndexed { index, connection ->
-                                ConnectionRow(
-                                    location = connection.location,
-                                    time = connection.time,
-                                    duration = connection.duration,
-                                    data = connection.data
-                                )
-                                if (index < 3) {
-                                    HorizontalDivider(color = Border, modifier = Modifier.padding(vertical = 8.dp))
+                            // Empty state
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 24.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Icon(
+                                        imageVector = Icons.Default.History,
+                                        contentDescription = null,
+                                        tint = MutedForeground,
+                                        modifier = Modifier.size(48.dp)
+                                    )
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Text(
+                                        text = "No connection history",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MutedForeground
+                                    )
+                                    Text(
+                                        text = "Your recent connections will appear here",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MutedForeground
+                                    )
                                 }
                             }
                         }
@@ -303,35 +340,76 @@ fun StatisticsScreen() {
 
                         Spacer(modifier = Modifier.height(12.dp))
 
-                        val dailyAverage = if (displayDailyStats.isNotEmpty()) {
-                            totalData / displayDailyStats.size / 1024.0
-                        } else 0.0
+                        if (hasData) {
+                            val dailyAverage = if (dailyStats.isNotEmpty()) {
+                                totalData / dailyStats.size / 1024.0
+                            } else 0.0
 
-                        InsightItem(
-                            "Your daily average is",
-                            String.format(Locale.US, "%.2f GB", dailyAverage)
-                        )
-                        InsightItem(
-                            "Most active day:",
-                            if (hasMockData) "Thursday" else mostActiveDay
-                        )
-                        InsightItem("Peak usage time:", "Evening (6-10 PM)")
+                            InsightItem(
+                                "Your daily average is",
+                                String.format(Locale.US, "%.2f GB", dailyAverage)
+                            )
+                            InsightItem(
+                                "Most active day:",
+                                mostActiveDay
+                            )
+                            InsightItem("Peak usage time:", peakUsageTime)
+                        } else {
+                            // Empty state
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 16.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "Insights will appear after you connect to VPN",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MutedForeground
+                                )
+                            }
+                        }
                     }
                 }
+            }
+
+            // Privacy Notice Card
+            item {
+                PrivacyNoticeCard()
             }
         }
     }
 }
 
-// Data class for mock connections
-private data class MockConnection(
-    val location: String,
-    val time: String,
-    val duration: String,
-    val data: String
-)
-
 // Helper composables
+@Composable
+private fun PrivacyNoticeCard() {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        color = CardBackground.copy(alpha = 0.5f),
+        border = ButtonDefaults.outlinedButtonBorder(enabled = true)
+    ) {
+        Row(
+            modifier = Modifier.padding(14.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Default.Info,
+                contentDescription = null,
+                tint = Primary.copy(alpha = 0.7f),
+                modifier = Modifier.size(20.dp)
+            )
+            Text(
+                text = "All statistics are stored locally on your device",
+                style = MaterialTheme.typography.bodySmall,
+                color = MutedForeground
+            )
+        }
+    }
+}
+
 @Composable
 private fun TimeRangeButton(
     text: String,

@@ -177,6 +177,145 @@ class ConnectionHistoryManager(context: Context) {
 
         return dailyStats.values.toList()
     }
+
+    fun getTotalDataThisMonth(): Double {
+        val calendar = Calendar.getInstance()
+        calendar.set(Calendar.DAY_OF_MONTH, 1)
+        calendar.set(Calendar.HOUR_OF_DAY, 0)
+        calendar.set(Calendar.MINUTE, 0)
+        calendar.set(Calendar.SECOND, 0)
+        calendar.set(Calendar.MILLISECOND, 0)
+        val monthStart = calendar.timeInMillis
+
+        return getHistory()
+            .filter { (it.disconnectedAt ?: it.connectedAt) >= monthStart }
+            .sumOf { it.dataUsedMB }
+    }
+
+    fun getTotalDurationThisMonth(): Int {
+        val calendar = Calendar.getInstance()
+        calendar.set(Calendar.DAY_OF_MONTH, 1)
+        calendar.set(Calendar.HOUR_OF_DAY, 0)
+        calendar.set(Calendar.MINUTE, 0)
+        calendar.set(Calendar.SECOND, 0)
+        calendar.set(Calendar.MILLISECOND, 0)
+        val monthStart = calendar.timeInMillis
+
+        return getHistory()
+            .filter { (it.disconnectedAt ?: it.connectedAt) >= monthStart }
+            .sumOf { it.durationMinutes }
+    }
+
+    fun getDailyStatsForMonth(): List<DailyUsage> {
+        val calendar = Calendar.getInstance()
+        val dayFormat = SimpleDateFormat("MMM d", Locale.US)
+        val dailyStats = mutableMapOf<String, DailyUsage>()
+
+        // Get current month's day count
+        val currentDay = calendar.get(Calendar.DAY_OF_MONTH)
+
+        // Initialize all days of the month up to today
+        calendar.set(Calendar.DAY_OF_MONTH, 1)
+        calendar.set(Calendar.HOUR_OF_DAY, 0)
+        calendar.set(Calendar.MINUTE, 0)
+        calendar.set(Calendar.SECOND, 0)
+        calendar.set(Calendar.MILLISECOND, 0)
+
+        for (i in 0 until currentDay) {
+            val dayKey = if (i == currentDay - 1) "Today" else dayFormat.format(calendar.time)
+            dailyStats[dayKey] = DailyUsage(dayKey, 0.0, 0.0, 0)
+            calendar.add(Calendar.DAY_OF_MONTH, 1)
+        }
+
+        // Aggregate data for this month
+        val monthStart = Calendar.getInstance().apply {
+            set(Calendar.DAY_OF_MONTH, 1)
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+
+        getHistory().forEach { record ->
+            if (record.connectedAt >= monthStart) {
+                calendar.timeInMillis = record.connectedAt
+                val day = calendar.get(Calendar.DAY_OF_MONTH)
+                val isToday = day == currentDay
+                val dayKey = if (isToday) "Today" else dayFormat.format(calendar.time)
+
+                val existing = dailyStats[dayKey] ?: DailyUsage(dayKey, 0.0, 0.0, 0)
+                // Assume 80% download, 20% upload for simplicity
+                dailyStats[dayKey] = existing.copy(
+                    download = existing.download + (record.dataUsedMB * 0.8),
+                    upload = existing.upload + (record.dataUsedMB * 0.2),
+                    duration = existing.duration + record.durationMinutes
+                )
+            }
+        }
+
+        return dailyStats.values.toList()
+    }
+
+    fun getPeakUsageTime(): String {
+        val hourUsage = mutableMapOf<Int, Double>()
+        val calendar = Calendar.getInstance()
+
+        getHistory().forEach { record ->
+            calendar.timeInMillis = record.connectedAt
+            val hour = calendar.get(Calendar.HOUR_OF_DAY)
+            hourUsage[hour] = (hourUsage[hour] ?: 0.0) + record.dataUsedMB
+        }
+
+        if (hourUsage.isEmpty()) return "N/A"
+
+        val peakHour = hourUsage.maxByOrNull { it.value }?.key ?: return "N/A"
+
+        // Group into time periods and show range
+        return when (peakHour) {
+            in 6..11 -> {
+                val range = findPeakRange(hourUsage, 6, 11)
+                "Morning ($range)"
+            }
+            in 12..17 -> {
+                val range = findPeakRange(hourUsage, 12, 17)
+                "Afternoon ($range)"
+            }
+            in 18..21 -> {
+                val range = findPeakRange(hourUsage, 18, 21)
+                "Evening ($range)"
+            }
+            else -> {
+                val range = findPeakRange(hourUsage, 22, 5)
+                "Night ($range)"
+            }
+        }
+    }
+
+    private fun findPeakRange(hourUsage: Map<Int, Double>, startHour: Int, endHour: Int): String {
+        val range = if (startHour <= endHour) {
+            (startHour..endHour)
+        } else {
+            // Wrap around midnight
+            (startHour..23).toList() + (0..endHour).toList()
+        }
+
+        val rangeUsage = range.associateWith { hourUsage[it] ?: 0.0 }
+        val peakHour = rangeUsage.maxByOrNull { it.value }?.key ?: startHour
+
+        val peakStart = peakHour
+        val peakEnd = (peakHour + 1) % 24
+
+        return "${formatHour(peakStart)}-${formatHour(peakEnd)}"
+    }
+
+    private fun formatHour(hour: Int): String {
+        return when {
+            hour == 0 -> "12 AM"
+            hour < 12 -> "$hour AM"
+            hour == 12 -> "12 PM"
+            else -> "${hour - 12} PM"
+        }
+    }
 }
 
 data class DailyUsage(
