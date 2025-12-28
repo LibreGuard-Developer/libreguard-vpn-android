@@ -24,6 +24,7 @@ import net.libreguard.vpn.service.vpn.WireGuardHandler
 import net.libreguard.vpn.util.VpnConfigManager
 import net.libreguard.vpn.util.TokenValidationManager
 import net.libreguard.vpn.util.TokenManager
+import net.libreguard.vpn.util.ServerLatencyHelper
 import net.libreguard.vpn.service.data.DataUsageManager
 import net.libreguard.vpn.service.data.DataUsageInfo
 import com.google.gson.Gson
@@ -81,6 +82,10 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _isLoadingServers = MutableStateFlow(false)
     val isLoadingServers: StateFlow<Boolean> = _isLoadingServers
+
+    // Server latency tracking (cached until server list reload while not connected)
+    private val _serverLatencies = MutableStateFlow<Map<Int, Int>>(emptyMap())
+    val serverLatencies: StateFlow<Map<Int, Int>> = _serverLatencies
 
     private val _errorMessage = MutableStateFlow<String?>(null)
     val errorMessage: StateFlow<String?> = _errorMessage
@@ -673,6 +678,15 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                         cacheServers(serverResponse.servers)
                         Log.d(TAG, "Loaded ${serverResponse.servers.size} remote servers from API")
                         _errorMessage.value = "Server list updated (${serverResponse.servers.size} servers)"
+
+                        // Measure latency for all servers (only if not connected to VPN)
+                        if (!_isConnected.value) {
+                            // Clear cached latencies since we're reloading servers
+                            _serverLatencies.value = emptyMap()
+                            measureServerLatencies(serverResponse.servers)
+                        } else {
+                            Log.d(TAG, "Skipping latency measurement while connected to VPN")
+                        }
                     } else {
                         Log.w(TAG, "No servers received from API, but token is still valid")
                         if (cachedServers.isEmpty()) {
@@ -692,6 +706,28 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 }
             } finally {
                 _isLoadingServers.value = false
+            }
+        }
+    }
+
+    /**
+     * Measure latency for all servers in the background
+     */
+    private fun measureServerLatencies(servers: List<RemoteVpnServer>) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                Log.d(TAG, "Starting latency measurement for ${servers.size} servers")
+                val latencies = ServerLatencyHelper.measureLatencyForServers(servers)
+
+                // Only update if measurement was successful and we got some results
+                if (latencies.isNotEmpty()) {
+                    _serverLatencies.value = latencies
+                    Log.d(TAG, "Latency measurement complete: ${latencies.size} servers measured")
+                } else {
+                    Log.w(TAG, "No latency measurements succeeded")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error measuring server latencies: ${e.message}")
             }
         }
     }

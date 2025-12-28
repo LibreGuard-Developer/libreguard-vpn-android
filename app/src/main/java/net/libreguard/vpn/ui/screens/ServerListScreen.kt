@@ -43,6 +43,7 @@ fun ServerListScreen(
     val selectedProtocol by viewModel.selectedProtocol.collectAsState()
     val isLoadingServers by viewModel.isLoadingServers.collectAsState()
     val isPro by viewModel.isPro.collectAsState()
+    val serverLatencies by viewModel.serverLatencies.collectAsState()
 
     var searchQuery by remember { mutableStateOf("") }
     var favoriteServers by remember { mutableStateOf(setOf<String>()) }
@@ -310,6 +311,7 @@ fun ServerListScreen(
                     items(favoriteServersList) { server ->
                         ServerCard(
                             server = server,
+                            latency = serverLatencies[server.id],
                             isSelected = selectedServer == server,
                             isFavorite = true,
                             onSelect = {
@@ -354,6 +356,7 @@ fun ServerListScreen(
                     items(countryServers) { server ->
                         ServerCard(
                             server = server,
+                            latency = serverLatencies[server.id],
                             isSelected = selectedServer == server,
                             isFavorite = favoriteServers.contains(server.id.toString()),
                             onSelect = {
@@ -399,12 +402,12 @@ fun ServerListScreen(
 @Composable
 private fun ServerCard(
     server: RemoteVpnServer,
+    latency: Int?,
     isSelected: Boolean,
     isFavorite: Boolean,
     onSelect: () -> Unit,
     onToggleFavorite: () -> Unit
 ) {
-    val ping = remember { (10..150).random() }
     val load = remember { (20..80).random() }
 
     Surface(
@@ -465,18 +468,33 @@ private fun ServerCard(
                         horizontalArrangement = Arrangement.spacedBy(4.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.SignalCellularAlt,
-                            contentDescription = null,
-                            tint = getPingColor(ping),
-                            modifier = Modifier.size(14.dp)
-                        )
-                        Text(
-                            text = "${ping}ms",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MutedForeground,
-                            maxLines = 1
-                        )
+                        if (latency != null) {
+                            Icon(
+                                imageVector = Icons.Default.SignalCellularAlt,
+                                contentDescription = null,
+                                tint = getPingColor(latency),
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Text(
+                                text = "${latency}ms",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MutedForeground,
+                                maxLines = 1
+                            )
+                        } else {
+                            Icon(
+                                imageVector = Icons.Default.SignalCellularAlt,
+                                contentDescription = null,
+                                tint = MutedForeground,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Text(
+                                text = "...",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MutedForeground,
+                                maxLines = 1
+                            )
+                        }
                     }
                     Spacer(modifier = Modifier.height(4.dp))
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {

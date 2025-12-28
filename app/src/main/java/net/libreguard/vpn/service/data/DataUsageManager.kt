@@ -52,6 +52,11 @@ class DataUsageManager(private val context: Context) {
     private var baselineTxBytes = 0L
     private var vpnStartTime = 0L
 
+    // Speed calculation tracking
+    private var lastRxBytes = 0L
+    private var lastTxBytes = 0L
+    private var lastSpeedUpdateTime = 0L
+
     // Monitoring job and scope
     private var monitoringJob: Job? = null
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -267,6 +272,11 @@ class DataUsageManager(private val context: Context) {
             sessionBytesUsed.set(0L)
         }
 
+        // Initialize speed tracking
+        lastRxBytes = TrafficStats.getTotalRxBytes()
+        lastTxBytes = TrafficStats.getTotalTxBytes()
+        lastSpeedUpdateTime = System.currentTimeMillis()
+
         // Mark session as active
         isVpnSessionActive = true
 
@@ -307,6 +317,8 @@ class DataUsageManager(private val context: Context) {
      */
     private suspend fun updateDataUsageStats() {
         try {
+            val currentTime = System.currentTimeMillis()
+
             // Method 1: TrafficStats API (system-wide)
             val currentRxBytes = TrafficStats.getTotalRxBytes()
             val currentTxBytes = TrafficStats.getTotalTxBytes()
@@ -335,9 +347,35 @@ class DataUsageManager(private val context: Context) {
                 Log.d(TAG, "Data usage delta: ${formatBytes(usageDelta)}, new total: ${formatBytes(newTotal)}")
             }
 
-            // Update UI
+            // Calculate real-time speeds (Mbps)
+            var downloadSpeedMbps = 0.0
+            var uploadSpeedMbps = 0.0
+
+            if (lastSpeedUpdateTime > 0) {
+                val timeDeltaMs = currentTime - lastSpeedUpdateTime
+                if (timeDeltaMs > 0) {
+                    val timeDeltaSeconds = timeDeltaMs / 1000.0
+
+                    // Calculate bytes transferred since last measurement
+                    val rxDelta = max(0L, currentRxBytes - lastRxBytes)
+                    val txDelta = max(0L, currentTxBytes - lastTxBytes)
+
+                    // Convert to Mbps: (bytes / seconds) * 8 bits/byte / 1,000,000 bits/Mbps
+                    downloadSpeedMbps = (rxDelta / timeDeltaSeconds * 8.0) / 1_000_000.0
+                    uploadSpeedMbps = (txDelta / timeDeltaSeconds * 8.0) / 1_000_000.0
+
+                    Log.v(TAG, "Speed: ↓${String.format("%.2f", downloadSpeedMbps)} Mbps ↑${String.format("%.2f", uploadSpeedMbps)} Mbps")
+                }
+            }
+
+            // Update last values for next speed calculation
+            lastRxBytes = currentRxBytes
+            lastTxBytes = currentTxBytes
+            lastSpeedUpdateTime = currentTime
+
+            // Update UI with usage and speed data
             withContext(Dispatchers.Main) {
-                updateDataUsageInfo()
+                updateDataUsageInfo(downloadSpeedMbps, uploadSpeedMbps)
             }
 
             // Save every update to ensure persistence
@@ -378,7 +416,7 @@ class DataUsageManager(private val context: Context) {
     /**
      * Update the data usage info for UI consumption
      */
-    private fun updateDataUsageInfo() {
+    private fun updateDataUsageInfo(downloadSpeedMbps: Double = 0.0, uploadSpeedMbps: Double = 0.0) {
         val currentTotal = totalBytesUsed.get()
         val currentSession = sessionBytesUsed.get()
         val usagePercentage = (currentTotal.toDouble() / DATA_LIMIT_BYTES * 100).toFloat()
@@ -391,7 +429,9 @@ class DataUsageManager(private val context: Context) {
             isNearLimit = usagePercentage > 80f,
             formattedTotal = formatBytes(currentTotal),
             formattedSession = formatBytes(currentSession),
-            formattedLimit = formatBytes(DATA_LIMIT_BYTES)
+            formattedLimit = formatBytes(DATA_LIMIT_BYTES),
+            downloadSpeedMbps = downloadSpeedMbps,
+            uploadSpeedMbps = uploadSpeedMbps
         )
 
         _dataUsage.value = info
@@ -499,7 +539,9 @@ data class DataUsageInfo(
     val isNearLimit: Boolean = false,
     val formattedTotal: String = "0 B",
     val formattedSession: String = "0 B",
-    val formattedLimit: String = "5.0 GB"
+    val formattedLimit: String = "5.0 GB",
+    val downloadSpeedMbps: Double = 0.0,
+    val uploadSpeedMbps: Double = 0.0
 )
 
 /**

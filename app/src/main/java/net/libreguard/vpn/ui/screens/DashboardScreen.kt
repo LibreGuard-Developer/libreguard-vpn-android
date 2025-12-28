@@ -49,8 +49,10 @@ fun DashboardScreen(
 
     // Connection stats
     var connectionTime by remember { mutableStateOf("00:00:00") }
-    var downloadSpeed by remember { mutableStateOf(0.0) }
-    var uploadSpeed by remember { mutableStateOf(0.0) }
+
+    // Real-time speeds from DataUsageManager
+    val downloadSpeed = remember(dataUsageInfo) { dataUsageInfo.downloadSpeedMbps }
+    val uploadSpeed = remember(dataUsageInfo) { dataUsageInfo.uploadSpeedMbps }
 
     // Real session data from ViewModel (in MB)
     val sessionData = remember(dataUsageInfo) {
@@ -71,11 +73,8 @@ fun DashboardScreen(
     var userIP by remember { mutableStateOf("Loading...") }
     var vpnIP by remember { mutableStateOf("") }
 
-    // Network security (simulated)
-    var isNetworkSecure by remember { mutableStateOf(true) }
-
-    // Fetch real IP address from ipify API
-    LaunchedEffect(isConnected) {
+    // Fetch user's real IP address from ipify API once on load
+    LaunchedEffect(Unit) {
         try {
             withContext(Dispatchers.IO) {
                 val url = URL("https://api.ipify.org?format=json")
@@ -89,24 +88,53 @@ fun DashboardScreen(
                     val jsonObject = JSONObject(response)
                     val ip = jsonObject.getString("ip")
                     withContext(Dispatchers.Main) {
-                        if (isConnected) {
-                            vpnIP = ip
-                        } else {
-                            userIP = ip
-                        }
+                        userIP = ip
                     }
                 }
                 connection.disconnect()
             }
         } catch (e: Exception) {
-            android.util.Log.e("DashboardScreen", "Failed to fetch IP: ${e.message}")
+            android.util.Log.e("DashboardScreen", "Failed to fetch user IP: ${e.message}")
+            userIP = "Unknown"
         }
     }
 
-    // Connection timer and speed simulation when connected
+    // Update VPN IP when connected - use server IP and verify it's reachable
+    LaunchedEffect(isConnected, selectedServer) {
+        if (isConnected) {
+            val server = selectedServer
+            if (server != null) {
+                val serverIp = server.serverIp
+                try {
+                    // Verify server IP is reachable
+                    withContext(Dispatchers.IO) {
+                        val address = java.net.InetAddress.getByName(serverIp)
+                        val isReachable = address.isReachable(3000)
+                        withContext(Dispatchers.Main) {
+                            if (isReachable) {
+                                vpnIP = serverIp
+                                android.util.Log.d("DashboardScreen", "VPN server IP verified: $serverIp")
+                            } else {
+                                // Fallback: trust API-provided value even if not reachable
+                                vpnIP = serverIp
+                                android.util.Log.w("DashboardScreen", "VPN server IP not reachable but using anyway: $serverIp")
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.e("DashboardScreen", "Failed to verify server IP: ${e.message}")
+                    // Fallback: trust API-provided value
+                    vpnIP = serverIp
+                }
+            }
+        } else {
+            vpnIP = ""
+        }
+    }
+
+    // Connection timer when connected
     LaunchedEffect(isConnected) {
         if (isConnected) {
-            if (vpnIP.isEmpty()) vpnIP = "198.51.100.78"
             var seconds = 0
             while (isConnected) {
                 kotlinx.coroutines.delay(1000)
@@ -115,21 +143,10 @@ fun DashboardScreen(
                 val minutes = (seconds % 3600) / 60
                 val secs = seconds % 60
                 connectionTime = String.format(Locale.US, "%02d:%02d:%02d", hours, minutes, secs)
-                // Simulate realistic VPN speeds (actual tracking would require network monitoring)
-                downloadSpeed = 8 + kotlin.random.Random.nextDouble() * 8
-                uploadSpeed = 2 + kotlin.random.Random.nextDouble() * 4
             }
         } else {
             connectionTime = "00:00:00"
-            downloadSpeed = 0.0
-            uploadSpeed = 0.0
-            vpnIP = ""
         }
-    }
-
-    // Simulate network security check
-    LaunchedEffect(Unit) {
-        isNetworkSecure = kotlin.random.Random.nextBoolean()
     }
 
     LaunchedEffect(authToken) {
