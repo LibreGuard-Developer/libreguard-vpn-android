@@ -36,6 +36,15 @@ data class ServerResponse(
     val servers: List<RemoteVpnServer>
 )
 
+/**
+ * VPN Server information returned from the ManagementPanel API.
+ * 
+ * Now includes:
+ * - load: Server load percentage (0-100), null if unavailable
+ * - activeConnections: Number of active VPN connections
+ * - latencyPingPort: Port for latency measurement (default 5001)
+ * - loadDataFresh: Whether load data was recently updated
+ */
 data class RemoteVpnServer(
     val id: Int,
     val serverName: String,
@@ -44,7 +53,12 @@ data class RemoteVpnServer(
     val country: String,
     val city: String,
     val linkSpeed: Int,
-    val pricingTier: String
+    val pricingTier: String,
+    // NEW: Server load and latency fields
+    val load: Int? = null,                  // Server load percentage (0-100)
+    val activeConnections: Int? = null,     // Number of active VPN connections
+    val latencyPingPort: Int = 5001,        // Port for latency ping endpoint
+    val loadDataFresh: Boolean = false      // Whether load data is fresh (within last 10 min)
 )
 
 // New models for certificate request & job polling
