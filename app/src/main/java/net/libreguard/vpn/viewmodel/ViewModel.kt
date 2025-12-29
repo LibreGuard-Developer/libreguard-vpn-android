@@ -8,6 +8,17 @@ import android.net.VpnService
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import net.libreguard.vpn.R
 import net.libreguard.vpn.data.ConnectionHistoryManager
 import net.libreguard.vpn.data.ConnectionRecord
@@ -21,36 +32,26 @@ import net.libreguard.vpn.service.vpn.StrongSwanHandler
 import net.libreguard.vpn.service.vpn.VpnProtocolFactory
 import net.libreguard.vpn.service.vpn.VpnProtocolHandler
 import net.libreguard.vpn.service.vpn.WireGuardHandler
-import net.libreguard.vpn.util.VpnConfigManager
 import net.libreguard.vpn.util.TokenValidationManager
 import net.libreguard.vpn.util.TokenManager
 import net.libreguard.vpn.util.ServerLatencyHelper
 import net.libreguard.vpn.service.data.DataUsageManager
 import net.libreguard.vpn.service.data.DataUsageInfo
-import com.google.gson.Gson
-import com.google.gson.reflect.TypeToken
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.SharedFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import org.json.JSONObject
 import org.strongswan.android.data.VpnProfile
-import org.strongswan.android.data.VpnProfileSource
 import org.strongswan.android.data.VpnProfileDataSource
+import org.strongswan.android.data.VpnProfileSource
 import org.strongswan.android.data.VpnType
 import java.io.File
 import java.io.InputStreamReader
-import org.json.JSONObject
+import java.lang.reflect.Method
 import android.security.KeyChain
 import android.security.KeyChainAliasCallback
 import net.libreguard.vpn.network.OpenVpnDownloadRequest
 import okhttp3.ResponseBody
+import kotlinx.coroutines.isActive
 import net.libreguard.vpn.network.CertificateRequest
-import java.lang.reflect.Method
+import net.libreguard.vpn.util.VpnConfigManager
 
 private val _connectionState = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected)
 val connectionState: StateFlow<ConnectionState> = _connectionState
@@ -143,6 +144,15 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     private val connectionHistoryManager by lazy { ConnectionHistoryManager(getApplication()) }
     private var currentConnectionStartTime: Long? = null
     private var currentConnectionDataStart: Double = 0.0
+
+    // Connection duration tracking (persists across navigation)
+    private val _connectionDuration = MutableStateFlow("00:00:00")
+    val connectionDuration: StateFlow<String> = _connectionDuration
+    private var connectionTimerJob: Job? = null
+
+    // VPN IP tracking (persists across navigation)
+    private val _vpnIP = MutableStateFlow("")
+    val vpnIP: StateFlow<String> = _vpnIP
 
     // Token validation for early revocation detection
     private var tokenValidationManager: TokenValidationManager? = null
@@ -253,8 +263,19 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 val wasConnected = sharedPrefs.getBoolean("was_connected", false)
                 val serverName = sharedPrefs.getString("connected_server", null)
                 val protocolName = sharedPrefs.getString("connected_protocol", null)
+                val connectedAt = sharedPrefs.getLong("connected_at", 0L)
+                val persistedServerIp = sharedPrefs.getString("connected_server_ip", null)
 
-                Log.d(TAG, "Loading persisted state: wasConnected=$wasConnected, server=$serverName, protocol=$protocolName, hasToken=${authToken != null}")
+                // If servers list is empty (e.g., not yet loaded), try cached list so we can restore the selected server
+                if (_servers.value.isEmpty()) {
+                    val cachedServers = loadCachedServers()
+                    if (cachedServers.isNotEmpty()) {
+                        _servers.value = cachedServers
+                        Log.d(TAG, "Loaded cached servers during state restore: ${cachedServers.size}")
+                    }
+                }
+
+                Log.d(TAG, "Loading persisted state: wasConnected=$wasConnected, server=$serverName, protocol=$protocolName, hasToken=${authToken != null}, connectedAt=$connectedAt, ip=$persistedServerIp")
 
                 if (wasConnected && serverName != null && protocolName != null) {
                     Log.d(TAG, "Restoring connection state: server=$serverName, protocol=$protocolName")
@@ -284,6 +305,23 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                         _isConnecting.value = false
                         _errorMessage.value = "Reconnected to existing VPN session"
                         Log.d(TAG, "Successfully restored VPN connection state")
+
+                        // Restore persisted start time/IP for UI timer and VPN IP display
+                        if (connectedAt > 0) {
+                            currentConnectionStartTime = connectedAt
+                            val elapsedSeconds = ((System.currentTimeMillis() - connectedAt) / 1000L).coerceAtLeast(0)
+                            startConnectionTimer(initialSeconds = elapsedSeconds.toInt())
+                        }
+                        if (!persistedServerIp.isNullOrBlank()) {
+                            _vpnIP.value = persistedServerIp
+                        }
+
+                        // Also start tracking if we have a server restored (ensures history/timer even if handler state misses)
+                        if (_selectedServer.value != null && connectedAt > 0) {
+                            currentConnectionStartTime = connectedAt
+                            val elapsedSeconds = ((System.currentTimeMillis() - connectedAt) / 1000L).coerceAtLeast(0)
+                            startConnectionTimer(initialSeconds = elapsedSeconds.toInt())
+                        }
 
                         // ENHANCED FIX: Create a handler for the restored connection AND restore the VPN profile
                         try {
@@ -411,14 +449,17 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             val server = _selectedServer.value
             val protocol = _selectedProtocol.value
             val connected = _isConnected.value
+            val startTime = currentConnectionStartTime ?: System.currentTimeMillis()
 
             sharedPrefs.edit().apply {
                 putBoolean("was_connected", connected)
                 putString("connected_server", server?.serverName)
                 putString("connected_protocol", protocol.displayName)
+                putLong("connected_at", startTime)
+                putString("connected_server_ip", server?.serverIp)
                 apply()
             }
-            Log.d(TAG, "Saved connection state: connected=$connected, server=${server?.serverName}, hasToken=${authToken != null}")
+            Log.d(TAG, "Saved connection state: connected=$connected, server=${server?.serverName}, hasToken=${authToken != null}, connectedAt=$startTime, ip=${server?.serverIp}")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to save connection state", e)
         }
@@ -435,6 +476,8 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 remove("was_connected")
                 remove("connected_server")
                 remove("connected_protocol")
+                remove("connected_at")
+                remove("connected_server_ip")
                 // Preserve auth token
                 if (currentAuthToken != null) {
                     putString("auth_token", currentAuthToken)
@@ -1437,6 +1480,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                                     Log.d(TAG, "Successfully connected via StateFlow")
                                     dataUsageManager.startMonitoring()
                                     Log.d(TAG, "Started data usage monitoring")
+                                    startConnectionTracking()
                                     saveConnectionState()
                                 } else {
                                     Log.w(TAG, "Ignoring Connected state - not in Connecting state (possible stale update)")
@@ -1508,6 +1552,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 dataUsageManager.startMonitoring()
                 Log.d(TAG, "Started data usage monitoring")
 
+                startConnectionTracking()
                 // Save connection state for persistence
                 saveConnectionState()
             } else {
@@ -1624,9 +1669,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         dataUsageManager.startMonitoring()
         Log.d(TAG, "Started data usage monitoring")
 
-        // Track connection for history
         startConnectionTracking()
 
+        // Save connection state for persistence
         saveConnectionState()
     }
 
@@ -1648,13 +1693,62 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         )
         connectionHistoryManager.addRecord(record)
         Log.d(TAG, "Started tracking connection to ${server.serverName}")
+
+        // Start connection duration timer
+        startConnectionTimer()
+
+        // Fetch and set VPN IP
+        fetchVpnIP(server.serverIp)
+    }
+
+    /**
+     * Start connection duration timer
+     */
+    private fun startConnectionTimer(initialSeconds: Int = 0) {
+        connectionTimerJob?.cancel()
+        connectionTimerJob = viewModelScope.launch(Dispatchers.Default) {
+            var seconds = initialSeconds
+            while (isActive && _isConnected.value) {
+                delay(1000)
+                seconds++
+                val hours = seconds / 3600
+                val minutes = (seconds % 3600) / 60
+                val secs = seconds % 60
+                _connectionDuration.value = String.format(java.util.Locale.US, "%02d:%02d:%02d", hours, minutes, secs)
+            }
+        }
+    }
+
+    /**
+     * Fetch VPN IP from server
+     */
+    private fun fetchVpnIP(serverIp: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val address = java.net.InetAddress.getByName(serverIp)
+                val isReachable = address.isReachable(3000)
+                withContext(Dispatchers.Main) {
+                    if (isReachable) {
+                        _vpnIP.value = serverIp
+                        Log.d(TAG, "VPN server IP verified: $serverIp")
+                    } else {
+                        _vpnIP.value = serverIp
+                        Log.w(TAG, "VPN server IP not reachable but using anyway: $serverIp")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to verify server IP: ${e.message}")
+                withContext(Dispatchers.Main) {
+                    _vpnIP.value = serverIp
+                }
+            }
+        }
     }
 
     /**
      * Stop tracking connection and update history
      */
     private fun stopConnectionTracking() {
-        val startTime = currentConnectionStartTime ?: return
         val currentDataMB = _dataUsageInfo.value.totalBytesUsed / (1024.0 * 1024.0)
         val dataUsedMB = (currentDataMB - currentConnectionDataStart).coerceAtLeast(0.0)
 
@@ -1666,6 +1760,14 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
         currentConnectionStartTime = null
         currentConnectionDataStart = 0.0
+
+        // Stop connection timer
+        connectionTimerJob?.cancel()
+        connectionTimerJob = null
+        _connectionDuration.value = "00:00:00"
+
+        // Clear VPN IP
+        _vpnIP.value = ""
     }
 
     // Observe active handler state (especially for OpenVPN) and reflect in UI
@@ -1679,6 +1781,11 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                         is ConnectionState.Connected -> {
                             _isConnected.value = true
                             _isConnecting.value = false
+                            // Ensure timer/IP tracking starts even when connection comes from handler state
+                            if (currentConnectionStartTime == null) {
+                                startConnectionTracking()
+                                saveConnectionState()
+                            }
                         }
                         is ConnectionState.Connecting -> {
                             _isConnecting.value = true
@@ -1737,6 +1844,8 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 // Start data usage monitoring when VPN connects
                 dataUsageManager.startMonitoring()
                 Log.d(TAG, "Started data usage monitoring")
+
+                startConnectionTracking()
 
                 // Save connection state for persistence
                 saveConnectionState()

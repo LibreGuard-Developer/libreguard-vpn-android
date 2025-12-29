@@ -1,6 +1,5 @@
 package net.libreguard.vpn.ui.screens
 
-import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -47,8 +46,11 @@ fun DashboardScreen(
     // Real data usage from ViewModel
     val dataUsageInfo by viewModel.dataUsageInfo.collectAsState()
 
-    // Connection stats
-    var connectionTime by remember { mutableStateOf("00:00:00") }
+    // Connection duration from ViewModel (persists across navigation)
+    val connectionTime by viewModel.connectionDuration.collectAsState()
+
+    // VPN IP from ViewModel (persists across navigation)
+    val vpnIP by viewModel.vpnIP.collectAsState()
 
     // Real-time speeds from DataUsageManager
     val downloadSpeed = remember(dataUsageInfo) { dataUsageInfo.downloadSpeedMbps }
@@ -71,7 +73,6 @@ fun DashboardScreen(
 
     // IP addresses
     var userIP by remember { mutableStateOf("Loading...") }
-    var vpnIP by remember { mutableStateOf("") }
 
     // Fetch user's real IP address from ipify API once on load
     LaunchedEffect(Unit) {
@@ -96,56 +97,6 @@ fun DashboardScreen(
         } catch (e: Exception) {
             android.util.Log.e("DashboardScreen", "Failed to fetch user IP: ${e.message}")
             userIP = "Unknown"
-        }
-    }
-
-    // Update VPN IP when connected - use server IP and verify it's reachable
-    LaunchedEffect(isConnected, selectedServer) {
-        if (isConnected) {
-            val server = selectedServer
-            if (server != null) {
-                val serverIp = server.serverIp
-                try {
-                    // Verify server IP is reachable
-                    withContext(Dispatchers.IO) {
-                        val address = java.net.InetAddress.getByName(serverIp)
-                        val isReachable = address.isReachable(3000)
-                        withContext(Dispatchers.Main) {
-                            if (isReachable) {
-                                vpnIP = serverIp
-                                android.util.Log.d("DashboardScreen", "VPN server IP verified: $serverIp")
-                            } else {
-                                // Fallback: trust API-provided value even if not reachable
-                                vpnIP = serverIp
-                                android.util.Log.w("DashboardScreen", "VPN server IP not reachable but using anyway: $serverIp")
-                            }
-                        }
-                    }
-                } catch (e: Exception) {
-                    android.util.Log.e("DashboardScreen", "Failed to verify server IP: ${e.message}")
-                    // Fallback: trust API-provided value
-                    vpnIP = serverIp
-                }
-            }
-        } else {
-            vpnIP = ""
-        }
-    }
-
-    // Connection timer when connected
-    LaunchedEffect(isConnected) {
-        if (isConnected) {
-            var seconds = 0
-            while (isConnected) {
-                kotlinx.coroutines.delay(1000)
-                seconds++
-                val hours = seconds / 3600
-                val minutes = (seconds % 3600) / 60
-                val secs = seconds % 60
-                connectionTime = String.format(Locale.US, "%02d:%02d:%02d", hours, minutes, secs)
-            }
-        } else {
-            connectionTime = "00:00:00"
         }
     }
 
