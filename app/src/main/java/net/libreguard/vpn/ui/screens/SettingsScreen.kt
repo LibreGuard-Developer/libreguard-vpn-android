@@ -3,6 +3,7 @@ package net.libreguard.vpn.ui.screens
 import android.util.Base64
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -20,6 +21,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.launch
 import net.libreguard.vpn.network.RetrofitClient
 import net.libreguard.vpn.network.SubscriptionStatusResponse
 import net.libreguard.vpn.ui.theme.*
@@ -38,17 +40,41 @@ fun SettingsScreen(
     onLogout: () -> Unit
 ) {
     var showLogoutDialog by remember { mutableStateOf(false) }
+    var showDisable2faDialog by remember { mutableStateOf(false) }
+    var is2faEnabled by remember { mutableStateOf(false) }
+    var isLoading2fa by remember { mutableStateOf(false) }
 
     val context = LocalContext.current
     val sharedPrefs = remember { context.getSharedPreferences("vpn_state_prefs", android.content.Context.MODE_PRIVATE) }
     val token = remember { sharedPrefs.getString("auth_token", null) }
 
+    val coroutineScope = rememberCoroutineScope()
+
     val subscriptionViewModel: SubscriptionViewModel = viewModel()
     val tokenManager = remember { RetrofitClient.getTokenManager() }
     val deviceMetadata by tokenManager.deviceMetadataFlow.collectAsState()
 
+    // Fetch 2FA status
     LaunchedEffect(token) {
-        token?.let { subscriptionViewModel.setAuthToken(it) }
+        token?.let {
+            subscriptionViewModel.setAuthToken(it)
+            // Fetch 2FA status
+            coroutineScope.launch {
+                isLoading2fa = true
+                try {
+                    val response = RetrofitClient.instance.get2faStatus("Bearer $it")
+                    if (response.isSuccessful) {
+                        response.body()?.let { status ->
+                            is2faEnabled = status.is2faEnabled
+                        }
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.e("SettingsScreen", "Error fetching 2FA status: ${e.message}")
+                } finally {
+                    isLoading2fa = false
+                }
+            }
+        }
         subscriptionViewModel.fetchSubscriptionStatus()
     }
 
@@ -123,12 +149,62 @@ fun SettingsScreen(
             SectionHeader(title = "Security", modifier = Modifier.padding(horizontal = 24.dp))
 
             SettingsCard(modifier = Modifier.padding(horizontal = 24.dp)) {
-                SettingsItemRow(
-                    icon = Icons.Default.Smartphone,
-                    title = "Two-Factor Authentication",
-                    subtitle = "Add extra layer of security",
-                    onClick = onNavigateToTwoFactor
-                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            android.util.Log.d("SettingsScreen", "2FA row clicked, current is2faEnabled=$is2faEnabled")
+                            if (!is2faEnabled) {
+                                // Navigate to setup screen when disabled
+                                android.util.Log.d("SettingsScreen", "Navigating to TwoFactorSettings for setup")
+                                onNavigateToTwoFactor()
+                            } else {
+                                // Show confirmation dialog to disable when enabled
+                                android.util.Log.d("SettingsScreen", "Showing disable 2FA dialog")
+                                showDisable2faDialog = true
+                            }
+                        }
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Primary.copy(alpha = 0.1f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Lock,
+                            contentDescription = null,
+                            tint = Primary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Two-Factor Authentication",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = Foreground
+                        )
+                        Text(
+                            text = "Add extra layer of security",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MutedForeground
+                        )
+                    }
+                    Switch(
+                        checked = is2faEnabled,
+                        onCheckedChange = null, // Disable direct switch interaction
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = PrimaryForeground,
+                            checkedTrackColor = Primary,
+                            uncheckedThumbColor = PrimaryForeground,
+                            uncheckedTrackColor = SwitchBackground
+                        )
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.height(24.dp))
@@ -301,6 +377,79 @@ fun SettingsScreen(
             shape = RoundedCornerShape(24.dp)
         )
     }
+
+    // Disable 2FA Confirmation Dialog
+    if (showDisable2faDialog) {
+        AlertDialog(
+            onDismissRequest = { showDisable2faDialog = false },
+            icon = {
+                Box(
+                    modifier = Modifier
+                        .size(56.dp)
+                        .background(Destructive.copy(alpha = 0.1f), RoundedCornerShape(28.dp)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Lock,
+                        contentDescription = null,
+                        tint = Destructive,
+                        modifier = Modifier.size(28.dp)
+                    )
+                }
+            },
+            title = {
+                Text(
+                    if (is2faEnabled) "Disable Two-Factor Authentication" else "Enable Two-Factor Authentication",
+                    style = MaterialTheme.typography.headlineSmall,
+                    color = Foreground
+                )
+            },
+            text = {
+                Text(
+                    if (is2faEnabled) "Are you sure you want to disable 2FA? You will lose an extra layer of security." else "Enable 2FA to add an extra layer of security to your account.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MutedForeground
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showDisable2faDialog = false
+                        // Disable 2FA via API
+                        coroutineScope.launch {
+                            try {
+                                token?.let {
+                                    val response = RetrofitClient.instance.disable2fa("Bearer $it")
+                                    if (response.isSuccessful) {
+                                        is2faEnabled = false
+                                        android.util.Log.d("SettingsScreen", "2FA disabled successfully")
+                                    } else {
+                                        android.util.Log.e("SettingsScreen", "Failed to disable 2FA: ${response.code()}")
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                android.util.Log.e("SettingsScreen", "Error disabling 2FA: ${e.message}")
+                            }
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Destructive),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("Disable 2FA")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showDisable2faDialog = false },
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("Cancel", color = MutedForeground)
+                }
+            },
+            containerColor = Background,
+            shape = RoundedCornerShape(24.dp)
+        )
+    }
 }
 
 @Composable
@@ -338,7 +487,7 @@ private fun SettingsItemRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onClick() }
+            .clickable(onClick = onClick)
             .padding(16.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -578,4 +727,3 @@ fun PreviewSettingsScreenNew() {
         onLogout = { }
     )
 }
-

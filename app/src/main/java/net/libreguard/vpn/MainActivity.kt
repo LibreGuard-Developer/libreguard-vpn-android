@@ -102,18 +102,15 @@ fun AppNavigation(modifier: Modifier = Modifier) {
     val coroutineScope = rememberCoroutineScope()
 
     // Helper: perform full logout (API + Google + local state)
-    // This runs in the calling coroutine scope (non-blocking, best-effort)
-    fun performLogout() {
-        // Call LogoutManager in background (non-blocking, best-effort)
-        coroutineScope.launch {
-            Log.d("MainActivity", "Starting async logout via LogoutManager")
-            try {
-                LogoutManager.logout()
-                Log.i("MainActivity", "Logout completed successfully")
-            } catch (e: Exception) {
-                Log.e("MainActivity", "LogoutManager.logout() failed: ${e.message}", e)
-                // Continue anyway - user is already navigating to login
-            }
+    // This runs sequentially to guarantee API call occurs after VPN disconnect
+    suspend fun performLogoutSequential() {
+        Log.d("MainActivity", "Starting logout via LogoutManager")
+        try {
+            LogoutManager.logout()
+            Log.i("MainActivity", "Logout completed successfully")
+        } catch (e: Exception) {
+            Log.e("MainActivity", "LogoutManager.logout() failed: ${e.message}", e)
+            // Continue anyway - user is already navigating to login
         }
 
         // Clear in-memory auth token immediately for UI responsiveness
@@ -127,6 +124,17 @@ fun AppNavigation(modifier: Modifier = Modifier) {
         GoogleSignIn.getClient(context, gso).signOut()
     }
 
+    suspend fun disconnectThenLogout(navigate: () -> Unit) {
+        try {
+            vpnViewModel.forceDisconnectVpn(context)
+        } catch (e: Exception) {
+            android.util.Log.e("MainActivity", "Error disconnecting VPN on logout: ${e.message}")
+        }
+
+        performLogoutSequential()
+        navigate()
+    }
+
     // Handle Logout Broadcast
     DisposableEffect(Unit) {
         val receiver = object : BroadcastReceiver() {
@@ -134,15 +142,10 @@ fun AppNavigation(modifier: Modifier = Modifier) {
                 if (intent?.action == "net.libreguard.vpn.ACTION_LOGOUT") {
                     // CRITICAL: Disconnect VPN first before clearing tokens
                     coroutineScope.launch {
-                        try {
-                            vpnViewModel.forceDisconnectVpn(context)
-                        } catch (e: Exception) {
-                            android.util.Log.e("MainActivity", "Error disconnecting VPN on logout: ${e.message}")
-                        }
-                        // Then perform logout
-                        performLogout()
-                        navController.navigate("login") {
-                            popUpTo(0) { inclusive = true }
+                        disconnectThenLogout {
+                            navController.navigate("login") {
+                                popUpTo(0) { inclusive = true }
+                            }
                         }
                     }
                 }
@@ -402,14 +405,10 @@ fun AppNavigation(modifier: Modifier = Modifier) {
                     onLogout = {
                         // Disconnect VPN first, then logout
                         coroutineScope.launch {
-                            try {
-                                vpnViewModel.forceDisconnectVpn(context)
-                            } catch (e: Exception) {
-                                android.util.Log.e("MainActivity", "Error disconnecting VPN on manual logout: ${e.message}")
-                            }
-                            performLogout()
-                            navController.navigate("login") {
-                                popUpTo("main") { inclusive = true }
+                            disconnectThenLogout {
+                                navController.navigate("login") {
+                                    popUpTo("main") { inclusive = true }
+                                }
                             }
                         }
                     },
@@ -418,6 +417,10 @@ fun AppNavigation(modifier: Modifier = Modifier) {
                     },
                     onNavigateToUpgrade = {
                         navController.navigate("upgrade")
+                    },
+                    onNavigateToTwoFactor = {
+                        android.util.Log.d("MainActivity", "onNavigateToTwoFactor (MainScreen) called, authToken is ${if (authToken == null) "NULL" else "present"}")
+                        navController.navigate("twoFactorSettings")
                     }
                 )
             } ?: run {
@@ -437,6 +440,7 @@ fun AppNavigation(modifier: Modifier = Modifier) {
                         navController.popBackStack()
                     },
                     onNavigateToTwoFactor = {
+                        android.util.Log.d("MainActivity", "onNavigateToTwoFactor called, authToken is ${if (authToken == null) "NULL" else "present"}")
                         navController.navigate("twoFactorSettings")
                     },
                     onNavigateToUpgrade = {
@@ -445,14 +449,10 @@ fun AppNavigation(modifier: Modifier = Modifier) {
                     onLogout = {
                         // Disconnect VPN first, then logout
                         coroutineScope.launch {
-                            try {
-                                vpnViewModel.forceDisconnectVpn(context)
-                            } catch (e: Exception) {
-                                android.util.Log.e("MainActivity", "Error disconnecting VPN on settings logout: ${e.message}")
-                            }
-                            performLogout()
-                            navController.navigate("login") {
-                                popUpTo(0) { inclusive = true }
+                            disconnectThenLogout {
+                                navController.navigate("login") {
+                                    popUpTo(0) { inclusive = true }
+                                }
                             }
                         }
                     }
@@ -461,13 +461,24 @@ fun AppNavigation(modifier: Modifier = Modifier) {
         }
 
         composable("twoFactorSettings") {
+            android.util.Log.d("MainActivity", "twoFactorSettings composable called, authToken is ${if (authToken == null) "NULL" else "present"}")
             authToken?.let { token ->
+                android.util.Log.d("MainActivity", "Rendering TwoFactorSettingsScreen with token: ${token.take(20)}...")
                 TwoFactorSettingsScreen(
                     authToken = token,
                     onNavigateBack = {
+                        android.util.Log.d("MainActivity", "TwoFactorSettings onNavigateBack called")
                         navController.popBackStack()
                     }
                 )
+            } ?: run {
+                // If token is null, this shouldn't happen, but log it
+                android.util.Log.e("MainActivity", "twoFactorSettings: authToken is NULL! Redirecting to login")
+                LaunchedEffect(Unit) {
+                    navController.navigate("login") {
+                        popUpTo("twoFactorSettings") { inclusive = true }
+                    }
+                }
             }
         }
 

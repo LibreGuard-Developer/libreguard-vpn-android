@@ -137,13 +137,13 @@ fun MainScreen(
     vpnViewModel: VpnViewModel? = null,
     onLogout: (() -> Unit)? = null,
     onNavigateToSettings: (() -> Unit)? = null,
-    onNavigateToUpgrade: (() -> Unit)? = null
+    onNavigateToUpgrade: (() -> Unit)? = null,
+    onNavigateToTwoFactor: (() -> Unit)? = null
 ) {
-    // Use MainContainerScreen for full navigation experience
     MainContainerScreen(
         authToken = authToken,
         onLogout = { onLogout?.invoke() },
         onNavigateToUpgrade = { onNavigateToUpgrade?.invoke() },
-        onNavigateToTwoFactor = { /* Navigate to 2FA settings */ }
+        onNavigateToTwoFactor = { onNavigateToTwoFactor?.invoke() }
     )
 }

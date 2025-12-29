@@ -590,11 +590,22 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 Log.d(TAG, "No active handler - trying fallback methods")
             }
 
+            // 4b. Explicitly stop foreground VPN service if running
+            try {
+                val serviceIntent = Intent(context, net.libreguard.vpn.service.LibreGuardVpnService::class.java).apply {
+                    action = net.libreguard.vpn.service.LibreGuardVpnService.ACTION_DISCONNECT
+                }
+                context.startService(serviceIntent)
+                Log.d(TAG, "Sent ACTION_DISCONNECT to LibreGuardVpnService")
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to send ACTION_DISCONNECT to service: ${e.message}")
+            }
+
             // 5. Try fallback disconnect methods (force-stop apps)
             tryFallbackDisconnect(context)
 
-            // 6. Verify it's actually disconnected
-            verifyVpnDisconnected()
+            // 6. Verify it's actually disconnected (waits until status false or timeout)
+            val disconnected = verifyVpnDisconnected()
 
             // 7. Clear all VPN state
             _isConnected.value = false
@@ -602,7 +613,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             activeVpnHandler = null
             _selectedServer.value = null
 
-            Log.d(TAG, "✅ Force disconnect completed on logout")
+            Log.d(TAG, "✅ Force disconnect completed on logout (verified=$disconnected)")
 
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error during force disconnect: ${e.message}", e)
@@ -672,22 +683,26 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
      * Verify VPN connection has actually been terminated.
      * Waits up to 1 second for disconnect to complete.
      */
-    private suspend fun verifyVpnDisconnected() {
+    private suspend fun verifyVpnDisconnected(): Boolean {
         var attempts = 0
-        val maxAttempts = 10  // 10 * 100ms = 1 second max wait
+        val maxAttempts = 20  // Wait up to 2 seconds (20 * 100ms)
 
-        while (attempts < maxAttempts && _isConnected.value) {
+        while (attempts < maxAttempts) {
+            val isActive = checkVpnStatusImproved()
+            if (!isActive) {
+                Log.d(TAG, "✅ VPN verified disconnected")
+                _isConnected.value = false
+                return true
+            }
             Log.d(TAG, "Verifying disconnect... attempt ${attempts + 1}/$maxAttempts")
             delay(100)
             attempts++
         }
 
-        if (_isConnected.value) {
-            Log.w(TAG, "⚠️ VPN still shows connected after force disconnect - forcing state change")
-            _isConnected.value = false
-        } else {
-            Log.d(TAG, "✅ VPN verified disconnected")
-        }
+        // If still active, force state false but log warning
+        Log.w(TAG, "⚠️ VPN still shows active after force disconnect - forcing state change")
+        _isConnected.value = false
+        return false
     }
 
     /**
@@ -1934,7 +1949,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                             handler.disconnect(context)
                         }
 
-                        if (disconnectResult) {
+                        if ( disconnectResult) {
                             Log.d(TAG, "VPN disconnected successfully via handler")
                         } else {
                             Log.w(TAG, "VPN disconnect via handler returned false")
