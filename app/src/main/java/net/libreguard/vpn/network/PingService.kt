@@ -13,7 +13,7 @@ import java.util.concurrent.TimeUnit
  * 
  * The /ping endpoint is:
  * - Unauthenticated (no token required)
- * - HTTP-only (no TLS for minimal overhead)
+ * - HTTPS-only using server hostname (Let's Encrypt certificates)
  * - Returns minimal JSON: {"pong":true,"timestamp":...}
  */
 object PingService {
@@ -31,14 +31,14 @@ object PingService {
     /**
      * Ping a single server and return latency in milliseconds.
      * 
-     * @param serverIp The server's IP address or hostname
+     * @param serverHostname The server's hostname (REQUIRED - IP addresses not supported)
      * @param port The ping port (default 5001)
      * @return Latency in milliseconds, or null if unreachable
      */
-    suspend fun pingServer(serverIp: String, port: Int = DEFAULT_PING_PORT): Int? = 
+    suspend fun pingServer(serverHostname: String, port: Int = DEFAULT_PING_PORT): Int? =
         withContext(Dispatchers.IO) {
             try {
-                val url = "http://$serverIp:$port/ping"
+                val url = "https://$serverHostname:$port/ping"
                 val request = Request.Builder()
                     .url(url)
                     .get()
@@ -48,15 +48,15 @@ object PingService {
                 client.newCall(request).execute().use { response ->
                     if (response.isSuccessful) {
                         val latency = (System.currentTimeMillis() - startTime).toInt()
-                        android.util.Log.d(TAG, "Ping to $serverIp: ${latency}ms")
+                        android.util.Log.d(TAG, "Ping to $serverHostname: ${latency}ms")
                         latency
                     } else {
-                        android.util.Log.w(TAG, "Ping to $serverIp failed: ${response.code}")
+                        android.util.Log.v(TAG, "Ping to $serverHostname failed: ${response.code}")
                         null
                     }
                 }
             } catch (e: Exception) {
-                android.util.Log.w(TAG, "Ping to $serverIp error: ${e.message}")
+                android.util.Log.v(TAG, "Ping to $serverHostname error: ${e.message}")
                 null
             }
         }
@@ -75,8 +75,13 @@ object PingService {
         
         servers.map { server ->
             async {
-                val targetIp = server.serverHostname ?: server.serverIp
-                val latency = pingServer(targetIp, server.latencyPingPort)
+                // Skip servers without hostname
+                if (server.serverHostname.isNullOrBlank()) {
+                    android.util.Log.v(TAG, "Server ${server.serverName} has no hostname, skipping ping")
+                    return@async null
+                }
+
+                val latency = pingServer(server.serverHostname, server.latencyPingPort)
                 if (latency != null) {
                     server.id to latency
                 } else {

@@ -34,7 +34,7 @@ import net.libreguard.vpn.service.vpn.VpnProtocolHandler
 import net.libreguard.vpn.service.vpn.WireGuardHandler
 import net.libreguard.vpn.util.TokenValidationManager
 import net.libreguard.vpn.util.TokenManager
-import net.libreguard.vpn.util.ServerLatencyHelper
+import net.libreguard.vpn.network.PingService
 import net.libreguard.vpn.service.data.DataUsageManager
 import net.libreguard.vpn.service.data.DataUsageInfo
 import org.json.JSONObject
@@ -754,23 +754,23 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * Measure latency for all servers in the background
+     * Measure latency for all servers in the background using /ping endpoint
      */
     private fun measureServerLatencies(servers: List<RemoteVpnServer>) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 Log.d(TAG, "Starting latency measurement for ${servers.size} servers")
-                val latencies = ServerLatencyHelper.measureLatencyForServers(servers)
+                val latencies = PingService.pingServers(servers)
 
                 // Only update if measurement was successful and we got some results
                 if (latencies.isNotEmpty()) {
                     _serverLatencies.value = latencies
                     Log.d(TAG, "Latency measurement complete: ${latencies.size} servers measured")
                 } else {
-                    Log.w(TAG, "No latency measurements succeeded")
+                    Log.v(TAG, "No latency measurements succeeded")
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Error measuring server latencies: ${e.message}")
+                Log.v(TAG, "Error measuring server latencies: ${e.message}")
             }
         }
     }

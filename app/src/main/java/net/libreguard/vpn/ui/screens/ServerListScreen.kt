@@ -408,7 +408,7 @@ private fun ServerCard(
     onSelect: () -> Unit,
     onToggleFavorite: () -> Unit
 ) {
-    val load = remember { (20..80).random() }
+    val load = server.load ?: 0  // Use real load from API, default to 0 if unavailable
 
     Surface(
         modifier = Modifier
@@ -481,34 +481,24 @@ private fun ServerCard(
                                 color = MutedForeground,
                                 maxLines = 1
                             )
-                        } else {
-                            Icon(
-                                imageVector = Icons.Default.SignalCellularAlt,
-                                contentDescription = null,
-                                tint = MutedForeground,
-                                modifier = Modifier.size(14.dp)
-                            )
-                            Text(
-                                text = "...",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MutedForeground,
-                                maxLines = 1
-                            )
                         }
                     }
                     Spacer(modifier = Modifier.height(4.dp))
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(
-                            imageVector = Icons.Default.Storage,
-                            contentDescription = null,
-                            tint = getLoadColor(load),
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Text(
-                            text = "$load%",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MutedForeground
-                        )
+                    // Only show load if we have real data from API
+                    if (server.load != null) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(
+                                imageVector = Icons.Default.Storage,
+                                contentDescription = null,
+                                tint = getLoadColor(load),
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = "$load%",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MutedForeground
+                            )
+                        }
                     }
                 }
 
@@ -539,22 +529,24 @@ private fun ServerCard(
                 }
             }
 
-            // Load bar
-            Spacer(modifier = Modifier.height(8.dp))
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(4.dp)
-                    .clip(RoundedCornerShape(2.dp))
-                    .background(Secondary)
-            ) {
+            // Load bar - only show if we have real load data
+            if (server.load != null) {
+                Spacer(modifier = Modifier.height(8.dp))
                 Box(
                     modifier = Modifier
-                        .fillMaxHeight()
-                        .fillMaxWidth(load / 100f)
+                        .fillMaxWidth()
+                        .height(4.dp)
                         .clip(RoundedCornerShape(2.dp))
-                        .background(getLoadColor(load))
-                )
+                        .background(Secondary)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .fillMaxWidth(load / 100f)
+                            .clip(RoundedCornerShape(2.dp))
+                            .background(getLoadColor(load))
+                    )
+                }
             }
         }
     }
