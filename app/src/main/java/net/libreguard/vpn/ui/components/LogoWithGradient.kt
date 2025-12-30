@@ -32,7 +32,7 @@ fun LogoWithGradient(
     ) {
         // Logo image
         Image(
-            painter = painterResource(id = R.drawable.ic_launcher_foreground),
+            painter = painterResource(id = R.drawable.logo_primary),
             contentDescription = "LibreGuard",
             modifier = Modifier.size(size)
         )
@@ -65,9 +65,8 @@ fun Logo(
     modifier: Modifier = Modifier
 ) {
     Image(
-        painter = painterResource(id = R.drawable.ic_launcher_foreground),
+        painter = painterResource(id = R.drawable.logo_primary),
         contentDescription = "LibreGuard",
         modifier = modifier.size(size)
     )
 }
-
