@@ -80,7 +80,7 @@ private val DarkColorScheme = darkColorScheme(
 
 @Composable
 fun LibreGuardVPNTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
+    darkTheme: Boolean = false,
     // Dynamic color is disabled to use our custom design system
     dynamicColor: Boolean = false,
     content: @Composable () -> Unit
