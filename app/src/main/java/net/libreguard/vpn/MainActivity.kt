@@ -8,10 +8,13 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Box
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.*
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -536,21 +539,48 @@ fun AppNavigation(modifier: Modifier = Modifier) {
 
         composable("payment/monero") {
             authToken?.let { token ->
-                MoneroPaymentScreen(
-                    paymentAddress = "87E7Qw1j6VKNjNj4mK1F5...",
-                    xmrAmount = 0.0234,
-                    usdAmount = 4.00,
-                    xmrPrice = 170.85,
-                    confirmations = 0,
-                    requiredConfirmations = 10,
-                    isLoading = false,
-                    isWaitingForPayment = false,
-                    hoursRemaining = 23,
-                    minutesRemaining = 59,
-                    onClose = {
-                        navController.popBackStack()
+                val subscriptionViewModel: SubscriptionViewModel = viewModel()
+                val moneroInvoice by subscriptionViewModel.moneroInvoice.collectAsState()
+                val isLoading by subscriptionViewModel.isLoading.collectAsState()
+                val moneroPaymentStatus by subscriptionViewModel.moneroPaymentStatus.collectAsState()
+
+                // Initialize Monero invoice if not already created
+                LaunchedEffect(Unit) {
+                    subscriptionViewModel.setAuthToken(token)
+                    if (moneroInvoice == null) {
+                        subscriptionViewModel.createMoneroInvoice()
                     }
-                )
+                }
+
+                // Display the payment screen once we have invoice data
+                moneroInvoice?.let { invoice ->
+                    MoneroPaymentScreen(
+                        paymentAddress = invoice.paymentAddress,
+                        xmrAmount = invoice.amount,
+                        usdAmount = 4.00, // TODO: Get from invoice if available
+                        xmrPrice = 170.85, // TODO: Get current XMR price
+                        confirmations = 0, // TODO: Get from status polling
+                        requiredConfirmations = 10,
+                        isLoading = isLoading,
+                        isWaitingForPayment = moneroPaymentStatus == "Pending",
+                        hoursRemaining = 23, // TODO: Calculate from invoice.createdAt
+                        minutesRemaining = 59,
+                        onClose = {
+                            navController.popBackStack()
+                        },
+                        onRefresh = {
+                            subscriptionViewModel.checkMoneroPaymentStatus(invoice.invoiceId)
+                        }
+                    )
+                } ?: run {
+                    // Show loading while creating invoice
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator()
+                    }
+                }
             }
         }
     }

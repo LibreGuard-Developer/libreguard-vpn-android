@@ -322,6 +322,50 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
     }
 
     /**
+     * Manually check Monero payment status
+     */
+    fun checkMoneroPaymentStatus(invoiceId: String) {
+        if (authToken == null) {
+            _errorMessage.value = "Authentication required"
+            return
+        }
+
+        _isLoading.value = true
+
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val response = RetrofitClient.instance.getMoneroPaymentStatus(
+                    authorization = "Bearer $authToken",
+                    invoiceId = invoiceId
+                )
+
+                withContext(Dispatchers.Main) {
+                    if (response.isSuccessful && response.body() != null) {
+                        val statusResponse = response.body()!!
+                        _moneroPaymentStatus.value = statusResponse.status
+                        Log.d(TAG, "Monero payment status checked: ${statusResponse.status}")
+
+                        // If completed, refresh subscription status
+                        if (statusResponse.status.equals("Completed", ignoreCase = true)) {
+                            lastSubscriptionCheckTime = 0 // Force cache refresh
+                            fetchSubscriptionStatus()
+                        }
+                    } else {
+                        _errorMessage.value = "Failed to check payment status: ${response.code()}"
+                    }
+                    _isLoading.value = false
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error checking Monero payment status", e)
+                withContext(Dispatchers.Main) {
+                    _errorMessage.value = "Error: ${e.localizedMessage}"
+                    _isLoading.value = false
+                }
+            }
+        }
+    }
+
+    /**
      * Cache subscription status to SharedPreferences
      */
     private fun cacheSubscriptionStatus(status: SubscriptionStatusResponse) {

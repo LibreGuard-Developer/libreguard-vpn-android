@@ -207,7 +207,9 @@ fun MoneroPaymentScreen(
                                 text = paymentAddress,
                                 style = MaterialTheme.typography.bodySmall,
                                 color = Foreground,
-                                modifier = Modifier.weight(1f)
+                                modifier = Modifier.weight(1f),
+                                softWrap = true,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Visible
                             )
                             IconButton(
                                 onClick = {
