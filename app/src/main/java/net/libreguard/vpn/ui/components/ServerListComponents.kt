@@ -108,42 +108,51 @@ fun ServerListItem(
             Row(
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Flag emoji
-                Text(
-                    text = server.flag,
-                    fontSize = 28.sp,
-                    modifier = Modifier.padding(end = 16.dp)
-                )
+                // Flag emoji with PRO label
+                Box(
+                    modifier = Modifier
+                        .padding(end = 16.dp)
+                        .width(48.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        // PRO label above flag
+                        if (server.isPremium) {
+                            Surface(
+                                shape = RoundedCornerShape(4.dp),
+                                color = Primary
+                            ) {
+                                Text(
+                                    text = "PRO",
+                                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                                    color = Color.White,
+                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(2.dp))
+                        }
+                        // Flag emoji
+                        Text(
+                            text = server.flag,
+                            fontSize = 28.sp
+                        )
+                    }
+                }
 
                 // Server info
                 Column(
                     modifier = Modifier.weight(1f)
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = server.city,
-                            style = MaterialTheme.typography.titleSmall,
-                            color = Foreground,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        if (server.isPremium) {
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Surface(
-                                shape = RoundedCornerShape(4.dp),
-                                color = Primary.copy(alpha = 0.1f)
-                            ) {
-                                Text(
-                                    text = "PRO",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = Primary,
-                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                )
-                            }
-                        }
-                    }
+                    Text(
+                        text = server.city,
+                        style = MaterialTheme.typography.titleSmall,
+                        color = Foreground,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
                     Text(
                         text = server.country,
                         style = MaterialTheme.typography.bodySmall,

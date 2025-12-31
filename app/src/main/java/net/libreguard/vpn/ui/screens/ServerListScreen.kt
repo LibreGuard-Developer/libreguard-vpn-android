@@ -14,8 +14,10 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -409,6 +411,7 @@ private fun ServerCard(
     onToggleFavorite: () -> Unit
 ) {
     val load = server.load ?: 0  // Use real load from API, default to 0 if unavailable
+    val isPremiumServer = server.pricingTier.equals("Premium", ignoreCase = true)
 
     Surface(
         modifier = Modifier
@@ -427,11 +430,37 @@ private fun ServerCard(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Flag
-                Text(
-                    text = getFlagEmoji(server.country),
-                    style = MaterialTheme.typography.headlineSmall
-                )
+                // Flag with PRO label
+                Box(
+                    modifier = Modifier.width(48.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        // PRO label above flag
+                        if (isPremiumServer) {
+                            Surface(
+                                shape = RoundedCornerShape(4.dp),
+                                color = Primary
+                            ) {
+                                Text(
+                                    text = "PRO",
+                                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                                    color = Color.White,
+                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(2.dp))
+                        }
+                        // Flag emoji
+                        Text(
+                            text = getFlagEmoji(server.country),
+                            style = MaterialTheme.typography.headlineSmall
+                        )
+                    }
+                }
 
                 Spacer(modifier = Modifier.width(12.dp))
 
