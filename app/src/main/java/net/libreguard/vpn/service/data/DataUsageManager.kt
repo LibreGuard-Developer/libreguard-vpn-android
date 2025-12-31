@@ -13,13 +13,19 @@ import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.max
 
 /**
- * Data Usage Manager - Industry best practices implementation
+ * Data Usage Manager - Server-first quota tracking with local session monitoring
  *
- * This implementation uses multiple tracking methods for reliability:
- * 1. TrafficStats API for system-level monitoring
- * 2. Network interface monitoring for VPN-specific traffic
- * 3. Encrypted local storage with integrity checks
- * 4. Server-side validation (prepared for future implementation)
+ * Architecture:
+ * 1. Server quota API (/api/usage/quota) is the source of truth for total usage and limits
+ * 2. Local session tracking (TrafficStats) is used ONLY for:
+ *    - Real-time speed display (download/upload Mbps)
+ *    - Current session usage display
+ * 3. Session usage is calculated using app-specific UID traffic (not total device traffic)
+ * 4. Local data persistence is kept for session restoration on app restart
+ * 5. Pre-flight connection checks via /api/usage/can-connect enforce quota limits
+ *
+ * Key change from previous version: Local session deltas no longer accumulate into
+ * totalBytesUsed. The server tracks all actual VPN data usage.
  */
 class DataUsageManager(private val context: Context) {
 
@@ -275,16 +281,47 @@ class DataUsageManager(private val context: Context) {
         Log.d(TAG, "Starting data usage monitoring (restoreSession=$restoreSession)")
 
         if (!restoreSession) {
-            // Record baseline traffic stats for new session
-            baselineRxBytes = TrafficStats.getTotalRxBytes()
-            baselineTxBytes = TrafficStats.getTotalTxBytes()
+            // Record baseline traffic stats for new session using app-specific UID
+            val appUid = android.os.Process.myUid()
+            val uidRxBytes = TrafficStats.getUidRxBytes(appUid)
+            val uidTxBytes = TrafficStats.getUidTxBytes(appUid)
+
+            // Use UID-specific traffic if available, otherwise fall back to total
+            baselineRxBytes = if (uidRxBytes != TrafficStats.UNSUPPORTED.toLong()) {
+                uidRxBytes
+            } else {
+                TrafficStats.getTotalRxBytes()
+            }
+
+            baselineTxBytes = if (uidTxBytes != TrafficStats.UNSUPPORTED.toLong()) {
+                uidTxBytes
+            } else {
+                TrafficStats.getTotalTxBytes()
+            }
+
             vpnStartTime = System.currentTimeMillis()
             sessionBytesUsed.set(0L)
+
+            Log.d(TAG, "Baseline set: RX=${formatBytes(baselineRxBytes)}, TX=${formatBytes(baselineTxBytes)}")
         }
 
-        // Initialize speed tracking
-        lastRxBytes = TrafficStats.getTotalRxBytes()
-        lastTxBytes = TrafficStats.getTotalTxBytes()
+        // Initialize speed tracking with same UID logic
+        val appUid = android.os.Process.myUid()
+        val uidRxBytes = TrafficStats.getUidRxBytes(appUid)
+        val uidTxBytes = TrafficStats.getUidTxBytes(appUid)
+
+        lastRxBytes = if (uidRxBytes != TrafficStats.UNSUPPORTED.toLong()) {
+            uidRxBytes
+        } else {
+            TrafficStats.getTotalRxBytes()
+        }
+
+        lastTxBytes = if (uidTxBytes != TrafficStats.UNSUPPORTED.toLong()) {
+            uidTxBytes
+        } else {
+            TrafficStats.getTotalTxBytes()
+        }
+
         lastSpeedUpdateTime = System.currentTimeMillis()
 
         // Mark session as active
@@ -329,35 +366,37 @@ class DataUsageManager(private val context: Context) {
         try {
             val currentTime = System.currentTimeMillis()
 
-            // Method 1: TrafficStats API (system-wide)
-            val currentRxBytes = TrafficStats.getTotalRxBytes()
-            val currentTxBytes = TrafficStats.getTotalTxBytes()
+            // Get app-specific traffic (more accurate than total device traffic)
+            val appUid = android.os.Process.myUid()
+            val currentRxBytes = TrafficStats.getUidRxBytes(appUid)
+            val currentTxBytes = TrafficStats.getUidTxBytes(appUid)
 
-            // Calculate session usage since VPN started
-            val sessionRx = max(0L, currentRxBytes - baselineRxBytes)
-            val sessionTx = max(0L, currentTxBytes - baselineTxBytes)
-            val currentSessionUsage = sessionRx + sessionTx
-
-            // Method 2: Network interface monitoring (VPN-specific)
-            val vpnInterfaceUsage = getVpnInterfaceUsage()
-
-            // Use the higher value for more conservative tracking
-            val sessionUsage = max(currentSessionUsage, vpnInterfaceUsage)
-
-            // Update session usage
-            val previousSessionUsage = sessionBytesUsed.get()
-            sessionBytesUsed.set(sessionUsage)
-
-            // Calculate the delta (new usage since last update)
-            val usageDelta = sessionUsage - previousSessionUsage
-
-            // Add delta to total usage (persistent across sessions)
-            if (usageDelta > 0) {
-                val newTotal = totalBytesUsed.addAndGet(usageDelta)
-                Log.d(TAG, "Data usage delta: ${formatBytes(usageDelta)}, new total: ${formatBytes(newTotal)}")
+            // Fallback to total traffic if UID stats unavailable
+            val actualRxBytes = if (currentRxBytes != TrafficStats.UNSUPPORTED.toLong()) {
+                currentRxBytes
+            } else {
+                TrafficStats.getTotalRxBytes()
             }
 
-            // Calculate real-time speeds (Mbps)
+            val actualTxBytes = if (currentTxBytes != TrafficStats.UNSUPPORTED.toLong()) {
+                currentTxBytes
+            } else {
+                TrafficStats.getTotalTxBytes()
+            }
+
+            // Calculate session usage since VPN started (for real-time display only)
+            val sessionRx = max(0L, actualRxBytes - baselineRxBytes)
+            val sessionTx = max(0L, actualTxBytes - baselineTxBytes)
+            val currentSessionUsage = sessionRx + sessionTx
+
+            // Update session usage (for display purposes only)
+            sessionBytesUsed.set(currentSessionUsage)
+
+            // NOTE: We DO NOT add session delta to totalBytesUsed anymore!
+            // The server quota API is now the source of truth for total usage.
+            // Local session tracking is only for real-time speed/session display.
+
+            // Calculate real-time speeds (Mbps) for UI
             var downloadSpeedMbps = 0.0
             var uploadSpeedMbps = 0.0
 
@@ -367,20 +406,20 @@ class DataUsageManager(private val context: Context) {
                     val timeDeltaSeconds = timeDeltaMs / 1000.0
 
                     // Calculate bytes transferred since last measurement
-                    val rxDelta = max(0L, currentRxBytes - lastRxBytes)
-                    val txDelta = max(0L, currentTxBytes - lastTxBytes)
+                    val rxDelta = max(0L, actualRxBytes - lastRxBytes)
+                    val txDelta = max(0L, actualTxBytes - lastTxBytes)
 
                     // Convert to Mbps: (bytes / seconds) * 8 bits/byte / 1,000,000 bits/Mbps
                     downloadSpeedMbps = (rxDelta / timeDeltaSeconds * 8.0) / 1_000_000.0
                     uploadSpeedMbps = (txDelta / timeDeltaSeconds * 8.0) / 1_000_000.0
 
-                    Log.v(TAG, "Speed: ↓${String.format("%.2f", downloadSpeedMbps)} Mbps ↑${String.format("%.2f", uploadSpeedMbps)} Mbps")
+                    Log.v(TAG, "Speed: ↓${String.format("%.2f", downloadSpeedMbps)} Mbps ↑${String.format("%.2f", uploadSpeedMbps)} Mbps (Session: ${formatBytes(currentSessionUsage)})")
                 }
             }
 
             // Update last values for next speed calculation
-            lastRxBytes = currentRxBytes
-            lastTxBytes = currentTxBytes
+            lastRxBytes = actualRxBytes
+            lastTxBytes = actualTxBytes
             lastSpeedUpdateTime = currentTime
 
             // Update UI with usage and speed data
@@ -388,7 +427,7 @@ class DataUsageManager(private val context: Context) {
                 updateDataUsageInfo(downloadSpeedMbps, uploadSpeedMbps)
             }
 
-            // Save every update to ensure persistence
+            // Save session state (but not adding to total anymore)
             saveDataUsage()
 
         } catch (e: Exception) {
