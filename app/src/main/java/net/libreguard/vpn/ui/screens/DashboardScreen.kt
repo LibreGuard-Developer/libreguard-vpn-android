@@ -61,15 +61,22 @@ fun DashboardScreen(
         dataUsageInfo.sessionBytesUsed / (1024.0 * 1024.0)
     }
 
-    // Real monthly data from ViewModel (in MB)
+    // Real monthly data from ViewModel (in MB) - now from server
     val monthlyData = remember(dataUsageInfo) {
         dataUsageInfo.totalBytesUsed / (1024.0 * 1024.0)
     }
 
-    // Real limit from ViewModel (in MB)
+    // Real limit from ViewModel (in MB) - now from server
     val monthlyLimit = remember(dataUsageInfo) {
-        dataUsageInfo.limitBytes / (1024.0 * 1024.0)
+        if (dataUsageInfo.isUnlimited) Double.MAX_VALUE
+        else dataUsageInfo.limitBytes / (1024.0 * 1024.0)
     }
+
+    // Check if user has unlimited data (Pro user)
+    val isUnlimited = remember(dataUsageInfo) { dataUsageInfo.isUnlimited }
+
+    // Check if user is over limit
+    val isOverLimit = remember(dataUsageInfo) { dataUsageInfo.isOverLimit }
 
     // IP addresses
     var userIP by remember { mutableStateOf("Loading...") }
@@ -103,6 +110,8 @@ fun DashboardScreen(
     LaunchedEffect(authToken) {
         viewModel.setAuthToken(authToken)
         viewModel.loadRemoteServers()
+        // Sync server quota on launch
+        viewModel.syncServerQuota()
     }
 
     val connectionStatus = when {
@@ -387,29 +396,31 @@ fun DashboardScreen(
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                             Text("Bandwidth Usage", style = MaterialTheme.typography.labelLarge, color = Foreground)
                             Text(
-                                "${totalPercentage.toFixed(1)}% of ${(monthlyLimit / 1024).toFixed(0)}GB",
+                                if (isUnlimited) "Unlimited"
+                                else "${totalPercentage.toFixed(1)}% of ${dataUsageInfo.formattedLimit}",
                                 style = MaterialTheme.typography.labelSmall,
-                                color = MutedForeground
+                                color = if (isOverLimit) Destructive else MutedForeground
                             )
                         }
 
                         Spacer(modifier = Modifier.height(8.dp))
 
-                        // Multi-layer bar (monthly = gray, session = primary)
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(8.dp)
-                                .clip(RoundedCornerShape(4.dp))
-                                .background(Secondary.copy(alpha = 0.3f))
-                        ) {
-                            // Monthly
+                        // Multi-layer bar (monthly = gray, session = primary) - hide for unlimited
+                        if (!isUnlimited) {
                             Box(
                                 modifier = Modifier
-                                    .fillMaxHeight()
-                                    .fillMaxWidth((monthlyPercentage / 100f).coerceIn(0f, 1f))
+                                    .fillMaxWidth()
+                                    .height(8.dp)
                                     .clip(RoundedCornerShape(4.dp))
-                                    .background(MutedForeground.copy(alpha = 0.4f))
+                                    .background(Secondary.copy(alpha = 0.3f))
+                            ) {
+                                // Monthly
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxHeight()
+                                        .fillMaxWidth((monthlyPercentage / 100f).coerceIn(0f, 1f))
+                                        .clip(RoundedCornerShape(4.dp))
+                                        .background(if (isOverLimit) Destructive.copy(alpha = 0.6f) else MutedForeground.copy(alpha = 0.4f))
                             )
                             // Session
                             Box(
@@ -422,14 +433,19 @@ fun DashboardScreen(
                         }
 
                         Spacer(modifier = Modifier.height(8.dp))
+                        } // End of !isUnlimited block
 
-                        // Legend
+                        // Legend - use server-formatted values
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(MutedForeground.copy(alpha = 0.4f)))
+                                Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(if (isOverLimit) Destructive.copy(alpha = 0.6f) else MutedForeground.copy(alpha = 0.4f)))
                                 Text("Monthly total", style = MaterialTheme.typography.labelSmall, color = MutedForeground)
                             }
-                            Text("${(monthlyData / 1024).toFixed(2)} GB", style = MaterialTheme.typography.labelSmall, color = Foreground)
+                            Text(
+                                text = dataUsageInfo.formattedTotal,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (isOverLimit) Destructive else Foreground
+                            )
                         }
                         Spacer(modifier = Modifier.height(4.dp))
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -438,6 +454,19 @@ fun DashboardScreen(
                                 Text("This session", style = MaterialTheme.typography.labelSmall, color = MutedForeground)
                             }
                             Text("${sessionData.toFixed(1)} MB", style = MaterialTheme.typography.labelSmall, color = Primary)
+                        }
+
+                        // Show remaining data for free users
+                        if (!isUnlimited) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text("Remaining", style = MaterialTheme.typography.labelSmall, color = MutedForeground)
+                                Text(
+                                    text = if (isOverLimit) "0 B" else dataUsageInfo.formattedRemaining,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (isOverLimit) Destructive else Foreground
+                                )
+                            }
                         }
 
                         Spacer(modifier = Modifier.height(8.dp))

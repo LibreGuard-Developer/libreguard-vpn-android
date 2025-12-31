@@ -193,6 +193,16 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
+     * Sync data usage quota from server
+     * Call this on app launch and periodically to refresh quota display
+     */
+    fun syncServerQuota() {
+        viewModelScope.launch {
+            dataUsageManager.syncQuotaFromServer()
+        }
+    }
+
+    /**
      * Cache VPN servers to SharedPreferences
      */
     private fun cacheServers(servers: List<RemoteVpnServer>) {
@@ -802,6 +812,10 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         currentUserId = userId
         sharedPrefs.edit().putString("current_user_id", userId).apply()
         dataUsageManager.setUserId(userId)
+
+        // Pass auth token to DataUsageManager for server quota sync
+        dataUsageManager.setAuthToken(token)
+
         Log.d(TAG, "Set stable user ID: $userId")
 
         // Clean legacy, non-scoped OpenVPN caches to avoid cross-user leakage
@@ -1024,6 +1038,26 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                         return@launch
                     }
                 }
+
+                // Pre-flight data usage check - verify user hasn't exceeded quota
+                Log.d(TAG, "Checking data usage quota before VPN connection")
+                val canConnectResult = dataUsageManager.checkCanConnect()
+                if (canConnectResult != null && !canConnectResult.allowed) {
+                    Log.w(TAG, "Data usage quota exceeded: ${canConnectResult.reason}")
+                    _errorMessage.value = canConnectResult.message ?: "Data limit exceeded. Upgrade to Pro for unlimited data."
+                    _isConnecting.value = false
+                    // Emit upgrade event for data limit exceeded
+                    _upgradeEvents.emit(mapOf(
+                        "reason" to "Data limit exceeded",
+                        "resource_type" to "data_quota",
+                        "resource_id" to null,
+                        "required_tier" to "Pro",
+                        "message" to canConnectResult.message,
+                        "reset_date" to canConnectResult.resetDate
+                    ))
+                    return@launch
+                }
+                Log.d(TAG, "Data usage check passed, proceeding with connection")
 
                 // DEFENSIVE CHECK: Warn if refresh token is missing (indicates OAuth persistence issue)
                 val refreshToken = RetrofitClient.getTokenManager().getRefreshToken()

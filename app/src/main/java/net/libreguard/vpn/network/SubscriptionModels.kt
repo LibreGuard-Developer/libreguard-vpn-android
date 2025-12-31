@@ -115,3 +115,48 @@ data class MoneroStatusResponse(
     val expiresAt: String
 )
 
+// ===== DATA USAGE QUOTA =====
+data class QuotaResponse(
+    @SerializedName("bytesUsed")
+    val bytesUsed: Long,
+    @SerializedName("bytesLimit")
+    val bytesLimit: Long?,
+    @SerializedName("bytesRemaining")
+    val bytesRemaining: Long?,
+    @SerializedName("usagePercentage")
+    val usagePercentage: Double?,
+    @SerializedName("isUnlimited")
+    val isUnlimited: Boolean,
+    @SerializedName("isOverLimit")
+    val isOverLimit: Boolean = false,
+    @SerializedName("formattedUsed")
+    val formattedUsed: String? = null,
+    @SerializedName("formattedLimit")
+    val formattedLimit: String? = null,
+    @SerializedName("formattedRemaining")
+    val formattedRemaining: String? = null,
+    @SerializedName("cycleStart")
+    val cycleStart: String? = null,
+    @SerializedName("cycleEnd")
+    val cycleEnd: String? = null,
+    @SerializedName("resetDate")
+    val resetDate: String? = null
+)
+
+// ===== CAN CONNECT PRE-FLIGHT CHECK =====
+data class CanConnectResponse(
+    @SerializedName("allowed")
+    val allowed: Boolean,
+    @SerializedName("reason")
+    val reason: String? = null,
+    @SerializedName("bytesUsed")
+    val bytesUsed: Long? = null,
+    @SerializedName("bytesLimit")
+    val bytesLimit: Long? = null,
+    @SerializedName("resetDate")
+    val resetDate: String? = null,
+    @SerializedName("isUnlimited")
+    val isUnlimited: Boolean = false,
+    @SerializedName("message")
+    val message: String? = null
+)

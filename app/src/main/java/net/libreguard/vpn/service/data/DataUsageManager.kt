@@ -8,6 +8,7 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import net.libreguard.vpn.network.RetrofitClient
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.max
 
@@ -24,11 +25,20 @@ class DataUsageManager(private val context: Context) {
 
     private val TAG = "DataUsageManager"
 
-    // 5GB limit in bytes
-    private val DATA_LIMIT_BYTES = 5L * 1024 * 1024 * 1024
+    // Default 5GB limit in bytes (can be overridden by server)
+    private var dataLimitBytes = 5L * 1024 * 1024 * 1024
 
     // Current user ID for user-specific storage
     private var currentUserId: String? = null
+
+    // Auth token for API calls
+    private var authToken: String? = null
+
+    // Server-synced quota state
+    private var isUnlimited: Boolean = false
+    private var serverUsedBytes: Long? = null  // null = not synced yet
+    private var lastServerSync: Long = 0L
+    private val SERVER_SYNC_INTERVAL_MS = 5 * 60 * 1000L  // Sync every 5 minutes
 
     // Shared preferences for persistent storage (user-specific)
     private fun getPrefs(): SharedPreferences {
@@ -417,27 +427,46 @@ class DataUsageManager(private val context: Context) {
      * Update the data usage info for UI consumption
      */
     private fun updateDataUsageInfo(downloadSpeedMbps: Double = 0.0, uploadSpeedMbps: Double = 0.0) {
-        val currentTotal = totalBytesUsed.get()
+        // Use server-synced usage if available, otherwise use local tracking
+        val currentTotal = serverUsedBytes ?: totalBytesUsed.get()
         val currentSession = sessionBytesUsed.get()
-        val usagePercentage = (currentTotal.toDouble() / DATA_LIMIT_BYTES * 100).toFloat()
+
+        // Use a safe limit to avoid divide-by-zero if server returned 0
+        val limitBytes = when {
+            isUnlimited -> dataLimitBytes
+            dataLimitBytes > 0L -> dataLimitBytes
+            else -> DEFAULT_FREE_LIMIT_BYTES
+        }
+
+        // Calculate usage percentage (0 for unlimited users)
+        val usagePercentage = if (isUnlimited) 0f else (currentTotal.toDouble() / limitBytes * 100).toFloat()
+
+        // Calculate remaining bytes
+        val remainingBytes = if (isUnlimited) Long.MAX_VALUE else max(0L, limitBytes - currentTotal)
+
+        // Check if over limit
+        val isOverLimit = !isUnlimited && currentTotal >= limitBytes
 
         val info = DataUsageInfo(
             totalBytesUsed = currentTotal,
             sessionBytesUsed = currentSession,
-            limitBytes = DATA_LIMIT_BYTES,
+            limitBytes = limitBytes,
             usagePercentage = usagePercentage,
-            isNearLimit = usagePercentage > 80f,
+            isNearLimit = !isUnlimited && usagePercentage > 80f,
             formattedTotal = formatBytes(currentTotal),
             formattedSession = formatBytes(currentSession),
-            formattedLimit = formatBytes(DATA_LIMIT_BYTES),
+            formattedLimit = if (isUnlimited) "Unlimited" else formatBytes(limitBytes),
             downloadSpeedMbps = downloadSpeedMbps,
-            uploadSpeedMbps = uploadSpeedMbps
+            uploadSpeedMbps = uploadSpeedMbps,
+            isUnlimited = isUnlimited,
+            isOverLimit = isOverLimit,
+            formattedRemaining = if (isUnlimited) "Unlimited" else formatBytes(remainingBytes)
         )
 
         _dataUsage.value = info
 
-        // Log warning if approaching limit
-        if (usagePercentage > 80f) {
+        // Log warning if approaching limit (only for limited users)
+        if (!isUnlimited && usagePercentage > 80f) {
             Log.w(TAG, "Data usage approaching limit: ${usagePercentage}%")
         }
     }
@@ -453,6 +482,130 @@ class DataUsageManager(private val context: Context) {
         updateDataUsageInfo()
 
         Log.i(TAG, "Data usage counters reset")
+    }
+
+    /**
+     * Set auth token for API calls
+     */
+    fun setAuthToken(token: String?) {
+        authToken = token
+
+        // Clear local counters so UI doesn't show stale cached totals before server sync
+        totalBytesUsed.set(0L)
+        sessionBytesUsed.set(0L)
+        serverUsedBytes = null
+        lastServerSync = 0L
+        updateDataUsageInfo()
+
+        Log.d(TAG, "Auth token ${if (token != null) "set" else "cleared"}")
+    }
+
+    /**
+     * Sync data usage quota from server
+     * Call this on app launch and periodically to refresh quota display
+     */
+    suspend fun syncQuotaFromServer() {
+        val token = authToken
+        if (token == null) {
+            Log.w(TAG, "Cannot sync quota: no auth token")
+            return
+        }
+
+        // Rate limit syncing
+        val now = System.currentTimeMillis()
+        if (now - lastServerSync < SERVER_SYNC_INTERVAL_MS && lastServerSync > 0) {
+            Log.d(TAG, "Skipping quota sync, last sync was ${(now - lastServerSync) / 1000}s ago")
+            return
+        }
+
+        try {
+            Log.d(TAG, "Syncing quota from server...")
+            val response = withContext(Dispatchers.IO) {
+                RetrofitClient.instance.getUsageQuota("Bearer $token")
+            }
+
+            if (response.isSuccessful) {
+                val quota = response.body()
+                if (quota != null) {
+                    // Use the correct field names from API response
+                    val safeUsed = max(0L, quota.bytesUsed)
+                    val effectiveLimit = when {
+                        quota.isUnlimited -> Long.MAX_VALUE
+                        quota.bytesLimit != null && quota.bytesLimit > 0 -> quota.bytesLimit
+                        else -> DEFAULT_FREE_LIMIT_BYTES // fallback for bad server responses
+                    }
+
+                    // Update server-synced values
+                    serverUsedBytes = safeUsed
+                    dataLimitBytes = effectiveLimit
+                    isUnlimited = quota.isUnlimited
+                    lastServerSync = now
+
+                    Log.d(TAG, "Quota synced: used=${formatBytes(safeUsed)}, " +
+                            "limit=${if (quota.isUnlimited) "Unlimited" else formatBytes(effectiveLimit)}, " +
+                            "rawLimit=${quota.bytesLimit}, remaining=${quota.bytesRemaining ?: 0L}, " +
+                            "usagePercentage=${quota.usagePercentage}%")
+
+                    // Update UI with server data
+                    withContext(Dispatchers.Main) {
+                        updateDataUsageInfo()
+                    }
+                }
+            } else {
+                Log.w(TAG, "Failed to sync quota: ${response.code()} - ${response.message()}")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error syncing quota from server", e)
+            // Keep using local/cached values on error
+        }
+    }
+
+    /**
+     * Pre-flight check before VPN connection
+     * Returns CanConnectResult with allowed/blocked status
+     */
+    suspend fun checkCanConnect(): CanConnectResult? {
+        val token = authToken
+        if (token == null) {
+            Log.w(TAG, "Cannot check connection: no auth token")
+            // Allow connection if no token (will fail at VPN level anyway)
+            return CanConnectResult(allowed = true, reason = null, message = null, resetDate = null)
+        }
+
+        try {
+            Log.d(TAG, "Checking can-connect with server...")
+            val response = withContext(Dispatchers.IO) {
+                RetrofitClient.instance.checkCanConnect("Bearer $token")
+            }
+
+            if (response.isSuccessful) {
+                val canConnectResp = response.body()
+                if (canConnectResp != null) {
+                    Log.d(TAG, "Can connect check: allowed=${canConnectResp.allowed}, reason=${canConnectResp.reason}, message=${canConnectResp.message}, bytesUsed=${canConnectResp.bytesUsed}")
+
+                    // Fail-open if server returns a malformed/empty block response
+                    if (!canConnectResp.allowed && canConnectResp.reason.isNullOrBlank() && canConnectResp.message.isNullOrBlank()) {
+                        Log.w(TAG, "Can-connect response blocked without reason/message; allowing connection to avoid false lock-out")
+                        return CanConnectResult(true, null, null, canConnectResp.resetDate)
+                    }
+
+                    return CanConnectResult(
+                        allowed = canConnectResp.allowed,
+                        reason = canConnectResp.reason,
+                        message = canConnectResp.message,
+                        resetDate = canConnectResp.resetDate
+                    )
+                }
+            } else {
+                Log.w(TAG, "Failed to check can-connect: ${response.code()} - ${response.message()}")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error checking can-connect", e)
+        }
+
+        // On error, allow connection (fail gracefully)
+        // The VPN server will enforce limits if needed
+        return CanConnectResult(allowed = true, reason = null, message = null, resetDate = null)
     }
 
     /**
@@ -525,6 +678,7 @@ class DataUsageManager(private val context: Context) {
         private const val PREF_BASELINE_RX = "baseline_rx_bytes"
         private const val PREF_BASELINE_TX = "baseline_tx_bytes"
         private const val PREF_VPN_START_TIME = "vpn_start_time"
+        private const val DEFAULT_FREE_LIMIT_BYTES = 5L * 1024 * 1024 * 1024 // 5GB fallback when server limit is invalid
     }
 }
 
@@ -541,7 +695,11 @@ data class DataUsageInfo(
     val formattedSession: String = "0 B",
     val formattedLimit: String = "5.0 GB",
     val downloadSpeedMbps: Double = 0.0,
-    val uploadSpeedMbps: Double = 0.0
+    val uploadSpeedMbps: Double = 0.0,
+    // Server-synced fields
+    val isUnlimited: Boolean = false,
+    val isOverLimit: Boolean = false,
+    val formattedRemaining: String = "5.0 GB"
 )
 
 /**
@@ -554,3 +712,14 @@ data class DataUsageReport(
     val deviceId: String,
     val vpnSessionDuration: Long
 )
+
+/**
+ * Result of pre-flight can-connect check
+ */
+data class CanConnectResult(
+    val allowed: Boolean,
+    val reason: String?,
+    val message: String?,
+    val resetDate: String?
+)
+

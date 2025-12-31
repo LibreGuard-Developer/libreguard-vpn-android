@@ -282,4 +282,15 @@ interface ApiService {
     suspend fun getLatestMoneroInvoice(
         @Header("Authorization") authorization: String
     ): Response<MoneroInvoiceResponse?>
+
+    // ===== DATA USAGE ENDPOINTS =====
+    @GET("api/usage/quota")
+    suspend fun getUsageQuota(
+        @Header("Authorization") authorization: String
+    ): Response<QuotaResponse>
+
+    @GET("api/usage/can-connect")
+    suspend fun checkCanConnect(
+        @Header("Authorization") authorization: String
+    ): Response<CanConnectResponse>
 }
