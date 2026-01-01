@@ -34,6 +34,7 @@ import net.libreguard.vpn.service.vpn.VpnProtocolHandler
 import net.libreguard.vpn.service.vpn.WireGuardHandler
 import net.libreguard.vpn.util.TokenValidationManager
 import net.libreguard.vpn.util.TokenManager
+import net.libreguard.vpn.util.ServerSelectionHelper
 import net.libreguard.vpn.network.PingService
 import net.libreguard.vpn.service.data.DataUsageManager
 import net.libreguard.vpn.service.data.DataUsageInfo
@@ -71,6 +72,10 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _selectedServer = MutableStateFlow<RemoteVpnServer?>(null)
     val selectedServer: StateFlow<RemoteVpnServer?> = _selectedServer
+
+    // Track if user is in Quick Connect mode (true) or manual server selection mode (false)
+    private val _isQuickConnectMode = MutableStateFlow(true)
+    val isQuickConnectMode: StateFlow<Boolean> = _isQuickConnectMode
 
     private val _selectedProtocol = MutableStateFlow(VpnProtocol.IKEV2_IPSEC)
     val selectedProtocol: StateFlow<VpnProtocol> = _selectedProtocol
@@ -947,6 +952,15 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
     fun selectServer(server: RemoteVpnServer) {
         _selectedServer.value = server
+        _isQuickConnectMode.value = false // Switch to manual mode
+    }
+
+    /**
+     * Clear manual server selection and return to Quick Connect mode
+     */
+    fun clearServerSelection() {
+        _selectedServer.value = null
+        _isQuickConnectMode.value = true
     }
 
     fun selectProtocol(protocol: VpnProtocol) {
@@ -955,6 +969,82 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun findRemoteServerByName(serverName: String): RemoteVpnServer? {
         return _servers.value.find { it.serverName == serverName }
+    }
+
+    /**
+     * Quick Connect - Automatically select and connect to the best available server
+     *
+     * Selects server based on:
+     * 1. User subscription tier (Free users: Free servers only, Pro users: all servers)
+     * 2. Latency (primary factor - 70% weight)
+     * 3. Server load (25% weight, 50% if load > 70%)
+     * 4. Pro server preference for Pro users (10% bonus)
+     */
+    fun quickConnect() {
+        // Guard: ignore if already connecting or connected
+        if (_isConnecting.value) {
+            _errorMessage.value = "Already connecting..."
+            return
+        }
+        if (_isConnected.value) {
+            _errorMessage.value = "Already connected"
+            return
+        }
+
+        val servers = _servers.value
+        if (servers.isEmpty()) {
+            _errorMessage.value = "No servers available. Please refresh the server list."
+            return
+        }
+
+        val latencies = _serverLatencies.value
+        if (latencies.isEmpty()) {
+            // Latency measurement not complete - trigger it and inform user
+            _errorMessage.value = "Measuring server latencies, please wait..."
+            Log.d(TAG, "Quick Connect: No latency data available, measuring now...")
+
+            viewModelScope.launch {
+                // Trigger latency measurement
+                measureServerLatencies(servers)
+
+                // Wait a bit for measurements to complete
+                delay(3000)
+
+                // Try again if we got some measurements
+                if (_serverLatencies.value.isNotEmpty()) {
+                    quickConnect()
+                } else {
+                    _errorMessage.value = "Unable to measure server latencies. Please try manual selection."
+                }
+            }
+            return
+        }
+
+        // Get user subscription status
+        val prefs = getApplication<Application>().getSharedPreferences("vpn_subscription_prefs", Context.MODE_PRIVATE)
+        val isProCached = prefs.getBoolean("subscription_is_pro", false)
+
+        // Select best server using helper
+        val bestServer = ServerSelectionHelper.selectBestServer(
+            servers = servers,
+            serverLatencies = latencies,
+            isPro = isProCached
+        )
+
+        if (bestServer == null) {
+            _errorMessage.value = "No suitable server found. All servers may be overloaded or unavailable."
+            Log.w(TAG, "Quick Connect: Could not find suitable server")
+            return
+        }
+
+        // Auto-select the best server
+        Log.d(TAG, "Quick Connect: Auto-selected ${bestServer.serverName} (${bestServer.country})")
+        _selectedServer.value = bestServer
+        _isQuickConnectMode.value = true // Ensure Quick Connect mode is active
+        _errorMessage.value = "Connecting to ${bestServer.serverName}..."
+
+        // Connect to the selected server
+        connectToVpn()
     }
 
     fun connectToVpn() {

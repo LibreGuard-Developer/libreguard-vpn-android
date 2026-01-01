@@ -13,6 +13,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.Dispatchers
@@ -42,6 +43,7 @@ fun DashboardScreen(
     val isConnecting by viewModel.isConnecting.collectAsState()
     val selectedServer by viewModel.selectedServer.collectAsState()
     val isPro by viewModel.isPro.collectAsState()
+    val isQuickConnectMode by viewModel.isQuickConnectMode.collectAsState()
 
     // Real data usage from ViewModel
     val dataUsageInfo by viewModel.dataUsageInfo.collectAsState()
@@ -226,48 +228,155 @@ fun DashboardScreen(
             }
         }
 
-        // Quick Connect Button (when disconnected)
+        // Unified Quick Connect / Manual Server Selection Button (when disconnected)
         if (!isConnected && !isConnecting) {
             Spacer(modifier = Modifier.height(10.dp))
-            Surface(
+
+            // Single unified button that shows Quick Connect or manually selected server
+            // Use fillMaxWidth for manual mode to fit content, wrapContentWidth for Quick Connect
+            Box(
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(10.dp),
-                color = CardBackground,
-                border = ButtonDefaults.outlinedButtonBorder(enabled = true),
-                onClick = {
-                    if (selectedServer != null) viewModel.connectToVpn() else onNavigateToServers()
-                }
+                contentAlignment = Alignment.Center
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(10.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                        // Show country flag if server selected, otherwise show bolt icon
-                        if (selectedServer != null) {
-                            Text(
-                                text = getFlagEmoji(selectedServer?.country ?: ""),
-                                style = MaterialTheme.typography.headlineSmall
-                            )
+                Surface(
+                    modifier = if (isQuickConnectMode) {
+                        Modifier.wrapContentWidth()
+                    } else {
+                        Modifier.fillMaxWidth()
+                    },
+                    shape = RoundedCornerShape(10.dp),
+                    color = if (isQuickConnectMode) Primary.copy(alpha = 0.1f) else CardBackground,
+                    border = ButtonDefaults.outlinedButtonBorder(enabled = true).copy(
+                        brush = androidx.compose.ui.graphics.SolidColor(
+                            if (isQuickConnectMode) Primary else MutedForeground
+                        )
+                    ),
+                    onClick = {
+                        if (isQuickConnectMode) {
+                            // Quick Connect mode: auto-select and connect
+                            viewModel.quickConnect()
                         } else {
-                            Box(
-                                modifier = Modifier.size(36.dp).background(Primary.copy(alpha = 0.1f), RoundedCornerShape(8.dp)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(Icons.Default.Bolt, null, tint = Primary, modifier = Modifier.size(18.dp))
-                            }
-                        }
-                        Column {
-                            Text("Quick Connect", style = MaterialTheme.typography.titleSmall, color = Foreground)
-                            Text(
-                                text = if (selectedServer != null) selectedServer?.serverName ?: "" else "Select server",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MutedForeground
-                            )
+                            // Manual mode: navigate to server list to change selection
+                            onNavigateToServers()
                         }
                     }
-                    Icon(Icons.Default.ChevronRight, null, tint = MutedForeground, modifier = Modifier.size(18.dp))
+                ) {
+                    Box(
+                        modifier = if (isQuickConnectMode) {
+                            Modifier.wrapContentWidth()
+                        } else {
+                            Modifier.fillMaxWidth()
+                        }
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .then(
+                                    if (isQuickConnectMode) {
+                                        Modifier.wrapContentWidth()
+                                    } else {
+                                        Modifier.fillMaxWidth()
+                                    }
+                                )
+                                .padding(10.dp),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            if (isQuickConnectMode) {
+                                // Quick Connect UI
+                                Box(
+                                    modifier = Modifier
+                                        .size(32.dp)
+                                        .background(Primary.copy(alpha = 0.2f), RoundedCornerShape(8.dp)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        Icons.Default.Bolt,
+                                        null,
+                                        tint = Primary,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Column {
+                                    Text(
+                                        "Quick Connect",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        color = Primary
+                                    )
+                                    Text(
+                                        text = "Auto-select best server",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = Primary.copy(alpha = 0.7f)
+                                    )
+                                }
+                            } else {
+                                // Manual Server Selection UI - Centered
+                                if (selectedServer != null) {
+                                    Text(
+                                        text = getFlagEmoji(selectedServer?.country ?: ""),
+                                        style = MaterialTheme.typography.titleLarge
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Text(
+                                            text = selectedServer?.serverName ?: "",
+                                            style = MaterialTheme.typography.titleSmall,
+                                            color = Foreground,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Text(
+                                            text = selectedServer?.country ?: "",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MutedForeground
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.width(36.dp)) // Space for X button
+                                } else {
+                                    Icon(
+                                        Icons.Default.List,
+                                        null,
+                                        tint = MutedForeground,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        "Select Server",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        color = Foreground
+                                    )
+                                }
+                            }
+                        }
+
+                        // Clear selection button (X icon) - only show in manual mode with server selected
+                        // Positioned in center-right
+                        if (!isQuickConnectMode && selectedServer != null) {
+                            Surface(
+                                modifier = Modifier
+                                    .align(Alignment.CenterEnd)
+                                    .padding(end = 8.dp)
+                                    .size(28.dp),
+                                shape = CircleShape,
+                                color = Secondary,
+                                onClick = {
+                                    viewModel.clearServerSelection()
+                                }
+                            ) {
+                                Box(
+                                    contentAlignment = Alignment.Center,
+                                    modifier = Modifier.fillMaxSize()
+                                ) {
+                                    Icon(
+                                        Icons.Default.Close,
+                                        contentDescription = "Clear selection and return to Quick Connect",
+                                        tint = MutedForeground,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -350,9 +459,20 @@ fun DashboardScreen(
             // Connect/Disconnect button (design: big rounded)
             Button(
                 onClick = {
-                    if (isConnected) viewModel.disconnect()
-                    else if (!isConnecting) {
-                        if (selectedServer != null) viewModel.connectToVpn() else onNavigateToServers()
+                    if (isConnected) {
+                        viewModel.disconnect()
+                    } else if (!isConnecting) {
+                        if (isQuickConnectMode) {
+                            // Quick Connect mode: auto-select and connect
+                            viewModel.quickConnect()
+                        } else {
+                            // Manual mode: connect to selected server or navigate to select one
+                            if (selectedServer != null) {
+                                viewModel.connectToVpn()
+                            } else {
+                                onNavigateToServers()
+                            }
+                        }
                     }
                 },
                 enabled = !isConnecting,
