@@ -21,6 +21,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import kotlinx.coroutines.delay
 import net.libreguard.vpn.ui.screens.LoginScreen
 import net.libreguard.vpn.ui.screens.MainScreen
 import net.libreguard.vpn.ui.screens.SettingsScreen
@@ -251,9 +252,30 @@ fun AppNavigation(modifier: Modifier = Modifier) {
 
         if (!savedToken.isNullOrBlank()) {
             authToken = savedToken
+
             // Navigate to main if we have a valid token
             navController.navigate("main") {
                 popUpTo("login") { inclusive = true }
+            }
+
+            // IMPORTANT: Trigger auto-connect AFTER navigation and delay
+            // This ensures the UI is ready and ViewModel is properly initialized
+            coroutineScope.launch {
+                // Wait longer to ensure:
+                // 1. UI composables are fully initialized
+                // 2. ViewModel state observers are active
+                // 3. Servers are loaded
+                delay(3000) // 3 seconds for full UI initialization
+
+                Log.d("MainActivity", "Attempting Auto-Connect...")
+
+                // Attempt auto-connect
+                val autoConnected = vpnViewModel.attemptAutoConnect()
+                if (autoConnected) {
+                    Log.d("MainActivity", "Auto-Connect initiated successfully - UI should reflect connection status")
+                } else {
+                    Log.d("MainActivity", "Auto-Connect skipped (disabled, already connected, or failed validation)")
+                }
             }
         }
         isCheckingToken = false

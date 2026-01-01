@@ -27,21 +27,24 @@ fun MainContainerScreen(
     authToken: String,
     onLogout: () -> Unit,
     onNavigateToUpgrade: () -> Unit,
-    onNavigateToTwoFactor: () -> Unit
+    onNavigateToTwoFactor: () -> Unit,
+    vpnViewModel: VpnViewModel? = null
 ) {
-    val vpnViewModel: VpnViewModel = viewModel()
+    // Use shared ViewModel instance or create new one
+    val viewModel: VpnViewModel = vpnViewModel ?: viewModel()
+
     var currentTab by remember { mutableStateOf(MainTab.DASHBOARD) }
     var legalScreen by remember { mutableStateOf(LegalScreen.NONE) }
 
     // Set auth token
     LaunchedEffect(authToken) {
-        vpnViewModel.setAuthToken(authToken)
-        vpnViewModel.loadRemoteServers()
+        viewModel.setAuthToken(authToken)
+        viewModel.loadRemoteServers()
     }
 
     // Listen for upgrade events
     LaunchedEffect(Unit) {
-        vpnViewModel.upgradeEvents.collect {
+        viewModel.upgradeEvents.collect {
             onNavigateToUpgrade()
         }
     }
@@ -62,7 +65,7 @@ fun MainContainerScreen(
                     MainTab.DASHBOARD -> {
                         DashboardScreen(
                             authToken = authToken,
-                            vpnViewModel = vpnViewModel,
+                            vpnViewModel = viewModel,
                             onNavigateToServers = { currentTab = MainTab.SERVERS },
                             onNavigateToUpgrade = onNavigateToUpgrade
                         )
@@ -70,13 +73,13 @@ fun MainContainerScreen(
                     MainTab.SERVERS -> {
                         ServerListScreen(
                             authToken = authToken,
-                            vpnViewModel = vpnViewModel,
+                            vpnViewModel = viewModel,
                             onServerSelected = { currentTab = MainTab.DASHBOARD },
                             onNavigateToUpgrade = onNavigateToUpgrade
                         )
                     }
                     MainTab.STATISTICS -> {
-                        StatisticsScreen(viewModel = vpnViewModel)
+                        StatisticsScreen(viewModel = viewModel)
                     }
                     MainTab.SETTINGS -> {
                         SettingsScreen(
@@ -86,7 +89,8 @@ fun MainContainerScreen(
                             onNavigateToHelp = { legalScreen = LegalScreen.HELP },
                             onNavigateToPrivacy = { legalScreen = LegalScreen.PRIVACY },
                             onNavigateToTerms = { legalScreen = LegalScreen.TERMS },
-                            onLogout = onLogout
+                            onLogout = onLogout,
+                            vpnViewModel = viewModel
                         )
                     }
                 }
@@ -144,6 +148,7 @@ fun MainScreen(
         authToken = authToken,
         onLogout = { onLogout?.invoke() },
         onNavigateToUpgrade = { onNavigateToUpgrade?.invoke() },
-        onNavigateToTwoFactor = { onNavigateToTwoFactor?.invoke() }
+        onNavigateToTwoFactor = { onNavigateToTwoFactor?.invoke() },
+        vpnViewModel = vpnViewModel
     )
 }

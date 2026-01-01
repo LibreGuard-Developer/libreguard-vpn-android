@@ -37,8 +37,15 @@ fun SettingsScreen(
     onNavigateToHelp: () -> Unit = {},
     onNavigateToPrivacy: () -> Unit = {},
     onNavigateToTerms: () -> Unit = {},
-    onLogout: () -> Unit
+    onLogout: () -> Unit,
+    vpnViewModel: net.libreguard.vpn.viewmodel.VpnViewModel? = null
 ) {
+    // Get or create ViewModel
+    val viewModel: net.libreguard.vpn.viewmodel.VpnViewModel = vpnViewModel ?: viewModel()
+
+    // Observe auto-connect state
+    val autoConnectEnabled by viewModel.autoConnectEnabled.collectAsState()
+
     var showLogoutDialog by remember { mutableStateOf(false) }
     var showDisable2faDialog by remember { mutableStateOf(false) }
     var is2faEnabled by remember { mutableStateOf(false) }
@@ -217,8 +224,10 @@ fun SettingsScreen(
                     icon = Icons.Default.Power,
                     title = "Auto-Connect",
                     subtitle = "Connect on app launch",
-                    checked = false, // TODO: Connect to actual setting
-                    onCheckedChange = { }
+                    checked = autoConnectEnabled,
+                    onCheckedChange = { isChecked ->
+                        viewModel.setAutoConnect(isChecked)
+                    }
                 )
                 HorizontalDivider(color = Border, modifier = Modifier.padding(start = 68.dp))
                 SettingsToggleRow(

@@ -77,6 +77,13 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     private val _isQuickConnectMode = MutableStateFlow(true)
     val isQuickConnectMode: StateFlow<Boolean> = _isQuickConnectMode
 
+    // Auto-Connect feature: automatically connect on app launch
+    private val _autoConnectEnabled = MutableStateFlow(false)
+    val autoConnectEnabled: StateFlow<Boolean> = _autoConnectEnabled
+
+    // Track if auto-connect has been attempted this session (prevent multiple attempts)
+    private var hasAutoConnectedThisSession = false
+
     private val _selectedProtocol = MutableStateFlow(VpnProtocol.IKEV2_IPSEC)
     val selectedProtocol: StateFlow<VpnProtocol> = _selectedProtocol
 
@@ -181,6 +188,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
         // Load cached subscription status (isPro)
         loadCachedSubscriptionStatus()
+
+        // Load auto-connect preference
+        loadAutoConnectPreference()
 
         // Start observing data usage
         startDataUsageObservation()
@@ -2169,6 +2179,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 _isConnected.value = false
                 _isConnecting.value = false
 
+                // Reset auto-connect session flag so it can trigger again on next app launch
+                resetAutoConnectSession()
+
                 // Clear persisted state when manually disconnecting
                 clearPersistedState()
 
@@ -2426,5 +2439,133 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         } catch (e: Exception) {
             Log.w(TAG, "Failed to load cached subscription status: ${e.message}")
         }
+    }
+
+    // ===== AUTO-CONNECT FEATURE =====
+
+    /**
+     * Load auto-connect preference from SharedPreferences
+     * Called during init
+     */
+    private fun loadAutoConnectPreference() {
+        try {
+            val enabled = sharedPrefs.getBoolean("auto_connect_enabled", false)
+            _autoConnectEnabled.value = enabled
+            Log.d(TAG, "Loaded Auto-Connect preference: $enabled")
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to load auto-connect preference: ${e.message}")
+        }
+    }
+
+    /**
+     * Enable or disable auto-connect on app launch
+     * Persists preference to SharedPreferences
+     */
+    fun setAutoConnect(enabled: Boolean) {
+        _autoConnectEnabled.value = enabled
+        sharedPrefs.edit()
+            .putBoolean("auto_connect_enabled", enabled)
+            .apply()
+        Log.d(TAG, "Auto-Connect preference set to: $enabled")
+    }
+
+    /**
+     * Attempt auto-connect on app launch (if enabled)
+     * SECURITY: Validates token, checks servers, ensures proper authentication
+     *
+     * @return true if auto-connect was attempted, false otherwise
+     */
+    suspend fun attemptAutoConnect(): Boolean {
+        // Guard 1: Check if already auto-connected this session
+        if (hasAutoConnectedThisSession) {
+            Log.d(TAG, "Auto-Connect: Already attempted this session, skipping")
+            return false
+        }
+
+        // Guard 2: Check if auto-connect is enabled
+        if (!_autoConnectEnabled.value) {
+            Log.d(TAG, "Auto-Connect: Disabled by user, skipping")
+            return false
+        }
+
+        // Guard 3: Check if already connected or connecting
+        if (_isConnected.value || _isConnecting.value) {
+            Log.d(TAG, "Auto-Connect: Already connected/connecting, skipping")
+            hasAutoConnectedThisSession = true
+            return false
+        }
+
+        // Guard 4: Verify authentication token exists
+        if (authToken.isNullOrBlank()) {
+            Log.w(TAG, "Auto-Connect: No auth token available, cannot connect")
+            return false
+        }
+
+        // Guard 5: Verify refresh token exists (for token rotation)
+        val refreshToken = RetrofitClient.getTokenManager().getRefreshToken()
+        if (refreshToken.isNullOrBlank()) {
+            Log.w(TAG, "Auto-Connect: No refresh token available, skipping for security")
+            return false
+        }
+
+        // Guard 6: Check if servers are loaded
+        if (_servers.value.isEmpty()) {
+            Log.d(TAG, "Auto-Connect: No servers available, loading servers first...")
+            // Try to load servers
+            loadRemoteServers()
+            delay(2000) // Wait for servers to load
+
+            if (_servers.value.isEmpty()) {
+                Log.w(TAG, "Auto-Connect: Failed to load servers, cannot connect")
+                return false
+            }
+        }
+
+        // Guard 7: Validate token before connecting (optional but recommended)
+        // This prevents auto-connecting with an expired/revoked token
+        try {
+            tokenValidationManager?.let { manager ->
+                val tokenValid = manager.validateTokenBeforeAction()
+                if (!tokenValid) {
+                    Log.w(TAG, "Auto-Connect: Token validation failed, cannot connect")
+                    return false
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Auto-Connect: Token validation error: ${e.message}, proceeding anyway")
+        }
+
+        // Mark as attempted for this session
+        hasAutoConnectedThisSession = true
+
+        // Determine which mode to use: Quick Connect or Manual
+        Log.d(TAG, "Auto-Connect: Starting connection (mode: ${if (_isQuickConnectMode.value) "Quick" else "Manual"})")
+
+        if (_isQuickConnectMode.value) {
+            // Use Quick Connect algorithm
+            quickConnect()
+        } else {
+            // Use last manually selected server
+            val lastServer = _selectedServer.value
+            if (lastServer != null) {
+                Log.d(TAG, "Auto-Connect: Using last server: ${lastServer.serverName}")
+                connectToVpn()
+            } else {
+                // Fallback to Quick Connect if no manual server
+                Log.d(TAG, "Auto-Connect: No manual server selected, using Quick Connect")
+                quickConnect()
+            }
+        }
+
+        return true
+    }
+
+    /**
+     * Reset auto-connect session flag
+     * Called on app restart or when user manually disconnects
+     */
+    fun resetAutoConnectSession() {
+        hasAutoConnectedThisSession = false
+        Log.d(TAG, "Auto-Connect session flag reset")
     }
 }
