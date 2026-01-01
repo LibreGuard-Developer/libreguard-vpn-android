@@ -71,12 +71,14 @@
             android:theme="@android:style/Theme.NoDisplay"
             android:excludeFromRecents="true"
             android:taskAffinity=""
-            android:launchMode="singleTask" />
+            android:launchMode="singleTask"
+            android:screenOrientation="portrait" />
 
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:theme="@style/Theme.LibreGuardVPN">
+            android:theme="@style/Theme.LibreGuardVPN"
+            android:screenOrientation="portrait">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
