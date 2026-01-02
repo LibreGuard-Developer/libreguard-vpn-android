@@ -84,6 +84,15 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     // Track if auto-connect has been attempted this session (prevent multiple attempts)
     private var hasAutoConnectedThisSession = false
 
+    // Kill Switch feature: block internet traffic when VPN disconnects unexpectedly
+    private val _killSwitchEnabled = MutableStateFlow(false)
+    val killSwitchEnabled: StateFlow<Boolean> = _killSwitchEnabled
+
+    // Kill Switch Manager instance
+    private val killSwitchManager by lazy {
+        net.libreguard.vpn.service.KillSwitchManager.getInstance(getApplication())
+    }
+
     private val _selectedProtocol = MutableStateFlow(VpnProtocol.IKEV2_IPSEC)
     val selectedProtocol: StateFlow<VpnProtocol> = _selectedProtocol
 
@@ -191,6 +200,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
         // Load auto-connect preference
         loadAutoConnectPreference()
+
+        // Load kill switch preference
+        loadKillSwitchPreference()
 
         // Start observing data usage
         startDataUsageObservation()
@@ -1631,6 +1643,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                                     Log.d(TAG, "Started data usage monitoring")
                                     startConnectionTracking()
                                     saveConnectionState()
+
+                                    // Notify Kill Switch that VPN connected
+                                    notifyKillSwitchConnected()
                                 } else {
                                     Log.w(TAG, "Ignoring Connected state - not in Connecting state (possible stale update)")
                                 }
@@ -1642,6 +1657,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                                     _errorMessage.value = "Disconnected"
                                 }
                                 Log.d(TAG, "Disconnected via StateFlow")
+
+                                // Notify Kill Switch of unexpected disconnect
+                                notifyKillSwitchDisconnected(isManual = false)
                                 dataUsageManager.stopMonitoring()
                                 stateObserverJob?.cancel()
                                 stateObserverJob = null
@@ -1651,13 +1669,24 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                                 _errorMessage.value = "Disconnecting..."
                             }
                             is ConnectionState.Error -> {
+                                val wasConnected = _isConnected.value
                                 _isConnected.value = false
                                 _isConnecting.value = false
                                 _errorMessage.value = state.message
                                 Log.e(TAG, "Connection error via StateFlow: ${state.message}")
+
+                                // Notify Kill Switch of unexpected disconnect if we were connected
+                                if (wasConnected) {
+                                    Log.w(TAG, "Connection lost unexpectedly: ${state.message}")
+                                    notifyKillSwitchDisconnected(isManual = false)
+                                }
+
                                 dataUsageManager.stopMonitoring()
                                 stateObserverJob?.cancel()
                                 stateObserverJob = null
+
+                                // Clear persisted state since connection failed
+                                clearPersistedState()
                             }
                         }
                     }
@@ -1704,6 +1733,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 startConnectionTracking()
                 // Save connection state for persistence
                 saveConnectionState()
+
+                // Notify Kill Switch that VPN connected
+                notifyKillSwitchConnected()
             } else {
                 throw Exception("Failed to connect using WireGuard")
             }
@@ -1822,6 +1854,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
         // Save connection state for persistence
         saveConnectionState()
+
+        // Notify Kill Switch that VPN connected
+        notifyKillSwitchConnected()
     }
 
     /**
@@ -1935,6 +1970,8 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                                 startConnectionTracking()
                                 saveConnectionState()
                             }
+                            // Notify Kill Switch of successful connection
+                            notifyKillSwitchConnected()
                         }
                         is ConnectionState.Connecting -> {
                             _isConnecting.value = true
@@ -1944,20 +1981,27 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                             _isConnecting.value = true
                         }
                         is ConnectionState.Disconnected -> {
+                            val wasConnected = _isConnected.value
                             // If previously connected, stop monitoring and clear persisted state
-                            if (_isConnected.value) {
+                            if (wasConnected) {
                                 dataUsageManager.stopMonitoring()
                                 clearPersistedState()
+                                // Notify Kill Switch of unexpected disconnect
+                                notifyKillSwitchDisconnected(isManual = false)
                             }
                             _isConnecting.value = false
                             _isConnected.value = false
                         }
                         is ConnectionState.Error -> {
                             _errorMessage.value = st.message
+                            val wasConnected = _isConnected.value
                             // Treat as disconnected in UI
-                            if (_isConnected.value) {
+                            if (wasConnected) {
+                                Log.w(TAG, "Connection error from handler: ${st.message}")
                                 dataUsageManager.stopMonitoring()
                                 clearPersistedState()
+                                // Notify Kill Switch of unexpected disconnect
+                                notifyKillSwitchDisconnected(isManual = false)
                             }
                             _isConnecting.value = false
                             _isConnected.value = false
@@ -2178,6 +2222,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 activeVpnHandler = null
                 _isConnected.value = false
                 _isConnecting.value = false
+
+                // Notify Kill Switch of manual disconnect (don't block traffic)
+                notifyKillSwitchDisconnected(isManual = true)
 
                 // Reset auto-connect session flag so it can trigger again on next app launch
                 resetAutoConnectSession()
@@ -2567,5 +2614,57 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     fun resetAutoConnectSession() {
         hasAutoConnectedThisSession = false
         Log.d(TAG, "Auto-Connect session flag reset")
+    }
+
+    // ===== KILL SWITCH FEATURE =====
+
+    /**
+     * Load Kill Switch preference from SharedPreferences
+     * Called during init
+     */
+    private fun loadKillSwitchPreference() {
+        try {
+            val enabled = sharedPrefs.getBoolean("kill_switch_enabled", false)
+            _killSwitchEnabled.value = enabled
+            killSwitchManager.setEnabled(enabled)
+            Log.d(TAG, "Loaded Kill Switch preference: $enabled")
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to load kill switch preference: ${e.message}")
+        }
+    }
+
+    /**
+     * Enable or disable Kill Switch
+     * Persists preference to SharedPreferences
+     */
+    fun setKillSwitch(enabled: Boolean) {
+        _killSwitchEnabled.value = enabled
+        sharedPrefs.edit()
+            .putBoolean("kill_switch_enabled", enabled)
+            .apply()
+        killSwitchManager.setEnabled(enabled)
+        Log.d(TAG, "Kill Switch preference set to: $enabled")
+    }
+
+    /**
+     * Notify Kill Switch when VPN connects
+     * Should be called after successful connection
+     */
+    private fun notifyKillSwitchConnected() {
+        if (_killSwitchEnabled.value) {
+            killSwitchManager.onVpnConnected()
+            Log.d(TAG, "Notified Kill Switch: VPN connected")
+        }
+    }
+
+    /**
+     * Notify Kill Switch when VPN disconnects
+     * @param isManual true if user manually disconnected, false if unexpected
+     */
+    private fun notifyKillSwitchDisconnected(isManual: Boolean) {
+        if (_killSwitchEnabled.value) {
+            killSwitchManager.onVpnDisconnected(isManual)
+            Log.d(TAG, "Notified Kill Switch: VPN disconnected (manual=$isManual)")
+        }
     }
 }

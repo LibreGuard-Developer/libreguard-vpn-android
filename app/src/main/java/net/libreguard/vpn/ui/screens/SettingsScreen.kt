@@ -46,6 +46,9 @@ fun SettingsScreen(
     // Observe auto-connect state
     val autoConnectEnabled by viewModel.autoConnectEnabled.collectAsState()
 
+    // Observe kill switch state
+    val killSwitchEnabled by viewModel.killSwitchEnabled.collectAsState()
+
     var showLogoutDialog by remember { mutableStateOf(false) }
     var showDisable2faDialog by remember { mutableStateOf(false) }
     var is2faEnabled by remember { mutableStateOf(false) }
@@ -234,8 +237,10 @@ fun SettingsScreen(
                     icon = Icons.Default.Shield,
                     title = "Kill Switch",
                     subtitle = "Block internet if VPN drops",
-                    checked = false, // TODO: Connect to actual setting
-                    onCheckedChange = { }
+                    checked = killSwitchEnabled,
+                    onCheckedChange = { isChecked ->
+                        viewModel.setKillSwitch(isChecked)
+                    }
                 )
             }
 

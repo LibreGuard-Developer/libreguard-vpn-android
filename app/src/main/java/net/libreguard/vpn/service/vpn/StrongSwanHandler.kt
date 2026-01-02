@@ -261,11 +261,16 @@ class StrongSwanHandler(
             val hasIkeAuthFailed = logs.contains("IKE_SA.*failed", ignoreCase = true)
             val hasCertUnknown = logs.contains("certificate unknown", ignoreCase = true)
 
-            // NEW: Detect network/unreachable failures
-            val hasPeerNotResponding = logs.contains("peer not responding", ignoreCase = true) ||
-                                       logs.contains("giving up after", ignoreCase = true) ||
-                                       logs.contains("UNREACHABLE", ignoreCase = true) ||
-                                       logs.contains("establishing IKE_SA failed", ignoreCase = true)
+            // NEW: Detect ACTUAL failures vs temporary network issues
+            // MOBIKE (IKEv2 mobility) can handle network changes - don't force disconnect on temporary issues
+            val hasMobikeUpdate = logs.contains("MOBIKE update", ignoreCase = true) ||
+                                  logs.contains("old path is not available", ignoreCase = true) ||
+                                  logs.contains("looking for a route", ignoreCase = true)
+
+            // Only treat as fatal if we're giving up, not if MOBIKE is working
+            val hasPeerNotResponding = (logs.contains("giving up after", ignoreCase = true) ||
+                                       logs.contains("establishing IKE_SA failed", ignoreCase = true)) &&
+                                       !hasMobikeUpdate  // Don't force disconnect if MOBIKE is active
 
             if (hasPeerNotResponding) {
                 Log.e(tag, "Detected connectivity failure (peer not responding / unreachable) - forcing disconnect")
@@ -273,6 +278,11 @@ class StrongSwanHandler(
                     handleConnectionFailure("Remote peer not responding")
                 }
                 return
+            }
+
+            // Log MOBIKE activity but don't treat as failure
+            if (hasMobikeUpdate) {
+                Log.d(tag, "MOBIKE network path update in progress - allowing reconnection")
             }
 
             if (hasAuthFailed || hasCertStatusIssue || hasEapTlsFailed || hasCertRevoked || hasIkeAuthFailed || hasCertUnknown) {
