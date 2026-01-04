@@ -234,7 +234,8 @@ fun DashboardScreen(
         }
 
         // Unified Quick Connect / Manual Server Selection Button (when disconnected)
-        if (!isConnected && !isConnecting) {
+        // Only show if: in Quick Connect mode OR (in manual mode AND have a server selected)
+        if (!isConnected && !isConnecting && (isQuickConnectMode || selectedServer != null)) {
             Spacer(modifier = Modifier.height(10.dp))
 
             // Single unified button that shows Quick Connect or manually selected server
@@ -260,9 +261,9 @@ fun DashboardScreen(
                         if (isQuickConnectMode) {
                             // Quick Connect mode: auto-select and connect
                             viewModel.quickConnect()
-                        } else {
-                            // Manual mode: navigate to server list to change selection
-                            onNavigateToServers()
+                        } else if (selectedServer != null) {
+                            // Manual mode with server selected: connect to selected server
+                            viewModel.connectToVpn()
                         }
                     }
                 ) {
@@ -315,7 +316,7 @@ fun DashboardScreen(
                                     )
                                 }
                             } else {
-                                // Manual Server Selection UI - Centered
+                                // Manual Server Selection UI - only show if server is selected
                                 if (selectedServer != null) {
                                     Text(
                                         text = getFlagEmoji(selectedServer?.country ?: ""),
@@ -337,19 +338,6 @@ fun DashboardScreen(
                                         )
                                     }
                                     Spacer(modifier = Modifier.width(36.dp)) // Space for X button
-                                } else {
-                                    Icon(
-                                        Icons.Default.List,
-                                        null,
-                                        tint = MutedForeground,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text(
-                                        "Select Server",
-                                        style = MaterialTheme.typography.titleSmall,
-                                        color = Foreground
-                                    )
                                 }
                             }
                         }
