@@ -193,6 +193,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     // Background VPN state monitoring to detect ghost connections
     private var vpnStateMonitorJob: Job? = null
 
+    // Periodic quota refresh when connected (every 60 seconds)
+    private var quotaRefreshJob: Job? = null
+
     // Upgrade events for UI navigation
     private val _upgradeEvents = MutableSharedFlow<Map<String, String?>>(replay = 0)
     val upgradeEvents: SharedFlow<Map<String, String?>> = _upgradeEvents
@@ -2058,6 +2061,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
         // Fetch and set VPN IP
         fetchVpnIP(server.serverIp)
+
+        // Start periodic quota refresh (every 60 seconds)
+        startQuotaRefreshTimer()
     }
 
     /**
@@ -2130,6 +2136,35 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
         // Clear VPN IP
         _vpnIP.value = ""
+
+        // Stop quota refresh timer
+        stopQuotaRefreshTimer()
+    }
+
+    /**
+     * Start periodic quota refresh timer (every 60 seconds)
+     */
+    private fun startQuotaRefreshTimer() {
+        quotaRefreshJob?.cancel()
+        quotaRefreshJob = viewModelScope.launch(Dispatchers.IO) {
+            while (isActive && _isConnected.value) {
+                delay(60000) // Wait 60 seconds
+                if (_isConnected.value) {
+                    Log.d(TAG, "Refreshing quota from server (60s timer)")
+                    dataUsageManager.syncQuotaFromServer()
+                }
+            }
+        }
+        Log.d(TAG, "Started quota refresh timer (60s interval)")
+    }
+
+    /**
+     * Stop periodic quota refresh timer
+     */
+    private fun stopQuotaRefreshTimer() {
+        quotaRefreshJob?.cancel()
+        quotaRefreshJob = null
+        Log.d(TAG, "Stopped quota refresh timer")
     }
 
     // Observe active handler state (especially for OpenVPN) and reflect in UI
