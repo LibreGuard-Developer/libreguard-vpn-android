@@ -20,6 +20,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.launch
 import net.libreguard.vpn.network.RetrofitClient
@@ -48,6 +49,9 @@ fun SettingsScreen(
 
     // Observe kill switch state
     val killSwitchEnabled by viewModel.killSwitchEnabled.collectAsState()
+
+    // Observe selected protocol (default protocol)
+    val selectedProtocol by viewModel.selectedProtocol.collectAsState()
 
     var showLogoutDialog by remember { mutableStateOf(false) }
     var showDisable2faDialog by remember { mutableStateOf(false) }
@@ -264,6 +268,91 @@ fun SettingsScreen(
             SectionHeader(title = "Connection", modifier = Modifier.padding(horizontal = 24.dp))
 
             SettingsCard(modifier = Modifier.padding(horizontal = 24.dp)) {
+                // Default Protocol Selection
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp)
+                ) {
+                    Text(
+                        text = "Default Protocol",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (isPro) Foreground else MutedForeground,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        // IKEv2/IPSec Button (always available)
+                        Surface(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(40.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            color = if (selectedProtocol == net.libreguard.vpn.viewmodel.VpnProtocol.IKEV2_IPSEC) Primary else CardBackground,
+                            border = if (selectedProtocol != net.libreguard.vpn.viewmodel.VpnProtocol.IKEV2_IPSEC)
+                                ButtonDefaults.outlinedButtonBorder(enabled = true) else null,
+                            onClick = { viewModel.saveDefaultProtocol(net.libreguard.vpn.viewmodel.VpnProtocol.IKEV2_IPSEC) }
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text(
+                                    text = "IKEv2/IPSec",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (selectedProtocol == net.libreguard.vpn.viewmodel.VpnProtocol.IKEV2_IPSEC) PrimaryForeground else Foreground
+                                )
+                            }
+                        }
+
+                        // OpenVPN Button with PRO badge
+                        Box(modifier = Modifier.weight(1f)) {
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(40.dp),
+                                shape = RoundedCornerShape(12.dp),
+                                color = if (isPro && selectedProtocol == net.libreguard.vpn.viewmodel.VpnProtocol.OPENVPN) Primary else CardBackground,
+                                border = if (!isPro || selectedProtocol != net.libreguard.vpn.viewmodel.VpnProtocol.OPENVPN)
+                                    ButtonDefaults.outlinedButtonBorder(enabled = isPro) else null,
+                                onClick = {
+                                    if (!isPro) {
+                                        onNavigateToUpgrade()
+                                    } else {
+                                        viewModel.saveDefaultProtocol(net.libreguard.vpn.viewmodel.VpnProtocol.OPENVPN)
+                                    }
+                                }
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Text(
+                                        text = "OpenVPN",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = if (isPro && selectedProtocol == net.libreguard.vpn.viewmodel.VpnProtocol.OPENVPN) PrimaryForeground else if (isPro) Foreground else MutedForeground
+                                    )
+                                }
+                            }
+                            // PRO badge for free users
+                            if (!isPro) {
+                                Surface(
+                                    modifier = Modifier
+                                        .align(Alignment.TopEnd)
+                                        .offset(x = 4.dp, y = (-4).dp),
+                                    shape = RoundedCornerShape(6.dp),
+                                    color = Primary
+                                ) {
+                                    Text(
+                                        text = "PRO",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = PrimaryForeground,
+                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
+                                        fontSize = 9.sp
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+                HorizontalDivider(color = Border, modifier = Modifier.padding(start = 0.dp))
+
                 SettingsToggleRow(
                     icon = Icons.Default.Power,
                     title = "Auto-Connect",

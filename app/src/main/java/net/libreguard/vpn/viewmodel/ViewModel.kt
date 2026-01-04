@@ -214,6 +214,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         // Load kill switch preference
         loadKillSwitchPreference()
 
+        // Load default protocol preference
+        loadDefaultProtocol()
+
         // Start observing data usage
         startDataUsageObservation()
 
@@ -2889,5 +2892,33 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             killSwitchManager.onVpnDisconnected(isManual)
             Log.d(TAG, "Notified Kill Switch: VPN disconnected (manual=$isManual)")
         }
+    }
+
+    /**
+     * Load default protocol preference from SharedPreferences
+     * Defaults to IKEV2_IPSEC if not previously set
+     */
+    private fun loadDefaultProtocol() {
+        try {
+            val protocolName = sharedPrefs.getString("default_protocol", VpnProtocol.IKEV2_IPSEC.displayName)
+            val protocol = VpnProtocol.values().find { it.displayName == protocolName } ?: VpnProtocol.IKEV2_IPSEC
+            _selectedProtocol.value = protocol
+            Log.d(TAG, "Loaded Default Protocol preference: ${protocol.displayName}")
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to load default protocol preference: ${e.message}")
+            _selectedProtocol.value = VpnProtocol.IKEV2_IPSEC
+        }
+    }
+
+    /**
+     * Save default protocol preference to SharedPreferences
+     * Called when user selects a protocol in Settings
+     */
+    fun saveDefaultProtocol(protocol: VpnProtocol) {
+        _selectedProtocol.value = protocol
+        sharedPrefs.edit()
+            .putString("default_protocol", protocol.displayName)
+            .apply()
+        Log.d(TAG, "Default Protocol preference set to: ${protocol.displayName}")
     }
 }
