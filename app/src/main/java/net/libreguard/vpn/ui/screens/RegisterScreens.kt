@@ -487,14 +487,8 @@ fun ConfirmEmailScreen(
     }
     val tokenManager = remember { RetrofitClient.getTokenManager() }
 
-    LaunchedEffect(Unit) {
-        Log.d("ConfirmEmail", "Clearing any existing tokens to ensure clean state for auto-login")
-        tokenManager.clearTokens()
-        context.getSharedPreferences("vpn_state_prefs", android.content.Context.MODE_PRIVATE)
-            .edit()
-            .remove("auth_token")
-            .apply()
-    }
+    // Token clearing removed - should only occur on explicit logout to prevent interference
+    // with legitimate login flows and token refresh attempts
 
     fun persistAuthResponse(authResponse: AuthResponse?): Boolean {
         val auth = authResponse ?: return false
@@ -551,51 +545,70 @@ fun ConfirmEmailScreen(
                         val authResponse = loginResp.body()
                         if (authResponse != null && !authResponse.token.isNullOrBlank()) {
                             val persisted = persistAuthResponse(authResponse)
-                            val savedToken = tokenManager.getAccessToken()
-                            if (persisted && savedToken != null) {
-                                onConfirmed(authResponse)
-                            } else {
-                                onBackToLogin()
-                            }
-                            return@LaunchedEffect
-                        }
-                    }
-                    onBackToLogin()
-                } else {
-                    error = confirmResp?.body()?.message ?: "Failed to confirm email"
-                    onBackToLogin()
-                }
-            } catch (e: Throwable) {
-                error = e.localizedMessage
-                onBackToLogin()
-            }
-        } else if (!uid.isNullOrBlank() || email.isNotBlank()) {
-            if (email.isNotBlank() && password.isNotBlank()) {
-                val loginReq = AuthRequest(
-                    email = email,
-                    password = password,
-                    deviceId = deviceId,
-                    appVersion = appVersion
-                )
-                val loginResp = runCatching {
-                    RetrofitClient.instance.login(loginReq)
-                }.getOrNull()
-
-                if (loginResp?.isSuccessful == true) {
-                    val authResponse = loginResp.body()
-                    if (authResponse != null && !authResponse.token.isNullOrBlank()) {
-                        val persisted = persistAuthResponse(authResponse)
                         val savedToken = tokenManager.getAccessToken()
                         if (persisted && savedToken != null) {
                             onConfirmed(authResponse)
                         } else {
+                            Log.w("ConfirmEmail", "Failed to persist auth response or retrieve saved token after initial login. persisted=$persisted, savedToken=$savedToken")
                             onBackToLogin()
                         }
+                        return@LaunchedEffect
+                    } else {
+                        Log.w("ConfirmEmail", "Initial login response missing token. authResponse=$authResponse")
                     }
                 }
+                Log.w("ConfirmEmail", "Initial email confirmation or login failed, redirecting to login")
+                onBackToLogin()
             } else {
+                Log.w("ConfirmEmail", "Confirmation response not successful: code=${confirmResp?.code()}, message=${confirmResp?.body()?.message}")
+                error = confirmResp?.body()?.message ?: "Failed to confirm email"
                 onBackToLogin()
             }
+        } catch (e: Throwable) {
+            Log.e("ConfirmEmail", "Exception during email confirmation flow: ${e.message}", e)
+            error = e.localizedMessage
+            onBackToLogin()
+        }
+    } else if (!uid.isNullOrBlank() || email.isNotBlank()) {
+        if (email.isNotBlank() && password.isNotBlank()) {
+            Log.d("ConfirmEmail", "Attempting auto-login with email=$email")
+            val loginReq = AuthRequest(
+                email = email,
+                password = password,
+                deviceId = deviceId,
+                appVersion = appVersion
+            )
+            val loginResp = runCatching {
+                RetrofitClient.instance.login(loginReq)
+            }.getOrNull()
+
+            if (loginResp?.isSuccessful == true) {
+                val authResponse = loginResp.body()
+                if (authResponse != null && !authResponse.token.isNullOrBlank()) {
+                    val persisted = persistAuthResponse(authResponse)
+                    val savedToken = tokenManager.getAccessToken()
+                    if (persisted && savedToken != null) {
+                        Log.d("ConfirmEmail", "Auto-login successful, calling onConfirmed")
+                        onConfirmed(authResponse)
+                    } else {
+                        Log.w("ConfirmEmail", "Auto-login failed to persist token. persisted=$persisted, savedToken=$savedToken")
+                        onBackToLogin()
+                    }
+                } else {
+                    Log.w("ConfirmEmail", "Auto-login response missing token")
+                    onBackToLogin()
+                }
+            } else {
+                Log.w("ConfirmEmail", "Auto-login failed: code=${loginResp?.code()}, isSuccessful=${loginResp?.isSuccessful}")
+                onBackToLogin()
+            }
+        } else {
+            Log.w("ConfirmEmail", "Auto-login cannot proceed: missing email or password. email.isNotBlank=${email.isNotBlank()}, password.isNotBlank=${password.isNotBlank()}")
+            onBackToLogin()
+        }
+    } else {
+        Log.w("ConfirmEmail", "No userId or email provided, redirecting to login")
+        onBackToLogin()
         }
     }
 

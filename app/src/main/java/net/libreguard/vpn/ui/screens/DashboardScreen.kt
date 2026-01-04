@@ -112,7 +112,12 @@ fun DashboardScreen(
     LaunchedEffect(authToken) {
         viewModel.setAuthToken(authToken)
         viewModel.loadRemoteServers()
-        // Sync server quota on launch
+
+        // CRITICAL FIX: Delay quota sync to stagger API requests
+        // This prevents simultaneous 401s that cascade into multiple logouts
+        kotlinx.coroutines.delay(2000L)
+
+        // Sync server quota after delay
         viewModel.syncServerQuota()
     }
 

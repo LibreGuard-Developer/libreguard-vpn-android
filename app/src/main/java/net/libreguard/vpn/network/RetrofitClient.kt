@@ -45,7 +45,7 @@ object RetrofitClient {
     }
 
     // Auth API Service (No Authenticator) - used for refreshing tokens
-    private val authApiService: ApiService by lazy {
+    val authApiService: ApiService by lazy {
         val retrofit = Retrofit.Builder()
             .baseUrl(BASE_URL)
             .client(getUnsafeOkHttpClient().build()) // No interceptors/authenticators
@@ -60,6 +60,12 @@ object RetrofitClient {
         }
 
         val clientBuilder = getUnsafeOkHttpClient()
+
+        // Add HTTP logging interceptor for debugging
+        val loggingInterceptor = okhttp3.logging.HttpLoggingInterceptor().apply {
+            level = okhttp3.logging.HttpLoggingInterceptor.Level.BODY
+        }
+        clientBuilder.addInterceptor(loggingInterceptor)
 
         // Add Authenticator and Interceptor
         clientBuilder.authenticator(TokenAuthenticator(appContext!!, tokenManager!!, authApiService))

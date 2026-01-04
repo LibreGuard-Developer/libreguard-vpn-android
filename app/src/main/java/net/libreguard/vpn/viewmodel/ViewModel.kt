@@ -138,8 +138,10 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     private val _upgradeReason = MutableStateFlow<String?>(null)
     val upgradeReason: StateFlow<String?> = _upgradeReason
 
-    private var _isPro = MutableStateFlow(false)
-    val isPro: StateFlow<Boolean> = _isPro
+    // CRITICAL FIX: Use SubscriptionViewModel as single source of truth for isPro status
+    // instead of maintaining separate cached state in VpnViewModel
+    private val subscriptionViewModel by lazy { SubscriptionViewModel(getApplication()) }
+    val isPro: StateFlow<Boolean> get() = subscriptionViewModel.isPro
 
     private var authToken: String? = null
     private var currentUserId: String? = null
@@ -166,6 +168,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     private var currentConnectionStartTime: Long? = null
     private var currentConnectionDataStart: Double = 0.0
 
+    // Track when connection was established (for grace period in ghost detection)
+    private var connectionEstablishedTimestamp: Long? = null
+
     // Connection duration tracking (persists across navigation)
     private val _connectionDuration = MutableStateFlow("00:00:00")
     val connectionDuration: StateFlow<String> = _connectionDuration
@@ -185,6 +190,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     // Track OpenVPN state collection
     private var openVpnStateJob: Job? = null
 
+    // Background VPN state monitoring to detect ghost connections
+    private var vpnStateMonitorJob: Job? = null
+
     // Upgrade events for UI navigation
     private val _upgradeEvents = MutableSharedFlow<Map<String, String?>>(replay = 0)
     val upgradeEvents: SharedFlow<Map<String, String?>> = _upgradeEvents
@@ -195,8 +203,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         // Restore any previously active VPN session (e.g., after process death or app swipe-away)
         loadPersistedState()
 
-        // Load cached subscription status (isPro)
-        loadCachedSubscriptionStatus()
+        // REMOVED: loadCachedSubscriptionStatus() - now handled by SubscriptionViewModel
 
         // Load auto-connect preference
         loadAutoConnectPreference()
@@ -206,6 +213,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
         // Start observing data usage
         startDataUsageObservation()
+
+        // Start background VPN state monitoring to detect ghost connections
+        startVpnStateMonitoring()
     }
 
     /**
@@ -217,6 +227,53 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 _dataUsageInfo.value = dataUsage
             }
         }
+    }
+
+    /**
+     * Start background VPN state monitoring to detect and clear ghost connections
+     * Runs periodically when UI state shows connected to verify actual VPN is active
+     */
+    private fun startVpnStateMonitoring() {
+        vpnStateMonitorJob?.cancel()
+        vpnStateMonitorJob = viewModelScope.launch(Dispatchers.IO) {
+            while (isActive) {
+                delay(15000) // Check every 15 seconds
+
+                // Only verify if UI state shows connected
+                if (_isConnected.value) {
+                    try {
+                        val actuallyConnected = checkVpnStatusImproved()
+
+                        if (!actuallyConnected) {
+                            Log.w(TAG, "⚠️ VPN State Monitor: Ghost connection detected (UI shows connected but VPN inactive)")
+
+                            withContext(Dispatchers.Main) {
+                                // Clear all connection state
+                                _isConnected.value = false
+                                _connectionState.value = ConnectionState.Disconnected
+                                _isConnecting.value = false
+                                activeVpnHandler = null
+
+                                // Stop tracking
+                                stopConnectionTracking()
+
+                                // Clear persisted state
+                                clearPersistedState()
+
+                                _errorMessage.value = null
+
+                                Log.d(TAG, "VPN State Monitor: Ghost connection state cleared automatically")
+                            }
+                        } else {
+                            Log.d(TAG, "VPN State Monitor: Connection verified active")
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "VPN State Monitor: Error checking status: ${e.message}")
+                    }
+                }
+            }
+        }
+        Log.d(TAG, "Started background VPN state monitoring (15s interval)")
     }
 
     /**
@@ -271,6 +328,17 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         try {
             val savedAuthToken = sharedPrefs.getString("auth_token", null)
             if (!savedAuthToken.isNullOrBlank()) {
+                // CRITICAL FIX: Validate token expiry before using it
+                val tokenManager = RetrofitClient.getTokenManager()
+
+                // Check if token is expired by examining JWT payload
+                if (tokenManager.isTokenExpired()) {
+                    Log.w(TAG, "Persisted auth token is expired, clearing it")
+                    sharedPrefs.edit().remove("auth_token").apply()
+                    tokenManager.clearTokens()
+                    return
+                }
+
                 authToken = savedAuthToken
                 // Restore stable user id for scoping caches
                 currentUserId = sharedPrefs.getString("current_user_id", null)
@@ -397,6 +465,35 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                             // Don't fail the entire restoration just because handler creation failed
                             // The user can still see the connection status and try to disconnect
                         }
+
+                        // CRITICAL FIX: Re-verify VPN status after a delay to catch race conditions
+                        // This only applies to RESTORED connections (after force-close/restart)
+                        // Fresh connections have connectionEstablishedTimestamp set, so background monitor respects grace period
+                        viewModelScope.launch {
+                            delay(3000) // Wait 3 seconds for system state to stabilize
+
+                            val isStillActive = checkVpnStatusImproved()
+                            if (!isStillActive && _isConnected.value) {
+                                Log.w(TAG, "⚠️ VPN connection verification FAILED after delay - clearing ghost state")
+
+                                // Clear all connection state
+                                _isConnected.value = false
+                                _connectionState.value = ConnectionState.Disconnected
+                                _isConnecting.value = false
+                                activeVpnHandler = null
+
+                                // Stop tracking
+                                stopConnectionTracking()
+
+                                // Clear persisted state
+                                clearPersistedState()
+
+                                _errorMessage.value = null
+                                Log.d(TAG, "Ghost connection state cleared - VPN was not actually active")
+                            } else if (isStillActive) {
+                                Log.d(TAG, "✅ VPN connection verified active after delay - state is correct")
+                            }
+                        }
                     } else {
                         // VPN is no longer active, clear persisted state
                         Log.d(TAG, "VPN is no longer active, clearing persisted state")
@@ -515,13 +612,26 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 remove("connected_protocol")
                 remove("connected_at")
                 remove("connected_server_ip")
+
+                // Clear VPN profile data (prevents partial restoration)
+                remove("vpn_profile_uuid")
+                remove("vpn_profile_name")
+                remove("vpn_profile_gateway")
+                remove("vpn_profile_remote_id")
+                remove("vpn_profile_user_cert_alias")
+
                 // Preserve auth token
                 if (currentAuthToken != null) {
                     putString("auth_token", currentAuthToken)
                 }
                 apply()
             }
-            Log.d(TAG, "Cleared persisted connection state but preserved auth token")
+
+            // Also clear connection tracking data
+            currentConnectionStartTime = null
+            currentConnectionDataStart = 0.0
+
+            Log.d(TAG, "Cleared persisted connection state, profile data, and tracking info (auth token preserved)")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to clear persisted state", e)
         }
@@ -559,6 +669,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             // Stop background token validation
             tokenValidationManager?.stopBackgroundValidation()
+
+            // Stop background token refresh
+            tokenValidationManager?.stopBackgroundTokenRefresh()
 
             // Disconnect VPN if connected
             if (_isConnected.value) {
@@ -604,7 +717,8 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
             // 1. Stop background token validation first
             tokenValidationManager?.stopBackgroundValidation()
-            Log.d(TAG, "Stopped token validation background job")
+            tokenValidationManager?.stopBackgroundTokenRefresh()
+            Log.d(TAG, "Stopped token validation and refresh background jobs")
 
             // 2. Cancel any ongoing OpenVPN state observer
             openVpnStateJob?.cancel()
@@ -845,6 +959,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
         Log.d(TAG, "Set stable user ID: $userId")
 
+        // CRITICAL FIX: Set auth token in SubscriptionViewModel with user ID for cache scoping
+        subscriptionViewModel.setAuthToken(token, userId)
+
         // Clean legacy, non-scoped OpenVPN caches to avoid cross-user leakage
         try {
             cleanupLegacyOpenVpnCache()
@@ -862,8 +979,25 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         Log.d(TAG, "Starting background token validation polling")
         tokenValidationManager?.startBackgroundValidation(viewModelScope)
 
-        // Automatically load remote servers when token is set, but don't fail if it doesn't work
-        loadRemoteServersWithFallback()
+        // CRITICAL FIX: Stagger API requests to prevent simultaneous 401s
+        // Load servers first, then subscription fetch, then quota sync after delays
+        viewModelScope.launch {
+            // Load remote servers immediately
+            loadRemoteServersWithFallback()
+
+            // CRITICAL FIX: Trigger subscription status fetch immediately after login
+            // This ensures isPro is updated proactively instead of waiting for screens to trigger it
+            delay(500L)
+            try {
+                subscriptionViewModel.fetchSubscriptionStatus()
+                Log.d(TAG, "Subscription status fetch triggered after login")
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to fetch subscription status: ${e.message}")
+            }
+
+            // Wait before loading quota to stagger requests
+            delay(1500L)
+        }
     }
 
     // Provide a user-scoped cache directory per protocol
@@ -873,6 +1007,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         if (!dir.exists()) dir.mkdirs()
         return dir
     }
+
 
     private fun clearUserScopedVpnCaches() {
         val context = getApplication<Application>().applicationContext
@@ -1139,6 +1274,42 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
         viewModelScope.launch {
             try {
+                // CRITICAL: Proactively refresh token if expired or expiring soon
+                // This prevents the infinite redirect loop (21 follow-up requests) that occurs
+                // when an expired token triggers both TokenAuthenticator and AuthInterceptor
+                val tokenManager = RetrofitClient.getTokenManager()
+                Log.d(TAG, "Checking if token refresh is needed before VPN connection")
+                val refreshSuccess = tokenManager.refreshTokenIfNeeded(RetrofitClient.authApiService)
+
+                if (!refreshSuccess) {
+                    Log.w(TAG, "Token refresh failed - session expired, logging out")
+                    _errorMessage.value = "Your session has expired. Please login again."
+                    _isConnecting.value = false
+
+                    // Trigger proper logout sequence: disconnect VPN, call API, clear tokens, redirect
+                    viewModelScope.launch {
+                        try {
+                            // Force disconnect VPN if connected
+                            if (_isConnected.value) {
+                                forceDisconnectVpn(getApplication<Application>().applicationContext)
+                            }
+
+                            // Use LogoutManager for proper logout (API call + clear tokens)
+                            net.libreguard.vpn.util.LogoutManager.logout()
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Error during logout sequence after token refresh failure", e)
+                        }
+
+                        // Broadcast logout event to redirect to login screen
+                        val logoutIntent = Intent("net.libreguard.vpn.ACTION_LOGOUT")
+                        logoutIntent.setPackage(getApplication<Application>().packageName)
+                        getApplication<Application>().sendBroadcast(logoutIntent)
+                    }
+                    return@launch
+                }
+
+                Log.d(TAG, "Token is valid or successfully refreshed")
+
                 // Validate token before attempting connection
                 val manager = tokenValidationManager
                 if (manager != null) {
@@ -1637,6 +1808,8 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                                 if (_isConnecting.value) {
                                     _isConnected.value = true
                                     _isConnecting.value = false
+                                    // Set connection establishment timestamp for grace period
+                                    connectionEstablishedTimestamp = System.currentTimeMillis()
                                     _errorMessage.value = "Connected using IKEv2/IPSec to ${profile.gateway}"
                                     Log.d(TAG, "Successfully connected via StateFlow")
                                     dataUsageManager.startMonitoring()
@@ -1723,6 +1896,8 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             if (connected) {
                 _isConnected.value = true
                 _isConnecting.value = false
+                // Set connection establishment timestamp for grace period
+                connectionEstablishedTimestamp = System.currentTimeMillis()
                 _errorMessage.value = "Connected using WireGuard"
                 Log.d(TAG, "Successfully connected using WireGuard")
 
@@ -1945,6 +2120,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         currentConnectionStartTime = null
         currentConnectionDataStart = 0.0
 
+        // Clear connection establishment timestamp
+        connectionEstablishedTimestamp = null
+
         // Stop connection timer
         connectionTimerJob?.cancel()
         connectionTimerJob = null
@@ -1965,6 +2143,8 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                         is ConnectionState.Connected -> {
                             _isConnected.value = true
                             _isConnecting.value = false
+                            // Set connection establishment timestamp for grace period
+                            connectionEstablishedTimestamp = System.currentTimeMillis()
                             // Ensure timer/IP tracking starts even when connection comes from handler state
                             if (currentConnectionStartTime == null) {
                                 startConnectionTracking()
@@ -2031,6 +2211,8 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             if (connected) {
                 _isConnected.value = true
                 _isConnecting.value = false
+                // Set connection establishment timestamp for grace period
+                connectionEstablishedTimestamp = System.currentTimeMillis()
                 _errorMessage.value = "Connected using OpenVPN"
                 Log.d(TAG, "Successfully connected using OpenVPN")
 
@@ -2265,18 +2447,17 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             val caps = connectivityManager.getNetworkCapabilities(activeNetwork)
             val isVpnTransport = caps?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN) == true
 
-            if (isVpnServiceReady && isVpnTransport) {
-                Log.d(TAG, "VPN is active (ConnectivityManager + VpnService check)")
-                return@withContext true
-            }
-
-            // Method 3: Fallback to checking network interfaces (for cases where CM might be delayed or specific device quirks)
+            // Method 3: Check network interfaces for active VPN tunnels
             val isVpnInterfaceActive = try {
                 val networkInterfaces = java.net.NetworkInterface.getNetworkInterfaces()
                 var hasTunInterface = false
                 while (networkInterfaces.hasMoreElements()) {
                     val networkInterface = networkInterfaces.nextElement()
-                    if ((networkInterface.name.startsWith("tun") || networkInterface.name.startsWith("ipsec")) && networkInterface.isUp) {
+                    // Check for common VPN interface prefixes: tun (OpenVPN/WireGuard), ipsec (StrongSwan/IPSec)
+                    if ((networkInterface.name.startsWith("tun") ||
+                         networkInterface.name.startsWith("ipsec") ||
+                         networkInterface.name.startsWith("wg")) &&
+                        networkInterface.isUp) {
                         hasTunInterface = true
                         Log.d(TAG, "Found active VPN interface: ${networkInterface.name}")
                         break
@@ -2288,20 +2469,20 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 false
             }
 
-            // Method 4: Check StrongSwan service state (fallback for StrongSwan specifically)
-            val isStrongSwanActive = try {
-                val vpnStateFile = File(context.filesDir, "charon.log")
-                val isRecentlyActive = vpnStateFile.exists() &&
-                    (System.currentTimeMillis() - vpnStateFile.lastModified()) < 60000 // 1 minute
-                isRecentlyActive
-            } catch (e: Exception) {
-                false
+            Log.d(TAG, "VPN status check details: vpnServiceReady=$isVpnServiceReady, transport=$isVpnTransport, interface=$isVpnInterfaceActive")
+
+            // SMART VALIDATION: Require service ready AND (transport OR interface)
+            // This prevents false positives from stale state while handling platform variations
+            // where transport detection may be delayed or unreliable on some Android versions/OEMs
+            val isActive = isVpnServiceReady && (isVpnTransport || isVpnInterfaceActive)
+
+            if (isActive) {
+                Log.d(TAG, "✅ VPN is actively connected (validation passed: transport=$isVpnTransport, interface=$isVpnInterfaceActive)")
+            } else {
+                Log.d(TAG, "❌ VPN is NOT active (validation failed)")
             }
 
-            Log.d(TAG, "VPN status check details: vpnServiceReady=$isVpnServiceReady, transport=$isVpnTransport, interface=$isVpnInterfaceActive, strongSwanLog=$isStrongSwanActive")
-
-            // Consider VPN active if service is ready AND (Transport is VPN OR Interface is Up OR StrongSwan log is recent)
-            isVpnServiceReady && (isVpnTransport || isVpnInterfaceActive || isStrongSwanActive)
+            isActive
         } catch (e: Exception) {
             Log.e(TAG, "Error checking VPN status (improved)", e)
             false
@@ -2469,23 +2650,11 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
     /**
      * Update Pro user status from subscription service
+     * CRITICAL FIX: Delegates to SubscriptionViewModel to maintain single source of truth
      */
-    fun setProStatus(isPro: Boolean) {
-        _isPro.value = isPro
-    }
-
-    /**
-     * Load cached subscription status (isPro) from SharedPreferences
-     */
-    private fun loadCachedSubscriptionStatus() {
-        try {
-            val subscriptionPrefs = getApplication<Application>().getSharedPreferences("vpn_subscription_prefs", Context.MODE_PRIVATE)
-            val isProCached = subscriptionPrefs.getBoolean("subscription_is_pro", false)
-            _isPro.value = isProCached
-            Log.d(TAG, "Loaded cached subscription status: isPro=$isProCached")
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to load cached subscription status: ${e.message}")
-        }
+    fun updateSubscriptionStatus() {
+        Log.d(TAG, "updateSubscriptionStatus() called - triggering subscription refresh via SubscriptionViewModel")
+        subscriptionViewModel.subscriptionUpdated()
     }
 
     // ===== AUTO-CONNECT FEATURE =====
@@ -2536,10 +2705,29 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         // Guard 3: Check if already connected or connecting
+        // CRITICAL FIX: Verify actual VPN status, not just cached state
+        // This prevents skipping auto-connect due to ghost connection state
         if (_isConnected.value || _isConnecting.value) {
-            Log.d(TAG, "Auto-Connect: Already connected/connecting, skipping")
-            hasAutoConnectedThisSession = true
-            return false
+            Log.d(TAG, "Auto-Connect: State shows connected/connecting, verifying actual VPN status...")
+
+            // Re-validate actual VPN status
+            val actuallyConnected = checkVpnStatusImproved()
+
+            if (actuallyConnected) {
+                Log.d(TAG, "Auto-Connect: VPN verified active, skipping")
+                hasAutoConnectedThisSession = true
+                return false
+            } else {
+                // Ghost connection state detected - clear it and proceed with auto-connect
+                Log.w(TAG, "⚠️ Auto-Connect: Ghost connection state detected (UI shows connected but VPN inactive)")
+                _isConnected.value = false
+                _connectionState.value = ConnectionState.Disconnected
+                _isConnecting.value = false
+                activeVpnHandler = null
+                clearPersistedState()
+                Log.d(TAG, "Auto-Connect: Cleared ghost state, proceeding with auto-connect")
+                // Continue to next guards
+            }
         }
 
         // Guard 4: Verify authentication token exists

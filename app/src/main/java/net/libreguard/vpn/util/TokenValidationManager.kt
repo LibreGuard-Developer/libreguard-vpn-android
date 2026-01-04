@@ -26,7 +26,78 @@ class TokenValidationManager(
     private val tokenManager: TokenManager
 ) {
     private var validationJob: Job? = null
+    private var refreshJob: Job? = null
     private val TAG = "TokenValidationManager"
+
+    /**
+     * Start background token refresh polling
+     * Checks token expiry every 10 minutes and proactively refreshes if expiring within 5 minutes
+     * This prevents expired token issues during long-running sessions
+     */
+    fun startBackgroundTokenRefresh(scope: CoroutineScope) {
+        if (refreshJob?.isActive == true) {
+            Log.d(TAG, "Background token refresh already running")
+            return
+        }
+
+        refreshJob = scope.launch(Dispatchers.IO) {
+            Log.d(TAG, "Starting background token refresh (checks every 10 minutes)")
+
+            while (isActive) {
+                try {
+                    // Wait 10 minutes before each check
+                    delay(10 * 60 * 1000L)
+
+                    if (!isActive) break
+
+                    // Only refresh if we have tokens
+                    if (tokenManager.getAccessToken() != null) {
+                        Log.d(TAG, "Running periodic token refresh check")
+
+                        // Check if token is expired or expiring within 5 minutes
+                        if (tokenManager.isTokenExpired() || tokenManager.isTokenExpiringWithin(300)) {
+                            Log.d(TAG, "Token expired or expiring soon - attempting background refresh")
+
+                            val refreshSuccess = tokenManager.refreshTokenIfNeeded(
+                                net.libreguard.vpn.network.RetrofitClient.authApiService
+                            )
+
+                            if (refreshSuccess) {
+                                Log.d(TAG, "Background token refresh successful")
+                            } else {
+                                Log.w(TAG, "Background token refresh failed - checking if refresh token is expired")
+
+                                // Only check refresh token expiry AFTER refresh has already failed
+                                // This prevents false positives on fresh logins
+                                if (tokenManager.isRefreshTokenExpired()) {
+                                    Log.w(TAG, "Refresh token is expired - session ended, triggering logout")
+                                    handleTokenRevocation()
+                                    break // Stop the background job
+                                } else {
+                                    Log.w(TAG, "Refresh failed but refresh token seems valid - might be network issue, will retry later")
+                                }
+                            }
+                        } else {
+                            Log.d(TAG, "Token still valid, no refresh needed")
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error in background token refresh loop", e)
+                }
+            }
+
+            Log.d(TAG, "Background token refresh stopped")
+        }
+    }
+
+    /**
+     * Stop background token refresh
+     */
+    fun stopBackgroundTokenRefresh() {
+        refreshJob?.cancel()
+        refreshJob = null
+        Log.d(TAG, "Background token refresh stopped")
+    }
 
     /**
      * Start background token validation polling
@@ -81,6 +152,24 @@ class TokenValidationManager(
             return false
         }
 
+        // OPTIMIZATION: Check if access token is expired locally first
+        if (tokenManager.isTokenExpired()) {
+            Log.d(TAG, "Access token is expired locally - checking if refresh token is available")
+
+            // Only check refresh token expiry if access token is expired
+            // This prevents false positives on fresh logins where refresh token might be opaque/non-JWT
+            if (tokenManager.isRefreshTokenExpired()) {
+                Log.w(TAG, "Both access and refresh tokens are expired - cannot recover, triggering logout")
+                handleTokenRevocation()
+                return false
+            }
+
+            // Access token expired but refresh token is valid - skip API validation
+            // Let the normal refresh flow handle it
+            Log.d(TAG, "Access token expired but refresh token valid - skipping API validation, will refresh on next request")
+            return false
+        }
+
         // CRITICAL: Warn if refresh token is missing (indicates OAuth persistence issue)
         val refreshToken = tokenManager.getRefreshToken()
         if (refreshToken.isNullOrBlank()) {
@@ -100,39 +189,46 @@ class TokenValidationManager(
             val token = tokenManager.getAccessToken()
             if (token == null) {
                 Log.w(TAG, "No token to validate")
-                false
-            } else {
-                // CRITICAL: Check if refresh token exists (needed for token rotation)
-                val refreshToken = tokenManager.getRefreshToken()
-                if (refreshToken.isNullOrBlank()) {
-                    Log.w(TAG, "WARNING: Refresh token is missing during validation! " +
-                               "Token rotation will fail on expiry. This indicates OAuth tokens were not persisted correctly.")
-                }
+                return false
+            }
 
-                val response = RetrofitClient.instance.checkTokenValidity("Bearer $token")
+            // OPTIMIZATION: Check if token is expired locally before making API call
+            // This prevents unnecessary 401 responses that trigger TokenAuthenticator loops
+            if (tokenManager.isTokenExpired()) {
+                Log.w(TAG, "Token is expired locally - skipping API validation to avoid authenticator loop")
+                return false
+            }
 
-                when {
-                    response.isSuccessful -> {
-                        val body = response.body()
-                        if (body?.isValid == true) {
-                            Log.d(TAG, "Token validation successful - token is valid")
-                            tokenManager.saveLastTokenCheckTime(System.currentTimeMillis())
-                            true
-                        } else {
-                            Log.w(TAG, "Token validation failed - token is invalid/revoked")
-                            handleTokenRevocation()
-                            false
-                        }
-                    }
-                    response.code() == 401 || response.code() == 403 -> {
-                        Log.w(TAG, "Token validation returned ${response.code()} - token revoked")
+            // CRITICAL: Check if refresh token exists (needed for token rotation)
+            val refreshToken = tokenManager.getRefreshToken()
+            if (refreshToken.isNullOrBlank()) {
+                Log.w(TAG, "WARNING: Refresh token is missing during validation! " +
+                           "Token rotation will fail on expiry. This indicates OAuth tokens were not persisted correctly.")
+            }
+
+            val response = RetrofitClient.instance.checkTokenValidity("Bearer $token")
+
+            when {
+                response.isSuccessful -> {
+                    val body = response.body()
+                    if (body?.isValid == true) {
+                        Log.d(TAG, "Token validation successful - token is valid")
+                        tokenManager.saveLastTokenCheckTime(System.currentTimeMillis())
+                        true
+                    } else {
+                        Log.w(TAG, "Token validation failed - token is invalid/revoked")
                         handleTokenRevocation()
                         false
                     }
-                    else -> {
-                        Log.w(TAG, "Token validation failed with code ${response.code()}")
-                        true // Don't logout on network errors, just skip this check
-                    }
+                }
+                response.code() == 401 || response.code() == 403 -> {
+                    Log.w(TAG, "Token validation returned ${response.code()} - token revoked")
+                    handleTokenRevocation()
+                    false
+                }
+                else -> {
+                    Log.w(TAG, "Token validation failed with code ${response.code()}")
+                    true // Don't logout on network errors, just skip this check
                 }
             }
         } catch (e: Exception) {
@@ -147,6 +243,20 @@ class TokenValidationManager(
     private fun handleTokenRevocation() {
         try {
             Log.w(TAG, "Handling token revocation - clearing tokens and notifying app")
+
+            // CRITICAL: Prevent logout cascade - check if we already sent logout recently
+            val prefs = context.getSharedPreferences("vpn_state_prefs", Context.MODE_PRIVATE)
+            val lastLogoutBroadcast = prefs.getLong("last_logout_broadcast", 0L)
+            val now = System.currentTimeMillis()
+
+            // If we sent a logout broadcast within last 2 seconds, skip to prevent cascade
+            if (now - lastLogoutBroadcast < 2000L) {
+                Log.d(TAG, "Skipping duplicate logout broadcast (last sent ${now - lastLogoutBroadcast}ms ago)")
+                return
+            }
+
+            // Update last broadcast timestamp
+            prefs.edit().putLong("last_logout_broadcast", now).apply()
 
             // Clear tokens
             tokenManager.clearTokens()

@@ -35,7 +35,8 @@ fun MoneroPaymentScreen(
     hoursRemaining: Int,
     minutesRemaining: Int,
     onClose: () -> Unit,
-    onRefresh: (() -> Unit)? = null
+    onRefresh: (() -> Unit)? = null,
+    onSuccess: (() -> Unit)? = null
 ) {
     val clipboardManager = LocalClipboardManager.current
     val context = LocalContext.current
@@ -44,6 +45,13 @@ fun MoneroPaymentScreen(
 
     val confirmationPercent = remember(confirmations, requiredConfirmations) {
         (confirmations.toFloat() / requiredConfirmations.coerceAtLeast(1)).coerceIn(0f, 1f)
+    }
+
+    // CRITICAL FIX: Trigger onSuccess callback when payment is fully confirmed
+    LaunchedEffect(confirmations, requiredConfirmations) {
+        if (confirmations >= requiredConfirmations && confirmations > 0 && requiredConfirmations > 0) {
+            onSuccess?.invoke()
+        }
     }
 
     Box(

@@ -43,6 +43,137 @@ class TokenManager(context: Context) {
         return sharedPreferences.getString(KEY_REFRESH_TOKEN, null)
     }
 
+    /**
+     * Check if the stored access token is expired by examining JWT payload
+     * Returns true if token is expired or invalid, false if still valid
+     */
+    fun isTokenExpired(): Boolean {
+        val token = getAccessToken() ?: return true
+
+        return try {
+            // JWT tokens have format: header.payload.signature
+            val parts = token.split(".")
+            if (parts.size != 3) return true
+
+            // Decode the payload (second part)
+            val payload = parts[1]
+            val decodedBytes = android.util.Base64.decode(
+                payload,
+                android.util.Base64.URL_SAFE or android.util.Base64.NO_PADDING
+            )
+            val payloadJson = String(decodedBytes)
+
+            // Parse JSON to extract expiry timestamp
+            val jsonObj = org.json.JSONObject(payloadJson)
+            val exp = jsonObj.optLong("exp", 0)
+
+            if (exp == 0L) {
+                // No expiry field - assume token is valid
+                return false
+            }
+
+            // Check if expired (exp is in seconds, currentTimeMillis is in ms)
+            val currentTimeSec = System.currentTimeMillis() / 1000
+            val isExpired = currentTimeSec >= exp
+
+            if (isExpired) {
+                android.util.Log.d("TokenManager", "Token is expired: exp=$exp, now=$currentTimeSec")
+            }
+
+            isExpired
+        } catch (e: Exception) {
+            android.util.Log.w("TokenManager", "Failed to check token expiry: ${e.message}")
+            // If we can't parse, assume token might be invalid but don't block
+            false
+        }
+    }
+
+    /**
+     * Check if token will expire within the specified number of seconds
+     * Useful for proactive token refresh
+     */
+    fun isTokenExpiringWithin(seconds: Long): Boolean {
+        val token = getAccessToken() ?: return true
+
+        return try {
+            val parts = token.split(".")
+            if (parts.size != 3) return true
+
+            val payload = parts[1]
+            val decodedBytes = android.util.Base64.decode(
+                payload,
+                android.util.Base64.URL_SAFE or android.util.Base64.NO_PADDING
+            )
+            val payloadJson = String(decodedBytes)
+            val jsonObj = org.json.JSONObject(payloadJson)
+            val exp = jsonObj.optLong("exp", 0)
+
+            if (exp == 0L) return false
+
+            val currentTimeSec = System.currentTimeMillis() / 1000
+            val timeUntilExpiry = exp - currentTimeSec
+
+            timeUntilExpiry <= seconds
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /**
+     * Check if the refresh token is expired by examining JWT payload
+     * Returns true if refresh token is expired or invalid, false if still valid
+     *
+     * IMPORTANT: This is a best-effort check. If we can't parse the token,
+     * we assume it's VALID and let the backend decide during refresh attempt.
+     */
+    fun isRefreshTokenExpired(): Boolean {
+        val refreshToken = getRefreshToken() ?: return true
+
+        return try {
+            // JWT tokens have format: header.payload.signature
+            val parts = refreshToken.split(".")
+            if (parts.size != 3) {
+                android.util.Log.d("TokenManager", "Refresh token is not JWT format - assuming valid")
+                return false // Not JWT format, let backend decide
+            }
+
+            // Decode the payload (second part)
+            val payload = parts[1]
+            val decodedBytes = android.util.Base64.decode(
+                payload,
+                android.util.Base64.URL_SAFE or android.util.Base64.NO_PADDING
+            )
+            val payloadJson = String(decodedBytes)
+
+            // Parse JSON to extract expiry timestamp
+            val jsonObj = org.json.JSONObject(payloadJson)
+            val exp = jsonObj.optLong("exp", 0)
+
+            if (exp == 0L) {
+                // No expiry field - assume token is valid
+                android.util.Log.d("TokenManager", "Refresh token has no 'exp' claim - assuming valid")
+                return false
+            }
+
+            // Check if expired (exp is in seconds, currentTimeMillis is in ms)
+            val currentTimeSec = System.currentTimeMillis() / 1000
+            val isExpired = currentTimeSec >= exp
+
+            if (isExpired) {
+                android.util.Log.w("TokenManager", "Refresh token is expired: exp=$exp, now=$currentTimeSec")
+            } else {
+                android.util.Log.d("TokenManager", "Refresh token is valid: exp=$exp, now=$currentTimeSec, remaining=${exp - currentTimeSec}s")
+            }
+
+            isExpired
+        } catch (e: Exception) {
+            android.util.Log.w("TokenManager", "Failed to parse refresh token for expiry check: ${e.message} - assuming valid, let backend decide")
+            // CRITICAL: If we can't parse, assume VALID and let backend decide
+            // This prevents false positives where valid tokens are rejected due to parsing issues
+            false
+        }
+    }
+
     fun clearTokens() {
         sharedPreferences.edit()
             .remove(KEY_ACCESS_TOKEN)
@@ -121,6 +252,80 @@ class TokenManager(context: Context) {
             .apply()
 
         _deviceMetadataFlow.value = Pair(0, 0)
+    }
+
+    /**
+     * Proactively refresh access token if expired or expiring soon
+     * Returns true if token is valid (either not expired or successfully refreshed)
+     * Returns false if refresh failed (user needs to re-login)
+     */
+    suspend fun refreshTokenIfNeeded(
+        authApiService: net.libreguard.vpn.network.ApiService
+    ): Boolean = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        try {
+            // Check if token is expired or expiring within 5 minutes
+            val needsRefresh = isTokenExpired() || isTokenExpiringWithin(300)
+
+            if (!needsRefresh) {
+                android.util.Log.d("TokenManager", "Token is still valid, no refresh needed")
+                return@withContext true
+            }
+
+            android.util.Log.d("TokenManager", "Token expired or expiring soon, attempting refresh")
+
+            val refreshToken = getRefreshToken()
+            val deviceId = getDeviceId()
+
+            if (refreshToken == null) {
+                android.util.Log.w("TokenManager", "No refresh token available for refresh")
+                return@withContext false
+            }
+
+            // CRITICAL: Check if refresh token itself is expired before making API call
+            if (isRefreshTokenExpired()) {
+                android.util.Log.w("TokenManager", "Refresh token is expired - cannot refresh, user must re-login")
+                return@withContext false
+            }
+
+            // Call refresh endpoint (uses authApiService which has no interceptor/authenticator)
+            val refreshRequest = net.libreguard.vpn.network.RefreshTokenRequest(
+                refreshToken = refreshToken,
+                deviceId = deviceId
+            )
+
+            val response = authApiService.refreshToken(refreshRequest).execute()
+
+            if (response.isSuccessful) {
+                val authResponse = response.body()
+                if (authResponse?.token != null && authResponse.refreshToken != null) {
+                    // Validate device binding if present
+                    if (authResponse.deviceId != null && authResponse.deviceId != deviceId) {
+                        android.util.Log.w("TokenManager", "Device binding mismatch during refresh")
+                        return@withContext false
+                    }
+
+                    // Save new tokens
+                    saveTokens(authResponse.token, authResponse.refreshToken)
+
+                    // Update device metadata if present
+                    if (authResponse.activeDevices != null && authResponse.maxDevices != null) {
+                        saveDeviceMetadata(authResponse.activeDevices, authResponse.maxDevices)
+                    }
+
+                    android.util.Log.d("TokenManager", "Token refreshed successfully")
+                    return@withContext true
+                } else {
+                    android.util.Log.w("TokenManager", "Refresh response missing tokens")
+                    return@withContext false
+                }
+            } else {
+                android.util.Log.w("TokenManager", "Token refresh failed: ${response.code()}")
+                return@withContext false
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("TokenManager", "Error during token refresh", e)
+            return@withContext false
+        }
     }
 
     companion object {

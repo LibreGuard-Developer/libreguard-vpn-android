@@ -93,7 +93,9 @@ data class MoneroInvoiceResponse(
     @SerializedName("description")
     val description: String,
     @SerializedName("createdAt")
-    val createdAt: String
+    val createdAt: String,
+    @SerializedName("expiresAt")
+    val expiresAt: String? = null
 )
 
 data class MoneroStatusResponse(

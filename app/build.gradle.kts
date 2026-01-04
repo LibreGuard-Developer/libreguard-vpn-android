@@ -99,6 +99,7 @@ dependencies {
     implementation(libs.converter.gson)
     implementation(libs.logging.interceptor)
     implementation(libs.gson)
+    implementation(libs.logging.interceptor) // For debugging HTTP requests
     implementation(libs.androidx.tv.material)
     implementation(libs.androidx.foundation)
 

@@ -75,6 +75,18 @@ data class Verify2faRequest(
     val twoFactorCode: String
 )
 
+// Structured API Error Response
+data class ApiErrorResponse(
+    @SerializedName("error")
+    val error: String? = null,
+    @SerializedName("code")
+    val code: String? = null,
+    @SerializedName("message")
+    val message: String? = null,
+    @SerializedName("requiresEmailVerification")
+    val requiresEmailVerification: Boolean = false
+)
+
 // Recovery Code Verification Request
 data class VerifyRecoveryRequest(
     val email: String,

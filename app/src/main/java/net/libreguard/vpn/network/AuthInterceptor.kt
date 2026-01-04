@@ -29,6 +29,14 @@ class AuthInterceptor(
 
         // Handle 401: token is invalid or revoked
         if (response.code == 401) {
+            // CRITICAL: Do NOT trigger logout for token-related endpoints
+            // Let TokenAuthenticator handle refresh naturally without cascade
+            val url = newRequest.url.toString()
+            if (url.contains("/api/login/refresh") || url.contains("/api/token/check")) {
+                Log.d(TAG, "Received 401 for token endpoint ${newRequest.url} - letting authenticator handle refresh")
+                return response
+            }
+
             try {
                 val peekBody = response.peekBody(4096)
                 val responseBodyString = try { peekBody.string() } catch (_: Exception) { "" }
@@ -99,6 +107,20 @@ class AuthInterceptor(
 
     private fun handleTokenRevocation() {
         try {
+            // CRITICAL: Prevent logout cascade - check if we already sent logout recently
+            val prefs = context.getSharedPreferences("vpn_state_prefs", Context.MODE_PRIVATE)
+            val lastLogoutBroadcast = prefs.getLong("last_logout_broadcast", 0L)
+            val now = System.currentTimeMillis()
+
+            // If we sent a logout broadcast within last 2 seconds, skip to prevent cascade
+            if (now - lastLogoutBroadcast < 2000L) {
+                Log.d(TAG, "Skipping duplicate logout broadcast (last sent ${now - lastLogoutBroadcast}ms ago)")
+                return
+            }
+
+            // Update last broadcast timestamp
+            prefs.edit().putLong("last_logout_broadcast", now).apply()
+
             // Clear tokens immediately
             tokenManager.clearTokens()
 

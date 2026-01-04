@@ -329,15 +329,27 @@ fun LoginScreen(
                         isLoading = true
                         errorMessage = null
                         try {
-                            val response = RetrofitClient.instance.login(
-                                AuthRequest(
-                                    email = email,
-                                    password = password,
-                                    deviceId = deviceId,
-                                    appVersion = appVersion
-                                )
+                            // Detailed logging for debugging
+                            android.util.Log.d("LoginScreen", "=== LOGIN ATTEMPT ===")
+                            android.util.Log.d("LoginScreen", "Email: $email")
+                            android.util.Log.d("LoginScreen", "Password length: ${password.length}")
+                            android.util.Log.d("LoginScreen", "DeviceId: $deviceId")
+                            android.util.Log.d("LoginScreen", "AppVersion: $appVersion")
+
+                            val authRequest = AuthRequest(
+                                email = email,
+                                password = password,
+                                deviceId = deviceId,
+                                appVersion = appVersion
                             )
+                            android.util.Log.d("LoginScreen", "Request JSON: ${Gson().toJson(authRequest)}")
+
+                            val response = RetrofitClient.instance.login(authRequest)
                             val errorBody = response.errorBody()?.string()
+
+                            android.util.Log.d("LoginScreen", "Response code: ${response.code()}")
+                            android.util.Log.d("LoginScreen", "Response successful: ${response.isSuccessful}")
+                            android.util.Log.d("LoginScreen", "Error body: $errorBody")
                             if (response.isSuccessful) {
                                 val authResponse = response.body()
                                 if (authResponse?.requiresTwoFactor == true) {
@@ -351,10 +363,28 @@ fun LoginScreen(
                             } else {
                                 when (response.code()) {
                                     401 -> {
-                                        runCatching {
-                                            RetrofitClient.instance.resendConfirmation(ResendConfirmationRequest(email))
+                                        // Parse structured error response to determine if email is unverified
+                                        val requiresVerification = errorBody?.let { body ->
+                                            try {
+                                                val errorResponse = Gson().fromJson(body, ApiErrorResponse::class.java)
+                                                errorResponse?.requiresEmailVerification == true ||
+                                                errorResponse?.code == "EMAIL_NOT_VERIFIED"
+                                            } catch (e: Exception) {
+                                                android.util.Log.w("LoginScreen", "Failed to parse error response: ${e.message}")
+                                                false
+                                            }
+                                        } ?: false
+
+                                        if (requiresVerification) {
+                                            // Only redirect to email verification if explicitly required
+                                            runCatching {
+                                                RetrofitClient.instance.resendConfirmation(ResendConfirmationRequest(email))
+                                            }
+                                            onNavigateToEmailVerification(email, null)
+                                        } else {
+                                            // Other 401 errors (invalid credentials, expired tokens, etc.)
+                                            errorMessage = "Invalid email or password"
                                         }
-                                        onNavigateToEmailVerification(email, null)
                                     }
                                     409 -> handleDeviceLimitError(errorBody)
                                     400 -> {

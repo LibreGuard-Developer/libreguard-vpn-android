@@ -248,9 +248,50 @@ fun AppNavigation(modifier: Modifier = Modifier) {
             return@LaunchedEffect
         }
 
-        val savedToken = RetrofitClient.getTokenManager().getAccessToken()
+        val tokenManager = RetrofitClient.getTokenManager()
+        val savedToken = tokenManager.getAccessToken()
 
         if (!savedToken.isNullOrBlank()) {
+            // CRITICAL FIX: Validate token before auto-login
+            // Check 1: Is token expired locally?
+            if (tokenManager.isTokenExpired()) {
+                Log.w("MainActivity", "Token is expired locally, clearing and showing login")
+                tokenManager.clearTokens()
+                context.getSharedPreferences("vpn_state_prefs", Context.MODE_PRIVATE)
+                    .edit()
+                    .remove("auth_token")
+                    .apply()
+                vpnViewModel.clearCachedAuthToken()
+                authToken = null
+                isCheckingToken = false
+                return@LaunchedEffect
+            }
+
+            // Check 2: Validate token with server before proceeding
+            // This prevents navigation with invalid/revoked tokens that will immediately trigger logout
+            try {
+                Log.d("MainActivity", "Validating token with server before auto-login...")
+                val response = RetrofitClient.instance.checkTokenValidity("Bearer $savedToken")
+
+                if (!response.isSuccessful || response.body()?.isValid != true) {
+                    Log.w("MainActivity", "Token validation failed: ${response.code()} - clearing token")
+                    tokenManager.clearTokens()
+                    context.getSharedPreferences("vpn_state_prefs", Context.MODE_PRIVATE)
+                        .edit()
+                        .remove("auth_token")
+                        .apply()
+                    vpnViewModel.clearCachedAuthToken()
+                    authToken = null
+                    isCheckingToken = false
+                    return@LaunchedEffect
+                }
+
+                Log.d("MainActivity", "Token validation successful - proceeding with auto-login")
+            } catch (e: Exception) {
+                // Network error during validation - allow proceeding but log warning
+                Log.w("MainActivity", "Token validation network error: ${e.message} - proceeding anyway")
+            }
+
             authToken = savedToken
 
             // Navigate to main if we have a valid token
@@ -317,6 +358,8 @@ fun AppNavigation(modifier: Modifier = Modifier) {
                         navController.navigate("register")
                     },
                     onNavigateToEmailVerification = { email, _ ->
+                        // Preserve email for email verification flow - do NOT clear state
+                        // State will be cleared only on successful login or explicit "Back to Login"
                         regEmail = email
                         navController.navigate("confirmEmail")
                     }
@@ -365,13 +408,16 @@ fun AppNavigation(modifier: Modifier = Modifier) {
                             }
                             authToken = authResponse.token
                             android.util.Log.d("MainActivity", "Token saved and authToken set, navigating to main")
+
+                            // Navigate and clear state only after successful login
+                            navController.navigate("main") {
+                                popUpTo("login") { inclusive = true }
+                            }
+                            // Clear registration state only after successful navigation
+                            regUserId = null; regEmail = null; regToken = null; regPassword = null
+                        } else {
+                            android.util.Log.e("MainActivity", "onConfirmed called but token is null")
                         }
-                        // Navigate FIRST, then clear state after navigation completes
-                        navController.navigate("main") {
-                            popUpTo("login") { inclusive = true }
-                        }
-                        // Clear registration state AFTER navigation to prevent recomposition with null values
-                        regUserId = null; regEmail = null; regToken = null; regPassword = null
                     },
                     onBackToLogin = {
                         // Clear registration flow state
@@ -554,6 +600,11 @@ fun AppNavigation(modifier: Modifier = Modifier) {
                     isLoading = isLoading,
                     onClose = {
                         navController.popBackStack()
+                    },
+                    onSuccess = {
+                        // CRITICAL FIX: Trigger subscription status refresh after payment
+                        vpnViewModel?.updateSubscriptionStatus()
+                        navController.popBackStack()
                     }
                 )
             }
@@ -563,35 +614,49 @@ fun AppNavigation(modifier: Modifier = Modifier) {
             authToken?.let { token ->
                 val subscriptionViewModel: SubscriptionViewModel = viewModel()
                 val moneroInvoice by subscriptionViewModel.moneroInvoice.collectAsState()
-                val isLoading by subscriptionViewModel.isLoading.collectAsState()
                 val moneroPaymentStatus by subscriptionViewModel.moneroPaymentStatus.collectAsState()
+                val moneroPrice by subscriptionViewModel.moneroPrice.collectAsState()
+                val isLoading by subscriptionViewModel.isLoading.collectAsState()
+                val hoursRemaining by subscriptionViewModel.hoursRemaining.collectAsState()
+                val minutesRemaining by subscriptionViewModel.minutesRemaining.collectAsState()
 
-                // Initialize Monero invoice if not already created
+                // Initialize Monero payment flow
                 LaunchedEffect(Unit) {
                     subscriptionViewModel.setAuthToken(token)
-                    if (moneroInvoice == null) {
-                        subscriptionViewModel.createMoneroInvoice()
-                    }
+                    // Fetch price first
+                    subscriptionViewModel.fetchMoneroPrice()
+                    // Try to fetch latest pending invoice, or create new one if none exists
+                    subscriptionViewModel.fetchLatestMoneroInvoice()
                 }
 
                 // Display the payment screen once we have invoice data
                 moneroInvoice?.let { invoice ->
+                    val status = moneroPaymentStatus
+                    val price = moneroPrice
+
                     MoneroPaymentScreen(
                         paymentAddress = invoice.paymentAddress,
                         xmrAmount = invoice.amount,
-                        usdAmount = 4.00, // TODO: Get from invoice if available
-                        xmrPrice = 170.85, // TODO: Get current XMR price
-                        confirmations = 0, // TODO: Get from status polling
-                        requiredConfirmations = 10,
+                        usdAmount = price?.usdAmount ?: 4.00,
+                        xmrPrice = price?.xmrPriceUsd ?: 170.00,
+                        confirmations = status?.confirmations ?: 0,
+                        requiredConfirmations = status?.requiredConfirmations ?: 10,
                         isLoading = isLoading,
-                        isWaitingForPayment = moneroPaymentStatus == "Pending",
-                        hoursRemaining = 23, // TODO: Calculate from invoice.createdAt
-                        minutesRemaining = 59,
+                        isWaitingForPayment = status?.status == "Pending",
+                        hoursRemaining = hoursRemaining,
+                        minutesRemaining = minutesRemaining,
                         onClose = {
+                            subscriptionViewModel.stopMoneroPolling()
                             navController.popBackStack()
                         },
                         onRefresh = {
                             subscriptionViewModel.checkMoneroPaymentStatus(invoice.invoiceId)
+                        },
+                        onSuccess = {
+                            // CRITICAL FIX: Trigger subscription status refresh after payment confirmed
+                            vpnViewModel?.updateSubscriptionStatus()
+                            subscriptionViewModel.stopMoneroPolling()
+                            navController.popBackStack()
                         }
                     )
                 } ?: run {

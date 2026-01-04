@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import net.libreguard.vpn.network.RetrofitClient
 import net.libreguard.vpn.network.SubscriptionStatusResponse
 import net.libreguard.vpn.network.MoneroInvoiceResponse
+import net.libreguard.vpn.network.MoneroStatusResponse
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -17,7 +18,7 @@ import kotlinx.coroutines.withContext
 import android.content.Context
 
 private const val TAG = "SubscriptionViewModel"
-private const val SUBSCRIPTION_CACHE_TTL_MS = 5 * 60 * 1000L // 5 minutes
+private const val SUBSCRIPTION_CACHE_TTL_MS = 30 * 1000L // 30 seconds (reduced from 5 minutes for better responsiveness)
 
 class SubscriptionViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -45,21 +46,49 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
     private val _moneroInvoice = MutableStateFlow<MoneroInvoiceResponse?>(null)
     val moneroInvoice: StateFlow<MoneroInvoiceResponse?> = _moneroInvoice
 
-    private val _moneroPaymentStatus = MutableStateFlow<String>("Pending") // Pending, Completed, Failed
-    val moneroPaymentStatus: StateFlow<String> = _moneroPaymentStatus
+    private val _moneroPaymentStatus = MutableStateFlow<MoneroStatusResponse?>(null)
+    val moneroPaymentStatus: StateFlow<MoneroStatusResponse?> = _moneroPaymentStatus
+
+    private val _moneroPrice = MutableStateFlow<net.libreguard.vpn.network.MoneroPriceResponse?>(null)
+    val moneroPrice: StateFlow<net.libreguard.vpn.network.MoneroPriceResponse?> = _moneroPrice
 
     private val _isMoneroPolling = MutableStateFlow(false)
     val isMoneroPolling: StateFlow<Boolean> = _isMoneroPolling
 
+    private val _hoursRemaining = MutableStateFlow(0)
+    val hoursRemaining: StateFlow<Int> = _hoursRemaining
+
+    private val _minutesRemaining = MutableStateFlow(0)
+    val minutesRemaining: StateFlow<Int> = _minutesRemaining
+
     private var authToken: String? = null
+    private var currentUserId: String? = null
     private var moneroPollingJob: Job? = null
+    private var timerJob: Job? = null
     private var lastSubscriptionCheckTime = 0L
+
+    // Track in-flight API request to prevent duplicate calls
+    private var fetchJob: Job? = null
+
+    init {
+        // CRITICAL FIX: Load cached subscription status immediately on ViewModel creation
+        // This prevents the UI from showing "Free" while waiting for API response
+        restoreCachedSubscriptionStatus()
+        Log.d(TAG, "SubscriptionViewModel initialized with cached status: isPro=${_isPro.value}")
+    }
 
     /**
      * Set auth token for API calls
+     * Also stores user ID for cache scoping
      */
-    fun setAuthToken(token: String) {
+    fun setAuthToken(token: String, userId: String? = null) {
         authToken = token
+        currentUserId = userId
+
+        // Store user ID for cache versioning
+        if (userId != null) {
+            sharedPrefs.edit().putString("subscription_user_id", userId).apply()
+        }
     }
 
     /**
@@ -78,10 +107,16 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
             return
         }
 
+        // OPTIMIZATION: Prevent duplicate in-flight requests
+        if (fetchJob?.isActive == true) {
+            Log.d(TAG, "Subscription fetch already in progress, skipping duplicate request")
+            return
+        }
+
         _isLoading.value = true
         _errorMessage.value = null
 
-        viewModelScope.launch(Dispatchers.IO) {
+        fetchJob = viewModelScope.launch(Dispatchers.IO) {
             try {
                 val response = RetrofitClient.instance.getSubscriptionStatus(
                     authorization = "Bearer $authToken"
@@ -205,6 +240,35 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
     }
 
     /**
+     * Fetch Monero price for Pro subscription
+     */
+    fun fetchMoneroPrice() {
+        if (authToken == null) {
+            _errorMessage.value = "Authentication required"
+            return
+        }
+
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val response = RetrofitClient.instance.getMoneroPrice(
+                    authorization = "Bearer $authToken"
+                )
+
+                withContext(Dispatchers.Main) {
+                    if (response.isSuccessful && response.body() != null) {
+                        _moneroPrice.value = response.body()
+                        Log.d(TAG, "Monero price fetched: ${response.body()?.xmrAmount} XMR = $${response.body()?.usdAmount} USD")
+                    } else {
+                        Log.w(TAG, "Failed to fetch Monero price: ${response.code()}")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error fetching Monero price", e)
+            }
+        }
+    }
+
+    /**
      * Create Monero invoice for payment
      */
     fun createMoneroInvoice() {
@@ -226,8 +290,13 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
                     if (response.isSuccessful && response.body() != null) {
                         val invoice = response.body()!!
                         _moneroInvoice.value = invoice
-                        _moneroPaymentStatus.value = invoice.status
                         Log.d(TAG, "Monero invoice created: ${invoice.invoiceId}")
+
+                        // Fetch initial status with confirmations
+                        fetchMoneroStatus(invoice.invoiceId)
+
+                        // Start timer countdown
+                        startExpirationTimer(invoice.expiresAt)
 
                         // Start polling for payment status
                         startMoneroPaymentPolling(invoice.invoiceId)
@@ -242,6 +311,121 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
                     _errorMessage.value = "Error: ${e.localizedMessage}"
                     _isLoading.value = false
                 }
+            }
+        }
+    }
+
+    /**
+     * Fetch latest pending Monero invoice (to resume payment)
+     */
+    fun fetchLatestMoneroInvoice() {
+        if (authToken == null) {
+            _errorMessage.value = "Authentication required"
+            return
+        }
+
+        _isLoading.value = true
+        _errorMessage.value = null
+
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val response = RetrofitClient.instance.getLatestMoneroInvoice(
+                    authorization = "Bearer $authToken"
+                )
+
+                withContext(Dispatchers.Main) {
+                    if (response.isSuccessful && response.body() != null) {
+                        val invoice = response.body()!!
+                        _moneroInvoice.value = invoice
+                        Log.d(TAG, "Latest Monero invoice fetched: ${invoice.invoiceId}")
+
+                        // Fetch current status with confirmations
+                        fetchMoneroStatus(invoice.invoiceId)
+
+                        // Start timer countdown
+                        startExpirationTimer(invoice.expiresAt)
+
+                        // Start polling for payment status
+                        startMoneroPaymentPolling(invoice.invoiceId)
+                    } else if (response.code() == 404) {
+                        // No pending invoice, create a new one
+                        Log.d(TAG, "No pending invoice found, creating new one")
+                        createMoneroInvoice()
+                    } else {
+                        _errorMessage.value = "Failed to fetch invoice: ${response.code()}"
+                    }
+                    _isLoading.value = false
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error fetching latest Monero invoice", e)
+                withContext(Dispatchers.Main) {
+                    _errorMessage.value = "Error: ${e.localizedMessage}"
+                    _isLoading.value = false
+                }
+            }
+        }
+    }
+
+    /**
+     * Fetch Monero payment status (with confirmations)
+     */
+    private suspend fun fetchMoneroStatus(invoiceId: String) {
+        try {
+            val response = RetrofitClient.instance.getMoneroPaymentStatus(
+                authorization = "Bearer $authToken",
+                invoiceId = invoiceId
+            )
+
+            if (response.isSuccessful && response.body() != null) {
+                withContext(Dispatchers.Main) {
+                    _moneroPaymentStatus.value = response.body()
+                    Log.d(TAG, "Monero status: ${response.body()?.status}, confirmations: ${response.body()?.confirmations}/${response.body()?.requiredConfirmations}")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error fetching Monero status", e)
+        }
+    }
+
+    /**
+     * Start countdown timer for invoice expiration
+     */
+    private fun startExpirationTimer(expiresAt: String?) {
+        timerJob?.cancel()
+
+        if (expiresAt == null) {
+            Log.w(TAG, "No expiration time provided for invoice")
+            return
+        }
+
+        timerJob = viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val expirationTime = java.time.Instant.parse(expiresAt).toEpochMilli()
+
+                while (true) {
+                    val now = System.currentTimeMillis()
+                    val remaining = expirationTime - now
+
+                    if (remaining <= 0) {
+                        withContext(Dispatchers.Main) {
+                            _hoursRemaining.value = 0
+                            _minutesRemaining.value = 0
+                        }
+                        break
+                    }
+
+                    val hours = (remaining / (1000 * 60 * 60)).toInt()
+                    val minutes = ((remaining % (1000 * 60 * 60)) / (1000 * 60)).toInt()
+
+                    withContext(Dispatchers.Main) {
+                        _hoursRemaining.value = hours
+                        _minutesRemaining.value = minutes
+                    }
+
+                    delay(60000) // Update every minute
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error in expiration timer", e)
             }
         }
     }
@@ -278,16 +462,18 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
                     )
 
                     if (response.isSuccessful && response.body() != null) {
-                        val status = response.body()!!.status
+                        val statusResponse = response.body()!!
                         withContext(Dispatchers.Main) {
-                            _moneroPaymentStatus.value = status
-                            Log.d(TAG, "Monero payment status: $status")
+                            _moneroPaymentStatus.value = statusResponse
+                            Log.d(TAG, "Monero payment status: ${statusResponse.status}, confirmations: ${statusResponse.confirmations}/${statusResponse.requiredConfirmations}")
 
                             // Stop polling if completed or failed
-                            if (status.equals("Completed", ignoreCase = true) ||
-                                status.equals("Failed", ignoreCase = true)) {
+                            if (statusResponse.status.equals("Completed", ignoreCase = true) ||
+                                statusResponse.status.equals("Paid", ignoreCase = true) ||
+                                statusResponse.status.equals("Failed", ignoreCase = true)) {
                                 _isMoneroPolling.value = false
-                                if (status.equals("Completed", ignoreCase = true)) {
+                                if (statusResponse.status.equals("Completed", ignoreCase = true) ||
+                                    statusResponse.status.equals("Paid", ignoreCase = true)) {
                                     // Refresh subscription status after successful payment
                                     lastSubscriptionCheckTime = 0 // Force cache refresh
                                     fetchSubscriptionStatus()
@@ -318,6 +504,7 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
      */
     fun stopMoneroPolling() {
         moneroPollingJob?.cancel()
+        timerJob?.cancel()
         _isMoneroPolling.value = false
     }
 
@@ -342,11 +529,12 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
                 withContext(Dispatchers.Main) {
                     if (response.isSuccessful && response.body() != null) {
                         val statusResponse = response.body()!!
-                        _moneroPaymentStatus.value = statusResponse.status
-                        Log.d(TAG, "Monero payment status checked: ${statusResponse.status}")
+                        _moneroPaymentStatus.value = statusResponse
+                        Log.d(TAG, "Monero payment status checked: ${statusResponse.status}, confirmations: ${statusResponse.confirmations}/${statusResponse.requiredConfirmations}")
 
                         // If completed, refresh subscription status
-                        if (statusResponse.status.equals("Completed", ignoreCase = true)) {
+                        if (statusResponse.status.equals("Completed", ignoreCase = true) ||
+                            statusResponse.status.equals("Paid", ignoreCase = true)) {
                             lastSubscriptionCheckTime = 0 // Force cache refresh
                             fetchSubscriptionStatus()
                         }
@@ -392,6 +580,12 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
      */
     private fun restoreCachedSubscriptionStatus() {
         try {
+            // SECURITY: Validate cache belongs to current user to prevent cross-user contamination
+            if (currentUserId != null && !isCacheValidForCurrentUser()) {
+                Log.w(TAG, "Cache belongs to different user, skipping restore")
+                return
+            }
+
             val plan = sharedPrefs.getString("subscription_plan", null) ?: return
             val isPro = sharedPrefs.getBoolean("subscription_is_pro", false)
             val status = sharedPrefs.getString("subscription_status", "Active") ?: "Active"
@@ -424,7 +618,28 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
      */
     fun refreshSubscriptionStatus() {
         lastSubscriptionCheckTime = 0
+        fetchJob?.cancel() // Cancel any in-flight request
         fetchSubscriptionStatus()
+    }
+
+    /**
+     * Force immediate subscription status update
+     * Call this after payment completion or subscription changes
+     */
+    fun subscriptionUpdated() {
+        Log.d(TAG, "Subscription updated - forcing immediate refresh")
+        lastSubscriptionCheckTime = 0
+        fetchJob?.cancel()
+        fetchSubscriptionStatus()
+    }
+
+    /**
+     * Validate cache belongs to current user
+     * Returns true if cache is valid for current user
+     */
+    private fun isCacheValidForCurrentUser(): Boolean {
+        val cachedUserId = sharedPrefs.getString("subscription_user_id", null)
+        return cachedUserId == null || cachedUserId == currentUserId
     }
 
     /**
@@ -435,9 +650,13 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
         _isPro.value = false
         _checkoutUrl.value = null
         _moneroInvoice.value = null
-        _moneroPaymentStatus.value = "Pending"
+        _moneroPaymentStatus.value = null
+        _moneroPrice.value = null
+        _hoursRemaining.value = 0
+        _minutesRemaining.value = 0
         _errorMessage.value = null
         moneroPollingJob?.cancel()
+        timerJob?.cancel()
         _isMoneroPolling.value = false
         lastSubscriptionCheckTime = 0
 

@@ -1013,11 +1013,21 @@ class StrongSwanHandler(
             val networkInterfaces = java.net.NetworkInterface.getNetworkInterfaces()
             while (networkInterfaces.hasMoreElements()) {
                 val networkInterface = networkInterfaces.nextElement()
-                if (networkInterface.name.startsWith("tun") && networkInterface.isUp) {
-                    Log.d(tag, "Found active tun interface: ${networkInterface.name}")
+                // Check for common VPN interface prefixes:
+                // - tun: OpenVPN, WireGuard, generic VPN tunnels
+                // - ipsec: IPSec/IKEv2 (StrongSwan)
+                // - wg: WireGuard specific
+                val isVpnInterface = (networkInterface.name.startsWith("tun") ||
+                                     networkInterface.name.startsWith("ipsec") ||
+                                     networkInterface.name.startsWith("wg")) &&
+                                    networkInterface.isUp
+
+                if (isVpnInterface) {
+                    Log.d(tag, "Found active VPN interface: ${networkInterface.name} (up=${networkInterface.isUp})")
                     return true
                 }
             }
+            Log.d(tag, "No active VPN interfaces found")
             false
         } catch (e: Exception) {
             Log.w(tag, "Failed to check network interfaces: ${e.message}")
