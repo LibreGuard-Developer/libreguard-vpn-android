@@ -2,6 +2,9 @@ package net.libreguard.vpn.network
 
 import android.content.Context
 import android.content.Intent
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import net.libreguard.vpn.util.TokenManager
 import okhttp3.Authenticator
 import okhttp3.Request
@@ -14,136 +17,165 @@ class TokenAuthenticator(
     private val authApiService: ApiService
 ) : Authenticator {
 
+    companion object {
+        private const val TAG = "TokenAuthenticator"
+
+        /**
+         * OkHttp uses the Authenticator as a "follow-up" mechanism.
+         * If we keep returning a new Request, OkHttp will keep retrying until it hits its follow-up limit (20).
+         *
+         * We hard-limit ourselves to 1 retry per request to prevent storms.
+         */
+        private const val HEADER_AUTH_RETRY = "X-LG-Auth-Retry"
+        private const val MAX_RETRY_PER_REQUEST = 1
+
+        /**
+         * Single-flight refresh: only one refresh network call can run at a time across all requests.
+         * This is critical because the backend revokes previous refresh tokens whenever a new one is issued.
+         */
+        private val refreshMutex = Mutex()
+
+        /**
+         * Tracks the latest access token produced by a refresh attempt so waiters can reuse it.
+         */
+        @Volatile
+        private var lastRefreshedAccessToken: String? = null
+    }
+
     // Circuit breaker to prevent infinite refresh loops
     @Volatile
     private var consecutiveRefreshFailures = 0
     private val maxRefreshAttempts = 2
 
     override fun authenticate(route: Route?, response: Response): Request? {
+        // Per-request retry guard
+        val retryCount = response.request.header(HEADER_AUTH_RETRY)?.toIntOrNull() ?: 0
+        if (retryCount >= MAX_RETRY_PER_REQUEST) {
+            android.util.Log.w(TAG, "Auth retry limit reached ($retryCount). Not attempting further refresh for ${response.request.url}")
+            return null
+        }
+
         // Circuit breaker: If we've failed too many times in a row, stop trying
         if (consecutiveRefreshFailures >= maxRefreshAttempts) {
-            android.util.Log.w("TokenAuthenticator", "Circuit breaker activated: $consecutiveRefreshFailures consecutive refresh failures. Forcing logout.")
+            android.util.Log.w(TAG, "Circuit breaker activated: $consecutiveRefreshFailures consecutive refresh failures. Forcing logout.")
             logoutUser()
             return null
         }
 
-        // 1. Get stored refresh token and device ID
-        val refreshToken = tokenManager.getRefreshToken()
-        val deviceId = tokenManager.getDeviceId()
-        if (refreshToken == null) {
-            android.util.Log.w("TokenAuthenticator", "No refresh token available")
-            return null // No token, let it fail
-        }
-
-        // CRITICAL: Check if refresh token is expired locally before making API call
-        if (tokenManager.isRefreshTokenExpired()) {
-            android.util.Log.w("TokenAuthenticator", "Refresh token is expired locally - cannot refresh, forcing logout")
-            logoutUser()
-            return null
-        }
-
-        // CRITICAL: Check if the failing request IS the refresh endpoint itself
-        // This prevents infinite loops where refresh fails and triggers another refresh
+        // Prevent recursive loops if the refresh endpoint itself fails
         val failedUrl = response.request.url.toString()
         if (failedUrl.contains("/api/login/refresh")) {
-            android.util.Log.w("TokenAuthenticator", "Refresh endpoint itself failed - stopping refresh loop")
+            android.util.Log.w(TAG, "Refresh endpoint itself failed - stopping refresh loop")
             consecutiveRefreshFailures++
-            logoutUser()
             return null
         }
 
-        synchronized(this) {
-            // Check if the token has changed since the request was made (concurrency)
-            val newAccessToken = tokenManager.getAccessToken()
-            // If the request's header token is different from storage, it means another thread already refreshed it.
-            // We can just retry with the new token.
-            val requestToken = response.request.header("Authorization")?.removePrefix("Bearer ")
-            if (requestToken != null && requestToken != newAccessToken) {
-                android.util.Log.d("TokenAuthenticator", "Token already refreshed by another thread - retrying with new token")
-                return response.request.newBuilder()
-                    .header("Authorization", "Bearer $newAccessToken")
-                    .build()
-            }
+        // If another request already succeeded in refreshing and updated storage, just retry with that.
+        val storedToken = tokenManager.getAccessToken()
+        val requestToken = response.request.header("Authorization")?.removePrefix("Bearer ")
+        if (!storedToken.isNullOrBlank() && !requestToken.isNullOrBlank() && storedToken != requestToken) {
+            android.util.Log.d(TAG, "Token already refreshed by another thread - retrying with stored token")
+            return response.request.newBuilder()
+                .header("Authorization", "Bearer $storedToken")
+                .header(HEADER_AUTH_RETRY, (retryCount + 1).toString())
+                .build()
+        }
 
-            // 2. Synchronously call refresh endpoint with device binding
-            try {
-                android.util.Log.d("TokenAuthenticator", "Attempting token refresh (attempt ${consecutiveRefreshFailures + 1}/$maxRefreshAttempts)")
-
-                val refreshResponse = authApiService.refreshToken(
-                    RefreshTokenRequest(refreshToken, deviceId)
-                ).execute()
-
-                if (refreshResponse.isSuccessful) {
-                    val authResponse = refreshResponse.body()
-                    if (authResponse != null && authResponse.token != null && authResponse.refreshToken != null) {
-                        // 3. Validate device binding: returned deviceId must match current device
-                        if (authResponse.deviceId != null && authResponse.deviceId != deviceId) {
-                            // Device binding mismatch - token was bound to different device or unbound
-                            android.util.Log.w("TokenAuthenticator", "Device binding mismatch during refresh")
-                            consecutiveRefreshFailures++
-                            logoutUser()
-                            return null
-                        }
-
-                        // 4. Save NEW tokens with updated device metadata if present
-                        tokenManager.saveTokens(authResponse.token, authResponse.refreshToken)
-
-                        // Update device metadata if returned
-                        if (authResponse.activeDevices != null && authResponse.maxDevices != null) {
-                            tokenManager.saveDeviceMetadata(authResponse.activeDevices, authResponse.maxDevices)
-                        }
-
-                        // Reset circuit breaker on success
-                        consecutiveRefreshFailures = 0
-                        android.util.Log.d("TokenAuthenticator", "Token refresh successful - circuit breaker reset")
-
-                        // 5. Retry the original request with the new access token
-                        return response.request.newBuilder()
-                            .header("Authorization", "Bearer ${authResponse.token}")
-                            .build()
-                    }
-                } else {
-                    // Handle 400 (missing deviceId) or 409 (device limit exceeded) or 401 (token revoked)
-                    consecutiveRefreshFailures++
-                    android.util.Log.w("TokenAuthenticator", "Refresh failed with ${refreshResponse.code()} (attempt $consecutiveRefreshFailures/$maxRefreshAttempts)")
-
-                    when (refreshResponse.code()) {
-                        400, 409 -> {
-                            // Backend rejected refresh - likely device binding or limit issue
-                            // Force logout immediately
-                            logoutUser()
-                            return null
-                        }
-                        401 -> {
-                            // Check if it's a device binding issue or just expired token
-                            val errorBody = try {
-                                refreshResponse.errorBody()?.string() ?: ""
-                            } catch (e: Exception) {
-                                ""
-                            }
-
-                            // If it's a device binding error, force logout
-                            // Otherwise, it might just be an expired refresh token (normal flow)
-                            if (errorBody.contains("device binding", ignoreCase = true) ||
-                                errorBody.contains("INVALID_TOKEN", ignoreCase = true)) {
-                                android.util.Log.w("TokenAuthenticator", "Device binding error during refresh: $errorBody")
-                                logoutUser()
-                                return null
-                            }
-                            // For other 401 errors, just let it fail naturally
-                        }
-                    }
+        // Perform refresh with single-flight mutex.
+        val refreshedToken: String? = runBlocking {
+            refreshMutex.withLock {
+                // Re-check after acquiring lock in case someone refreshed while we were waiting.
+                val latestStored = tokenManager.getAccessToken()
+                val latestRequestToken = response.request.header("Authorization")?.removePrefix("Bearer ")
+                if (!latestStored.isNullOrBlank() && !latestRequestToken.isNullOrBlank() && latestStored != latestRequestToken) {
+                    android.util.Log.d(TAG, "Token refreshed while waiting for mutex - reusing stored token")
+                    lastRefreshedAccessToken = latestStored
+                    return@withLock latestStored
                 }
-            } catch (e: Exception) {
-                // Network error or other issue during refresh
-                consecutiveRefreshFailures++
-                android.util.Log.e("TokenAuthenticator", "Exception during token refresh (attempt $consecutiveRefreshFailures/$maxRefreshAttempts)", e)
-            }
 
-            // Refresh failed (token expired/revoked/device mismatch) -> Force Logout
-            logoutUser()
+                // If a previous refresh attempt in this process already produced a token, reuse it
+                // ONLY if it differs from the failing request's token.
+                if (!lastRefreshedAccessToken.isNullOrBlank() && lastRefreshedAccessToken != latestRequestToken) {
+                    android.util.Log.d(TAG, "Reusing last refreshed token")
+                    return@withLock lastRefreshedAccessToken
+                }
+
+                val refreshToken = tokenManager.getRefreshToken()
+                val deviceId = tokenManager.getDeviceId()
+
+                if (refreshToken.isNullOrBlank()) {
+                    android.util.Log.w(TAG, "No refresh token available")
+                    return@withLock null
+                }
+
+                // Best-effort local check. If opaque refresh token, TokenManager returns false (assume valid).
+                if (tokenManager.isRefreshTokenExpired()) {
+                    android.util.Log.w(TAG, "Refresh token is expired locally - cannot refresh, forcing logout")
+                    return@withLock null
+                }
+
+                try {
+                    android.util.Log.d(TAG, "Attempting token refresh (attempt ${consecutiveRefreshFailures + 1}/$maxRefreshAttempts)")
+
+                    val refreshResponse = authApiService.refreshToken(
+                        RefreshTokenRequest(refreshToken, deviceId)
+                    ).execute()
+
+                    if (refreshResponse.isSuccessful) {
+                        val authResponse = refreshResponse.body()
+                        if (authResponse?.token != null && authResponse.refreshToken != null) {
+                            if (authResponse.deviceId != null && authResponse.deviceId != deviceId) {
+                                android.util.Log.w(TAG, "Device binding mismatch during refresh")
+                                consecutiveRefreshFailures++
+                                return@withLock null
+                            }
+
+                            tokenManager.saveTokens(authResponse.token, authResponse.refreshToken)
+                            if (authResponse.activeDevices != null && authResponse.maxDevices != null) {
+                                tokenManager.saveDeviceMetadata(authResponse.activeDevices, authResponse.maxDevices)
+                            }
+
+                            consecutiveRefreshFailures = 0
+                            lastRefreshedAccessToken = authResponse.token
+
+                            android.util.Log.d(TAG, "Token refresh successful")
+                            return@withLock authResponse.token
+                        }
+
+                        consecutiveRefreshFailures++
+                        android.util.Log.w(TAG, "Refresh response missing tokens")
+                        return@withLock null
+                    }
+
+                    consecutiveRefreshFailures++
+                    android.util.Log.w(TAG, "Refresh failed with ${refreshResponse.code()} (attempt $consecutiveRefreshFailures/$maxRefreshAttempts)")
+
+                    // If refresh is rejected, treat as session-ending.
+                    when (refreshResponse.code()) {
+                        400, 401, 403, 409 -> return@withLock null
+                    }
+
+                    return@withLock null
+                } catch (e: Exception) {
+                    consecutiveRefreshFailures++
+                    android.util.Log.e(TAG, "Exception during token refresh (attempt $consecutiveRefreshFailures/$maxRefreshAttempts)", e)
+                    return@withLock null
+                }
+            }
+        }
+
+        if (refreshedToken.isNullOrBlank()) {
+            // Don't immediately logout here; let the app see the original 401/403 and decide.
+            // Logging out inside the authenticator can cascade across multiple simultaneous requests.
+            android.util.Log.w(TAG, "Token refresh did not produce a new token. Not retrying request.")
             return null
         }
+
+        // Retry the original request once with the new token; add retry marker.
+        return response.request.newBuilder()
+            .header("Authorization", "Bearer $refreshedToken")
+            .header(HEADER_AUTH_RETRY, (retryCount + 1).toString())
+            .build()
     }
 
     private fun logoutUser() {
@@ -154,7 +186,7 @@ class TokenAuthenticator(
 
         // If we sent a logout broadcast within last 2 seconds, skip to prevent cascade
         if (now - lastLogoutBroadcast < 2000L) {
-            android.util.Log.d("TokenAuthenticator", "Skipping duplicate logout broadcast (last sent ${now - lastLogoutBroadcast}ms ago)")
+            android.util.Log.d(TAG, "Skipping duplicate logout broadcast (last sent ${now - lastLogoutBroadcast}ms ago)")
             return
         }
 

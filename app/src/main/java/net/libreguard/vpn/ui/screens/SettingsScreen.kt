@@ -137,6 +137,47 @@ fun SettingsScreen(
                 )
             }
 
+            // Account Info Card
+            if (!userEmail.isNullOrBlank()) {
+                SettingsCard(modifier = Modifier.padding(horizontal = 24.dp)) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Primary.copy(alpha = 0.1f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.AccountCircle,
+                                contentDescription = null,
+                                tint = Primary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Account",
+                                style = MaterialTheme.typography.titleSmall,
+                                color = Foreground
+                            )
+                            Text(
+                                text = userEmail ?: "",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MutedForeground
+                            )
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(24.dp))
+            }
+
             // Plan Upgrade Card (only show if not Pro)
             if (!isPro && !isLoading) {
                 UpgradeCard(
