@@ -9,6 +9,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import net.libreguard.vpn.network.RetrofitClient
 
 /**
@@ -178,6 +179,25 @@ class TokenValidationManager(
         }
 
         return validateTokenValidity()
+    }
+
+    /**
+     * Validate token with a short timeout (2 seconds)
+     * Used during disconnect operations where we want to detect revocation quickly
+     * but don't want to block the disconnect for too long if server is unresponsive
+     *
+     * Returns:
+     * - true if token is valid
+     * - false if token is revoked or validation times out (defaults to assuming valid to proceed with disconnect)
+     */
+    suspend fun validateTokenWithTimeout(timeoutMs: Long = 2000L): Boolean {
+        return withTimeoutOrNull(timeoutMs) {
+            validateTokenBeforeAction()
+        } ?: run {
+            // Timeout occurred - just log and continue
+            Log.d(TAG, "Token validation timed out after ${timeoutMs}ms - proceeding without validation")
+            true // Return true to allow operation to continue (we couldn't verify, so we assume valid)
+        }
     }
 
     /**

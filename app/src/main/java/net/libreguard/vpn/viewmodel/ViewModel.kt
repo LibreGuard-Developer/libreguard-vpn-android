@@ -2299,13 +2299,14 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 val context = getApplication<Application>().applicationContext
                 Log.d(TAG, "Starting disconnect process - activeHandler exists: ${activeVpnHandler != null}")
 
-                // Validate token before disconnect - if revoked, still allow disconnect to happen
-                // but mark it as a forced logout scenario
+                // Validate token before disconnect with SHORT timeout (2 seconds)
+                // If revoked, still allow disconnect to happen but mark it as a forced logout scenario
+                // If validation times out (server unresponsive), skip it and proceed with disconnect
                 val token = authToken
                 val manager = tokenValidationManager
                 if (token != null && manager != null) {
-                    Log.d(TAG, "Validating token before VPN disconnection")
-                    val tokenValid = manager.validateTokenBeforeAction()
+                    Log.d(TAG, "Validating token before VPN disconnection (2 second timeout)")
+                    val tokenValid = manager.validateTokenWithTimeout(timeoutMs = 2000L)
                     if (!tokenValid) {
                         Log.w(TAG, "Token invalid during disconnect - will proceed with disconnect and logout")
                         _errorMessage.value = "Token revoked. Disconnecting and logging out..."
