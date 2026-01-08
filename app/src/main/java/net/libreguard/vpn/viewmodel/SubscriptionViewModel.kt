@@ -61,7 +61,6 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
     private val _minutesRemaining = MutableStateFlow(0)
     val minutesRemaining: StateFlow<Int> = _minutesRemaining
 
-    private var authToken: String? = null
     private var currentUserId: String? = null
     private var moneroPollingJob: Job? = null
     private var timerJob: Job? = null
@@ -78,11 +77,10 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
     }
 
     /**
-     * Set auth token for API calls
-     * Also stores user ID for cache scoping
+     * Keep API cache scoping behavior, but do not store auth token here.
+     * TokenManager is the single source of truth for Authorization.
      */
     fun setAuthToken(token: String, userId: String? = null) {
-        authToken = token
         currentUserId = userId
 
         // Store user ID for cache versioning
@@ -91,11 +89,17 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
         }
     }
 
+    private fun getAuthHeaderOrNull(): String? {
+        val token = RetrofitClient.getTokenManager().getAccessToken()
+        return if (token.isNullOrBlank()) null else "Bearer $token"
+    }
+
     /**
      * Fetch subscription status from backend
      */
     fun fetchSubscriptionStatus() {
-        if (authToken == null) {
+        val authHeader = getAuthHeaderOrNull()
+        if (authHeader == null) {
             _errorMessage.value = "Authentication required"
             return
         }
@@ -119,7 +123,7 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
         fetchJob = viewModelScope.launch(Dispatchers.IO) {
             try {
                 val response = RetrofitClient.instance.getSubscriptionStatus(
-                    authorization = "Bearer $authToken"
+                    authorization = authHeader
                 )
 
                 withContext(Dispatchers.Main) {
@@ -163,7 +167,8 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
      */
     fun checkServerAccess(tierNumber: Int): Job {
         return viewModelScope.launch(Dispatchers.IO) {
-            if (authToken == null) {
+            val authHeader = getAuthHeaderOrNull()
+            if (authHeader == null) {
                 withContext(Dispatchers.Main) {
                     _errorMessage.value = "Authentication required"
                 }
@@ -172,7 +177,7 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
 
             try {
                 val response = RetrofitClient.instance.canAccessServer(
-                    authorization = "Bearer $authToken",
+                    authorization = authHeader,
                     tierNumber = tierNumber
                 )
 
@@ -197,8 +202,9 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
      * Fetch checkout URL for card payment (LemonSqueezy)
      */
     fun fetchCheckoutUrl() {
-        Log.d(TAG, "fetchCheckoutUrl() called - authToken is ${if (authToken != null) "SET" else "NULL"}")
-        if (authToken == null) {
+        val authHeader = getAuthHeaderOrNull()
+        Log.d(TAG, "fetchCheckoutUrl() called - auth is ${if (authHeader != null) "SET" else "NULL"}")
+        if (authHeader == null) {
             _errorMessage.value = "Authentication required"
             Log.e(TAG, "fetchCheckoutUrl() failed: authToken is null")
             return
@@ -206,13 +212,13 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
 
         _isLoading.value = true
         _errorMessage.value = null
-        Log.d(TAG, "Starting API call to fetch checkout URL with token: ${authToken?.take(20)}...")
+        Log.d(TAG, "Starting API call to fetch checkout URL with token: ${authHeader.take(20)}...")
 
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 Log.d(TAG, "Calling RetrofitClient.getCheckoutUrl()...")
                 val response = RetrofitClient.instance.getCheckoutUrl(
-                    authorization = "Bearer $authToken"
+                    authorization = authHeader
                 )
                 Log.d(TAG, "API response received - isSuccessful: ${response.isSuccessful}, code: ${response.code()}")
 
@@ -243,7 +249,8 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
      * Fetch Monero price for Pro subscription
      */
     fun fetchMoneroPrice() {
-        if (authToken == null) {
+        val authHeader = getAuthHeaderOrNull()
+        if (authHeader == null) {
             _errorMessage.value = "Authentication required"
             return
         }
@@ -251,7 +258,7 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val response = RetrofitClient.instance.getMoneroPrice(
-                    authorization = "Bearer $authToken"
+                    authorization = authHeader
                 )
 
                 withContext(Dispatchers.Main) {
@@ -272,7 +279,8 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
      * Create Monero invoice for payment
      */
     fun createMoneroInvoice() {
-        if (authToken == null) {
+        val authHeader = getAuthHeaderOrNull()
+        if (authHeader == null) {
             _errorMessage.value = "Authentication required"
             return
         }
@@ -283,7 +291,7 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val response = RetrofitClient.instance.createMoneroInvoice(
-                    authorization = "Bearer $authToken"
+                    authorization = authHeader
                 )
 
                 withContext(Dispatchers.Main) {
@@ -319,7 +327,8 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
      * Fetch latest pending Monero invoice (to resume payment)
      */
     fun fetchLatestMoneroInvoice() {
-        if (authToken == null) {
+        val authHeader = getAuthHeaderOrNull()
+        if (authHeader == null) {
             _errorMessage.value = "Authentication required"
             return
         }
@@ -330,7 +339,7 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val response = RetrofitClient.instance.getLatestMoneroInvoice(
-                    authorization = "Bearer $authToken"
+                    authorization = authHeader
                 )
 
                 withContext(Dispatchers.Main) {
@@ -372,7 +381,7 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
     private suspend fun fetchMoneroStatus(invoiceId: String) {
         try {
             val response = RetrofitClient.instance.getMoneroPaymentStatus(
-                authorization = "Bearer $authToken",
+                authorization = getAuthHeaderOrNull()!!,
                 invoiceId = invoiceId
             )
 
@@ -449,7 +458,8 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
                 try {
                     delay(pollInterval)
 
-                    if (authToken == null) {
+                    val authHeader = getAuthHeaderOrNull()
+                    if (authHeader == null) {
                         withContext(Dispatchers.Main) {
                             _isMoneroPolling.value = false
                         }
@@ -457,7 +467,7 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
                     }
 
                     val response = RetrofitClient.instance.getMoneroPaymentStatus(
-                        authorization = "Bearer $authToken",
+                        authorization = authHeader,
                         invoiceId = invoiceId
                     )
 
@@ -512,7 +522,8 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
      * Manually check Monero payment status
      */
     fun checkMoneroPaymentStatus(invoiceId: String) {
-        if (authToken == null) {
+        val authHeader = getAuthHeaderOrNull()
+        if (authHeader == null) {
             _errorMessage.value = "Authentication required"
             return
         }
@@ -522,7 +533,7 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val response = RetrofitClient.instance.getMoneroPaymentStatus(
-                    authorization = "Bearer $authToken",
+                    authorization = authHeader,
                     invoiceId = invoiceId
                 )
 

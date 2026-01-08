@@ -156,9 +156,16 @@ fun TwoFactorVerificationScreen(
                         isLoading = true
                         errorMessage = null
                         try {
+                            val tokenManager = RetrofitClient.getTokenManager()
+                            val deviceId = tokenManager.requireDeviceId()
+
                             if (showRecoveryCodeInput) {
                                 val response = RetrofitClient.instance.verifyRecoveryCode(
-                                    VerifyRecoveryRequest(email = email, recoveryCode = recoveryCode)
+                                    VerifyRecoveryRequest(
+                                        email = email,
+                                        recoveryCode = recoveryCode,
+                                        deviceId = deviceId
+                                    )
                                 )
                                 if (response.isSuccessful) {
                                     val tokenResponse = response.body()
@@ -175,7 +182,11 @@ fun TwoFactorVerificationScreen(
                                 }
                             } else {
                                 val response = RetrofitClient.instance.verify2fa(
-                                    Verify2faRequest(email = email, twoFactorCode = code)
+                                    Verify2faRequest(
+                                        email = email,
+                                        twoFactorCode = code,
+                                        deviceId = deviceId
+                                    )
                                 )
                                 if (response.isSuccessful) {
                                     val tokenResponse = response.body()
@@ -343,4 +354,3 @@ fun PreviewTwoFactorVerificationScreenNew() {
         onBackToLogin = { }
     )
 }
-

@@ -14,6 +14,7 @@ data class AuthRequest(
     val appVersion: String? = null
 )
 
+
 data class AuthResponse(
     @SerializedName("token")
     val token: String?, // Token might not be present in an error response
@@ -61,18 +62,26 @@ data class GoogleLoginResponse(
     @SerializedName("planType") val planType: String? = null // "Free", "Pro"
 )
 
-// Refresh Token Request
+// Refresh Token Request (device-bound)
 data class RefreshTokenRequest(
-    @SerializedName("refreshToken")
+    @SerializedName("RefreshToken")
     val refreshToken: String,
-    @SerializedName("deviceId")
-    val deviceId: String? = null
+    @SerializedName("DeviceId")
+    val deviceId: String,
+    @SerializedName("AppVersion")
+    val appVersion: String? = null
 )
 
-// 2FA Verification Request
+// 2FA Verification Request (device-bound)
 data class Verify2faRequest(
+    @SerializedName("email")
     val email: String,
-    val twoFactorCode: String
+    @SerializedName("twoFactorCode")
+    val twoFactorCode: String,
+    @SerializedName("DeviceId")
+    val deviceId: String,
+    @SerializedName("AppVersion")
+    val appVersion: String? = null
 )
 
 // Structured API Error Response
@@ -87,10 +96,16 @@ data class ApiErrorResponse(
     val requiresEmailVerification: Boolean = false
 )
 
-// Recovery Code Verification Request
+// Recovery Code Verification Request (device-bound)
 data class VerifyRecoveryRequest(
+    @SerializedName("email")
     val email: String,
-    val recoveryCode: String
+    @SerializedName("recoveryCode")
+    val recoveryCode: String,
+    @SerializedName("DeviceId")
+    val deviceId: String,
+    @SerializedName("AppVersion")
+    val appVersion: String? = null
 )
 
 // Token Response for 2FA verification
@@ -99,7 +114,8 @@ data class TokenResponse(
     val email: String,
     val userId: String,
     val message: String,
-    val warningRecoveryCodes: Boolean? = null
+    val warningRecoveryCodes: Boolean? = null,
+    val deviceId: String? = null
 )
 
 // 2FA Status Response
@@ -157,12 +173,6 @@ data class LogoutResponse(
 
 /**
  * Error response returned when device limit is exceeded (409 Conflict).
- *
- * Sent by backend when user attempts to login on a new device
- * but has reached their subscription limit (Free: 1, Pro: 3).
- *
- * Example: Free user with 1 active device tries to login on device 2
- * GET /api/login returns 409 with this structure.
  */
 data class DeviceLimitErrorResponse(
     @SerializedName("message")

@@ -40,6 +40,7 @@ import net.libreguard.vpn.network.*
 import net.libreguard.vpn.ui.components.LogoWithGradient
 import net.libreguard.vpn.ui.theme.*
 import net.libreguard.vpn.util.DeviceIdManager
+import org.json.JSONObject
 
 /**
  * Login Screen - User authentication
@@ -48,6 +49,9 @@ import net.libreguard.vpn.util.DeviceIdManager
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LoginScreen(
+    forcedLogoutReasonJson: String? = null,
+    onDismissForcedLogoutReason: () -> Unit = {},
+    onNavigateToUpgrade: () -> Unit = {},
     onLoginSuccess: (String) -> Unit,
     onRequires2FA: (String) -> Unit,
     onNavigateToRegister: () -> Unit,
@@ -59,6 +63,19 @@ fun LoginScreen(
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var isPasswordVisible by remember { mutableStateOf(false) }
     var deviceLimitError by remember { mutableStateOf<DeviceLimitErrorResponse?>(null) }
+
+    // Parse forced logout reason (best-effort)
+    val forcedLogoutReasonParsed = remember(forcedLogoutReasonJson) {
+        if (forcedLogoutReasonJson.isNullOrBlank()) {
+            null
+        } else {
+            try {
+                JSONObject(forcedLogoutReasonJson)
+            } catch (_: Exception) {
+                null
+            }
+        }
+    }
 
     val coroutineScope = rememberCoroutineScope()
     val scrollState = rememberScrollState()
@@ -225,6 +242,85 @@ fun LoginScreen(
                 style = MaterialTheme.typography.bodyMedium,
                 color = MutedForeground
             )
+
+            // Forced logout banner (eg: device limit exceeded)
+            forcedLogoutReasonParsed?.let { jo ->
+                val type = jo.optString("type", "")
+                if (type.equals("DEVICE_LIMIT_EXCEEDED", ignoreCase = true)) {
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    val msg = jo.optString("message", "Device limit exceeded.")
+                    val currentDevices = jo.optInt("currentDevices", -1).takeIf { it >= 0 }
+                    val maxDevices = jo.optInt("maxDevices", -1).takeIf { it >= 0 }
+                    val planType = jo.optString("planType", "").takeIf { it.isNotBlank() }
+
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        color = Primary.copy(alpha = 0.08f),
+                        border = ButtonDefaults.outlinedButtonBorder(enabled = true).copy(
+                            brush = androidx.compose.ui.graphics.SolidColor(Primary.copy(alpha = 0.4f))
+                        )
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = "Signed out: device limit reached",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = Foreground
+                                )
+                                TextButton(onClick = onDismissForcedLogoutReason) {
+                                    Text("Dismiss")
+                                }
+                            }
+
+                            Text(
+                                text = msg,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MutedForeground
+                            )
+
+                            val detailLine = buildString {
+                                if (planType != null) append("Plan: $planType")
+                                if (currentDevices != null && maxDevices != null) {
+                                    if (isNotEmpty()) append(" • ")
+                                    append("Devices: $currentDevices/$maxDevices")
+                                }
+                            }
+                            if (detailLine.isNotBlank()) {
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = detailLine,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MutedForeground
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.height(12.dp))
+
+                            Button(
+                                onClick = onNavigateToUpgrade,
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Text("Upgrade to Pro")
+                            }
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            Text(
+                                text = "Or sign in on the device you want to use and sign out elsewhere.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MutedForeground
+                            )
+                        }
+                    }
+                }
+            }
 
             Spacer(modifier = Modifier.height(32.dp))
 
@@ -555,6 +651,9 @@ fun LoginScreen(
 @Composable
 fun PreviewLoginScreenUI() {
     LoginScreen(
+        forcedLogoutReasonJson = null,
+        onDismissForcedLogoutReason = { },
+        onNavigateToUpgrade = { },
         onLoginSuccess = { },
         onRequires2FA = { },
         onNavigateToRegister = { },
@@ -579,4 +678,3 @@ private fun mapGoogleSignInFailure(ex: Throwable): String {
         ex.localizedMessage ?: "Unknown error"
     }
 }
-

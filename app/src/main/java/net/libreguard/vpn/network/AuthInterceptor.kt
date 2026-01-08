@@ -29,24 +29,44 @@ class AuthInterceptor(
 
         // Handle 401: token is invalid or revoked
         if (response.code == 401) {
+            val url = newRequest.url.toString()
+
             // CRITICAL: Do NOT trigger logout for token-related endpoints
             // Let TokenAuthenticator handle refresh naturally without cascade
-            val url = newRequest.url.toString()
             if (url.contains("/api/login/refresh") || url.contains("/api/token/check")) {
                 Log.d(TAG, "Received 401 for token endpoint ${newRequest.url} - letting authenticator handle refresh")
                 return response
             }
 
+            // If TokenAuthenticator already retried this request and we STILL got 401,
+            // then we're truly unauthorized and should consider logout.
+            val authRetry = newRequest.header("X-LG-Auth-Retry")?.toIntOrNull() ?: 0
+
+            var responseBodyString = ""
             try {
                 val peekBody = response.peekBody(4096)
-                val responseBodyString = try { peekBody.string() } catch (_: Exception) { "" }
+                responseBodyString = try { peekBody.string() } catch (_: Exception) { "" }
                 val hasAuthHeader = newRequest.header("Authorization") != null
-                Log.w(TAG, "Received 401 for request ${newRequest.method} ${newRequest.url}. HasAuthHeader=$hasAuthHeader. ResponseBody=${responseBodyString.take(1000)}")
+                Log.w(TAG, "Received 401 for request ${newRequest.method} ${newRequest.url}. HasAuthHeader=$hasAuthHeader. AuthRetry=$authRetry. ResponseBody=${responseBodyString.take(1000)}")
             } catch (ex: Exception) {
                 Log.w(TAG, "Received 401 - failed to read response body: ${ex.message}")
             }
-            Log.w(TAG, "Received 401 response - token is invalid or revoked. Triggering logout.")
-            handleTokenRevocation()
+
+            // If backend explicitly tells us to login again, honor it.
+            // Otherwise, do NOT logout on first failure: allow authenticator path to recover.
+            val requiresLogin = try {
+                if (responseBodyString.isBlank()) false else JSONObject(responseBodyString).optBoolean("requiresLogin", false)
+            } catch (_: Exception) {
+                false
+            }
+
+            if (requiresLogin || authRetry > 0) {
+                Log.w(TAG, "Received 401 response - requiresLogin=$requiresLogin, authRetry=$authRetry. Triggering logout.")
+                handleTokenRevocation()
+            } else {
+                Log.w(TAG, "Received 401 response - not forcing logout yet (authRetry=$authRetry). Letting TokenAuthenticator attempt refresh.")
+            }
+
             return response
         }
 
@@ -60,6 +80,31 @@ class AuthInterceptor(
                 ""
             }
 
+            // ===== Device limit exceeded (forced logout reason + upgrade path) =====
+            // Backend may return DEVICE_LIMIT_EXCEEDED with requiresDeviceManagement=true.
+            // We persist this as a logout reason so LoginScreen can show the user why they were logged out.
+            try {
+                if (!responseBodyString.isNullOrBlank()) {
+                    val jo = JSONObject(responseBodyString)
+                    val errorCode = jo.optString("errorCode", "")
+                    if (errorCode.equals("DEVICE_LIMIT_EXCEEDED", ignoreCase = true)) {
+                        val prefs = context.getSharedPreferences("vpn_state_prefs", Context.MODE_PRIVATE)
+                        val payload = JSONObject()
+                        payload.put("type", "DEVICE_LIMIT_EXCEEDED")
+                        payload.put("message", jo.optString("message", "Device limit exceeded"))
+                        payload.put("currentDevices", jo.optInt("currentDevices", -1))
+                        payload.put("maxDevices", jo.optInt("maxDevices", -1))
+                        payload.put("planType", jo.optString("planType", ""))
+                        payload.put("requiresDeviceManagement", jo.optBoolean("requiresDeviceManagement", false))
+                        payload.put("deviceId", jo.optString("deviceId", ""))
+                        payload.put("timestamp", System.currentTimeMillis())
+                        prefs.edit().putString("pending_forced_logout_reason", payload.toString()).apply()
+                    }
+                }
+            } catch (_: Exception) {
+                // best-effort only
+            }
+
             // Attempt to parse structured JSON for explicit keys
             var reason: String = "Access requires higher subscription"
             var resourceType: String? = null
@@ -70,9 +115,9 @@ class AuthInterceptor(
                 if (!responseBodyString.isNullOrBlank()) {
                     val jo = JSONObject(responseBodyString)
                     if (jo.has("requires_pro") && jo.optBoolean("requires_pro").also { if (it) reason = jo.optString("message", reason) }) {
-                        resourceType = jo.optString("resource_type", null)
-                        resourceId = jo.optString("resource_id", null)
-                        requiredTier = jo.optString("required_tier", null)
+                        resourceType = jo.optString("resource_type").takeIf { it.isNotBlank() }
+                        resourceId = jo.optString("resource_id").takeIf { it.isNotBlank() }
+                        requiredTier = jo.optString("required_tier").takeIf { it.isNotBlank() }
                     }
                 }
             } catch (e: Exception) {

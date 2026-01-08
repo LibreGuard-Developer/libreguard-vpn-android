@@ -200,6 +200,17 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     private val _upgradeEvents = MutableSharedFlow<Map<String, String?>>(replay = 0)
     val upgradeEvents: SharedFlow<Map<String, String?>> = _upgradeEvents
 
+    /**
+     * Emitted when the app needs the user to approve VPN permissions (VpnService.prepare returned an Intent).
+     * UI layer must launch the Intent via Activity Result API.
+     */
+    private val _vpnPermissionRequests = kotlinx.coroutines.flow.MutableSharedFlow<Intent>(extraBufferCapacity = 1)
+    val vpnPermissionRequests: kotlinx.coroutines.flow.SharedFlow<Intent> = _vpnPermissionRequests
+
+    // When true, a connect attempt is waiting on VPN consent. We'll retry once consent is granted.
+    @Volatile
+    private var pendingConnectAfterVpnConsent: Boolean = false
+
     init {
         // Load persisted auth token and connection state immediately on startup
         loadPersistedAuthToken()
@@ -866,8 +877,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
      * Load remote servers with caching - try cache first, then API
      */
     private fun loadRemoteServersWithFallback() {
-        val token = authToken
-        if (token == null) {
+        // TokenManager is the source of truth; avoid using a stale ViewModel authToken.
+        val token = RetrofitClient.getTokenManager().getAccessToken()
+        if (token.isNullOrBlank()) {
             Log.w(TAG, "No auth token available for loading remote servers")
             return
         }
@@ -876,15 +888,20 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
         viewModelScope.launch {
             try {
-                // Load from cache first
                 val cachedServers = loadCachedServers()
                 if (cachedServers.isNotEmpty()) {
                     _servers.value = cachedServers
                     Log.d(TAG, "Loaded ${cachedServers.size} servers from cache")
                 }
 
-                // Try to get fresh list from API
-                val response = RetrofitClient.instance.getVpnServers("Bearer $token")
+                // Always re-read token right before the call (it may have been refreshed).
+                val freshToken = RetrofitClient.getTokenManager().getAccessToken()
+                if (freshToken.isNullOrBlank()) {
+                    Log.w(TAG, "No auth token available for loading remote servers (after cache)")
+                    return@launch
+                }
+
+                val response = RetrofitClient.instance.getVpnServers("Bearer $freshToken")
 
                 if (response.isSuccessful) {
                     val serverResponse = response.body()
@@ -894,9 +911,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                         Log.d(TAG, "Loaded ${serverResponse.servers.size} remote servers from API")
                         _errorMessage.value = "Server list updated (${serverResponse.servers.size} servers)"
 
-                        // Measure latency for all servers (only if not connected to VPN)
                         if (!_isConnected.value) {
-                            // Clear cached latencies since we're reloading servers
                             _serverLatencies.value = emptyMap()
                             measureServerLatencies(serverResponse.servers)
                         } else {
@@ -1212,7 +1227,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
     fun connectToVpn() {
         val server = _selectedServer.value
-        val token = authToken
+
+        // Avoid capturing authToken early; token may be refreshed.
+        val initialToken = RetrofitClient.getTokenManager().getAccessToken()
 
         // Guard: ensure access for server/protocol before attempting
         try {
@@ -1270,7 +1287,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
-        if (token == null) {
+        if (initialToken.isNullOrBlank()) {
             _errorMessage.value = "Authentication token missing"
             return
         }
@@ -1278,11 +1295,25 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         _isConnecting.value = true
         _errorMessage.value = null
 
+        // Before any network/config/handler work, ensure VPN permission is granted.
+        // If not granted, request UI to launch the consent Intent.
+        try {
+            val context = getApplication<Application>().applicationContext
+            val vpnIntent = android.net.VpnService.prepare(context)
+            if (vpnIntent != null) {
+                pendingConnectAfterVpnConsent = true
+                _isConnecting.value = false
+                _errorMessage.value = "VPN permission required"
+                _vpnPermissionRequests.tryEmit(vpnIntent)
+                return
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "VpnService.prepare failed: ${e.message}")
+            // Continue; handler/connect will surface errors if permission truly missing.
+        }
+
         viewModelScope.launch {
             try {
-                // CRITICAL: Proactively refresh token if expired or expiring soon
-                // This prevents the infinite redirect loop (21 follow-up requests) that occurs
-                // when an expired token triggers both TokenAuthenticator and AuthInterceptor
                 val tokenManager = RetrofitClient.getTokenManager()
                 Log.d(TAG, "Checking if token refresh is needed before VPN connection")
                 val refreshSuccess = tokenManager.refreshTokenIfNeeded(RetrofitClient.authApiService)
@@ -1315,6 +1346,15 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 }
 
                 Log.d(TAG, "Token is valid or successfully refreshed")
+
+                // Re-read token AFTER refresh.
+                val token = tokenManager.getAccessToken()
+                if (token.isNullOrBlank()) {
+                    Log.w(TAG, "Access token missing after refresh")
+                    _errorMessage.value = "Authentication token missing"
+                    _isConnecting.value = false
+                    return@launch
+                }
 
                 // Validate token before attempting connection
                 val manager = tokenValidationManager
@@ -1373,6 +1413,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                     protocol = selected.apiName
                 )
 
+                // IMPORTANT: use fresh token for config request
                 var response = RetrofitClient.instance.getVpnConfig("Bearer $token", request)
 
                 if (response.isSuccessful && response.body()?.success == true) {
@@ -1932,7 +1973,8 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         return withContext(Dispatchers.IO) {
             val context = getApplication<Application>().applicationContext
             try {
-                val token = authToken ?: return@withContext false
+                val tokenManager = RetrofitClient.getTokenManager()
+                val token = tokenManager.getAccessToken() ?: return@withContext false
                 val cacheDir = getUserScopedDir(context, VpnProtocol.OPENVPN)
                 val cacheFile = File(cacheDir, "openvpn_${serverId}.ovpn")
 
@@ -1979,8 +2021,10 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                         val issued = ensureCertificateIssued(VpnProtocol.OPENVPN, serverId, token)
                         if (issued) {
                             _errorMessage.value = "Certificate issued. Downloading OpenVPN config…"
+                            // Re-read token (could have been refreshed by background auth)
+                            val refreshedToken = tokenManager.getAccessToken() ?: token
                             resp = RetrofitClient.instance.downloadOpenVpnConfig(
-                                authorization = "Bearer $token",
+                                authorization = "Bearer $refreshedToken",
                                 request = OpenVpnDownloadRequest(serverId)
                             )
                             if (!resp.isSuccessful) {
@@ -2921,5 +2965,25 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             .putString("default_protocol", protocol.displayName)
             .apply()
         Log.d(TAG, "Default Protocol preference set to: ${protocol.displayName}")
+    }
+
+    /**
+     * Called by UI after the VPN consent activity returns.
+     * resultOk=true means the user granted permission.
+     */
+    fun onVpnPermissionResult(resultOk: Boolean) {
+        if (!resultOk) {
+            pendingConnectAfterVpnConsent = false
+            _isConnecting.value = false
+            _errorMessage.value = "VPN permission denied"
+            return
+        }
+
+        // User granted permission; retry pending connect if needed.
+        if (pendingConnectAfterVpnConsent) {
+            pendingConnectAfterVpnConsent = false
+            // Kick off the normal connect flow again.
+            connectToVpn()
+        }
     }
 }

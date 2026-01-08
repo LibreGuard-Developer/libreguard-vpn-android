@@ -47,6 +47,10 @@ import android.os.Build
 import kotlinx.coroutines.launch
 import net.libreguard.vpn.network.RetrofitClient
 import net.libreguard.vpn.util.LogoutManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.collectAsState
+import org.json.JSONObject
 
 class MainActivity : ComponentActivity() {
 
@@ -72,6 +76,22 @@ fun AppNavigation(modifier: Modifier = Modifier) {
     var authToken by remember { mutableStateOf<String?>(null) }
     var isCheckingToken by remember { mutableStateOf(true) }
     var pendingEmail by remember { mutableStateOf<String?>(null) }
+
+    // Forced logout reason shown on login screen (e.g., device limit exceeded)
+    var forcedLogoutReasonJson by remember { mutableStateOf<String?>(null) }
+
+    fun consumeForcedLogoutReasonFromPrefs() {
+        try {
+            val prefs = context.getSharedPreferences("vpn_state_prefs", Context.MODE_PRIVATE)
+            val value = prefs.getString("pending_forced_logout_reason", null)
+            if (!value.isNullOrBlank()) {
+                forcedLogoutReasonJson = value
+                prefs.edit().remove("pending_forced_logout_reason").apply()
+            }
+        } catch (_: Exception) {
+            // best-effort
+        }
+    }
 
     // SharedPreferences for persisting registration flow state across process death
     val regPrefs = remember { context.getSharedPreferences("registration_flow_prefs", android.content.Context.MODE_PRIVATE) }
@@ -101,6 +121,14 @@ fun AppNavigation(modifier: Modifier = Modifier) {
 
     // ViewModel reference for VPN disconnect on logout - shared across all composables
     val vpnViewModel: VpnViewModel = viewModel()
+
+    // Launcher for the system VPN consent dialog (VpnService.prepare intent)
+    val vpnConsentLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        // RESULT_OK means permission granted; RESULT_CANCELED means user denied/backed out
+        vpnViewModel.onVpnPermissionResult(result.resultCode == android.app.Activity.RESULT_OK)
+    }
 
     // Coroutine scope for async logout operations
     val coroutineScope = rememberCoroutineScope()
@@ -144,6 +172,9 @@ fun AppNavigation(modifier: Modifier = Modifier) {
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(ctx: Context?, intent: Intent?) {
                 if (intent?.action == "net.libreguard.vpn.ACTION_LOGOUT") {
+                    // Capture logout reason (if any) before we navigate back to login
+                    consumeForcedLogoutReasonFromPrefs()
+
                     // CRITICAL: Disconnect VPN first before clearing tokens
                     coroutineScope.launch {
                         disconnectThenLogout {
@@ -343,6 +374,11 @@ fun AppNavigation(modifier: Modifier = Modifier) {
         composable("login") {
             if (!isCheckingToken) { // Only show login screen after checking token
                 LoginScreen(
+                    forcedLogoutReasonJson = forcedLogoutReasonJson,
+                    onDismissForcedLogoutReason = { forcedLogoutReasonJson = null },
+                    onNavigateToUpgrade = {
+                        navController.navigate("upgrade")
+                    },
                     onLoginSuccess = { token ->
                         authToken = token
                         // Token is already saved in LoginScreen
@@ -555,19 +591,18 @@ fun AppNavigation(modifier: Modifier = Modifier) {
 
         // ===== SUBSCRIPTION ROUTES =====
         composable("upgrade") {
-            authToken?.let { token ->
-                UpgradeScreen(
-                    onNavigateBack = {
-                        navController.popBackStack()
-                    },
-                    onChooseCard = {
-                        navController.navigate("payment/card")
-                    },
-                    onChooseMonero = {
-                        navController.navigate("payment/monero")
-                    }
-                )
-            }
+            // Allow access to upgrade even when logged out (so forced-logout flows can upgrade).
+            UpgradeScreen(
+                onNavigateBack = {
+                    navController.popBackStack()
+                },
+                onChooseCard = {
+                    navController.navigate("payment/card")
+                },
+                onChooseMonero = {
+                    navController.navigate("payment/monero")
+                }
+            )
         }
 
         composable("payment/card") {
@@ -607,6 +642,13 @@ fun AppNavigation(modifier: Modifier = Modifier) {
                         navController.popBackStack()
                     }
                 )
+            } ?: run {
+                // If logged out, redirect to login; payment requires auth.
+                LaunchedEffect(Unit) {
+                    navController.navigate("login") {
+                        popUpTo("payment/card") { inclusive = true }
+                    }
+                }
             }
         }
 
@@ -666,6 +708,13 @@ fun AppNavigation(modifier: Modifier = Modifier) {
                         contentAlignment = Alignment.Center
                     ) {
                         CircularProgressIndicator()
+                    }
+                }
+            } ?: run {
+                // If logged out, redirect to login; payment requires auth.
+                LaunchedEffect(Unit) {
+                    navController.navigate("login") {
+                        popUpTo("payment/monero") { inclusive = true }
                     }
                 }
             }

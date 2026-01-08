@@ -36,6 +36,18 @@ fun TwoFactorSettingsScreen(
     authToken: String,
     onNavigateBack: () -> Unit
 ) {
+    // TokenManager is the source of truth; keep the parameter for backward compatibility,
+    // but always prefer the latest stored token.
+    val tokenManager = remember { RetrofitClient.getTokenManager() }
+    val currentAuthToken = remember(authToken) {
+        tokenManager.getAccessToken() ?: authToken
+    }
+
+    fun latestBearer(): String {
+        val t = tokenManager.getAccessToken() ?: currentAuthToken
+        return "Bearer $t"
+    }
+
     var is2faEnabled by remember { mutableStateOf(false) }
     var hasAuthenticator by remember { mutableStateOf(false) }
     var recoveryCodesLeft by remember { mutableStateOf(0) }
@@ -52,12 +64,12 @@ fun TwoFactorSettingsScreen(
     val coroutineScope = rememberCoroutineScope()
     val scrollState = rememberScrollState()
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(currentAuthToken) {
         coroutineScope.launch {
             isLoading = true
             errorMessage = null
             try {
-                val response = RetrofitClient.instance.get2faStatus("Bearer $authToken")
+                val response = RetrofitClient.instance.get2faStatus(latestBearer())
                 if (response.isSuccessful) {
                     response.body()?.let { status ->
                         is2faEnabled = status.is2faEnabled
@@ -220,7 +232,7 @@ fun TwoFactorSettingsScreen(
                                 isLoading = true
                                 errorMessage = null
                                 try {
-                                    val response = RetrofitClient.instance.setup2fa("Bearer $authToken")
+                                    val response = RetrofitClient.instance.setup2fa(latestBearer())
                                     if (response.isSuccessful) {
                                         response.body()?.let { setup ->
                                             sharedKey = setup.sharedKey
@@ -262,7 +274,7 @@ fun TwoFactorSettingsScreen(
                                 isLoading = true
                                 errorMessage = null
                                 try {
-                                    val response = RetrofitClient.instance.generateRecoveryCodes("Bearer $authToken")
+                                    val response = RetrofitClient.instance.generateRecoveryCodes(latestBearer())
                                     if (response.isSuccessful) {
                                         response.body()?.let { codes ->
                                             recoveryCodes = codes.recoveryCodes
@@ -306,7 +318,7 @@ fun TwoFactorSettingsScreen(
                                 isLoading = true
                                 errorMessage = null
                                 try {
-                                    val response = RetrofitClient.instance.reset2fa("Bearer $authToken")
+                                    val response = RetrofitClient.instance.reset2fa(latestBearer())
                                     if (response.isSuccessful) {
                                         is2faEnabled = false
                                         hasAuthenticator = false
@@ -346,7 +358,7 @@ fun TwoFactorSettingsScreen(
                                 isLoading = true
                                 errorMessage = null
                                 try {
-                                    val response = RetrofitClient.instance.disable2fa("Bearer $authToken")
+                                    val response = RetrofitClient.instance.disable2fa(latestBearer())
                                     if (response.isSuccessful) {
                                         is2faEnabled = false
                                         hasAuthenticator = false
@@ -441,7 +453,7 @@ fun TwoFactorSettingsScreen(
                         errorMessage = null
                         try {
                             val response = RetrofitClient.instance.enable2fa(
-                                "Bearer $authToken",
+                                latestBearer(),
                                 EnableRequest(code = verificationCode)
                             )
                             if (response.isSuccessful) {
@@ -729,4 +741,3 @@ fun PreviewTwoFactorSettingsScreenNew() {
         onNavigateBack = { }
     )
 }
-

@@ -545,8 +545,9 @@ class StrongSwanHandler(
                 try {
                     val prep = VpnService.prepare(appContext)
                     if (prep != null) {
-                        _state.value = ConnectionState.Error("VPN permission not granted. Please allow VPN permissions and retry.")
-                        Log.e(tag, "VPN permission not granted (VpnService.prepare returned an Intent)")
+                        // UI must launch VpnService.prepare() intent (Android 10+), especially on Android 14.
+                        _state.value = ConnectionState.Error("VPN permission required. Tap Connect again and approve the VPN dialog.")
+                        Log.w(tag, "VPN permission not granted (VpnService.prepare returned an Intent)")
                         return@withContext false
                     }
                 } catch (e: Exception) {
