@@ -340,26 +340,36 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
     /**
      * Load persisted auth token immediately on startup
+     * NOTE: We no longer clear expired tokens here - let MainActivity handle refresh
+     * This allows the refresh flow to work properly on app resume
      */
     private fun loadPersistedAuthToken() {
         try {
             val savedAuthToken = sharedPrefs.getString("auth_token", null)
             if (!savedAuthToken.isNullOrBlank()) {
-                // CRITICAL FIX: Validate token expiry before using it
                 val tokenManager = RetrofitClient.getTokenManager()
 
-                // Check if token is expired by examining JWT payload
+                // Check if token is expired - but DON'T clear it here
+                // MainActivity will attempt refresh on startup
                 if (tokenManager.isTokenExpired()) {
-                    Log.w(TAG, "Persisted auth token is expired, clearing it")
-                    sharedPrefs.edit().remove("auth_token").apply()
-                    tokenManager.clearTokens()
-                    return
+                    // Check if refresh token is available for recovery
+                    val refreshToken = tokenManager.getRefreshToken()
+                    if (refreshToken.isNullOrBlank() || tokenManager.isRefreshTokenExpired()) {
+                        // Both tokens expired - must re-login
+                        Log.w(TAG, "Persisted auth token and refresh token are both expired/missing, clearing")
+                        sharedPrefs.edit().remove("auth_token").apply()
+                        tokenManager.clearTokens()
+                        return
+                    }
+                    // Access token expired but refresh token available
+                    // Keep the token - MainActivity will refresh it
+                    Log.d(TAG, "Persisted auth token is expired but refresh token available - keeping for refresh")
                 }
 
                 authToken = savedAuthToken
                 // Restore stable user id for scoping caches
                 currentUserId = sharedPrefs.getString("current_user_id", null)
-                Log.d(TAG, "Restored auth token from persistent storage on init")
+                Log.d(TAG, "Restored auth token from persistent storage on init (expired=${tokenManager.isTokenExpired()})")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to load persisted auth token on init", e)
@@ -999,6 +1009,11 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         }
         Log.d(TAG, "Starting background token validation polling")
         tokenValidationManager?.startBackgroundValidation(viewModelScope)
+
+        // CRITICAL: Start proactive background token refresh to keep session alive
+        // This refreshes the token before it expires, preventing logout after inactivity
+        Log.d(TAG, "Starting background token refresh polling")
+        tokenValidationManager?.startBackgroundTokenRefresh(viewModelScope)
 
         // CRITICAL FIX: Stagger API requests to prevent simultaneous 401s
         // Load servers first, then subscription fetch, then quota sync after delays

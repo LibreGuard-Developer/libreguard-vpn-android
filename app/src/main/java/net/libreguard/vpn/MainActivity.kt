@@ -280,29 +280,88 @@ fun AppNavigation(modifier: Modifier = Modifier) {
         }
 
         val tokenManager = RetrofitClient.getTokenManager()
-        val savedToken = tokenManager.getAccessToken()
+        var savedToken = tokenManager.getAccessToken()
 
         if (!savedToken.isNullOrBlank()) {
-            // CRITICAL FIX: Validate token before auto-login
-            // Check 1: Is token expired locally?
-            if (tokenManager.isTokenExpired()) {
-                Log.w("MainActivity", "Token is expired locally, clearing and showing login")
-                tokenManager.clearTokens()
-                context.getSharedPreferences("vpn_state_prefs", Context.MODE_PRIVATE)
-                    .edit()
-                    .remove("auth_token")
-                    .apply()
-                vpnViewModel.clearCachedAuthToken()
-                authToken = null
-                isCheckingToken = false
-                return@LaunchedEffect
+            // CRITICAL FIX: Check if token is expired and attempt REFRESH first before clearing
+            // This ensures users stay logged in even after app was closed for hours
+            if (tokenManager.isTokenExpired() || tokenManager.isTokenExpiringWithin(300)) {
+                Log.d("MainActivity", "Token is expired or expiring soon - attempting proactive refresh...")
+
+                // Check if refresh token is available and not expired
+                val refreshToken = tokenManager.getRefreshToken()
+                if (refreshToken.isNullOrBlank()) {
+                    Log.w("MainActivity", "No refresh token available - must re-login")
+                    tokenManager.clearTokens()
+                    context.getSharedPreferences("vpn_state_prefs", Context.MODE_PRIVATE)
+                        .edit()
+                        .remove("auth_token")
+                        .apply()
+                    vpnViewModel.clearCachedAuthToken()
+                    authToken = null
+                    isCheckingToken = false
+                    return@LaunchedEffect
+                }
+
+                // Check if refresh token is expired (for JWT-format refresh tokens)
+                if (tokenManager.isRefreshTokenExpired()) {
+                    Log.w("MainActivity", "Refresh token is also expired - must re-login")
+                    tokenManager.clearTokens()
+                    context.getSharedPreferences("vpn_state_prefs", Context.MODE_PRIVATE)
+                        .edit()
+                        .remove("auth_token")
+                        .apply()
+                    vpnViewModel.clearCachedAuthToken()
+                    authToken = null
+                    isCheckingToken = false
+                    return@LaunchedEffect
+                }
+
+                // Attempt to refresh the token BEFORE any API calls
+                try {
+                    val refreshSuccess = tokenManager.refreshTokenIfNeeded(RetrofitClient.authApiService)
+                    if (refreshSuccess) {
+                        Log.d("MainActivity", "Token refresh successful on startup")
+                        // Update savedToken with the new refreshed token
+                        savedToken = tokenManager.getAccessToken()
+                    } else {
+                        Log.w("MainActivity", "Token refresh failed on startup - must re-login")
+                        tokenManager.clearTokens()
+                        context.getSharedPreferences("vpn_state_prefs", Context.MODE_PRIVATE)
+                            .edit()
+                            .remove("auth_token")
+                            .apply()
+                        vpnViewModel.clearCachedAuthToken()
+                        authToken = null
+                        isCheckingToken = false
+                        return@LaunchedEffect
+                    }
+                } catch (e: Exception) {
+                    Log.e("MainActivity", "Token refresh exception on startup: ${e.message}")
+                    tokenManager.clearTokens()
+                    context.getSharedPreferences("vpn_state_prefs", Context.MODE_PRIVATE)
+                        .edit()
+                        .remove("auth_token")
+                        .apply()
+                    vpnViewModel.clearCachedAuthToken()
+                    authToken = null
+                    isCheckingToken = false
+                    return@LaunchedEffect
+                }
             }
 
-            // Check 2: Validate token with server before proceeding
-            // This prevents navigation with invalid/revoked tokens that will immediately trigger logout
+            // Token is valid (either was already valid or we just refreshed it)
+            // Now validate with server to ensure it's not revoked
             try {
                 Log.d("MainActivity", "Validating token with server before auto-login...")
-                val response = RetrofitClient.instance.checkTokenValidity("Bearer $savedToken")
+                val currentToken = savedToken ?: tokenManager.getAccessToken()
+                if (currentToken.isNullOrBlank()) {
+                    Log.w("MainActivity", "No token after refresh attempt")
+                    isCheckingToken = false
+                    return@LaunchedEffect
+                }
+
+                val response = RetrofitClient.instance.checkTokenValidity("Bearer $currentToken")
 
                 if (!response.isSuccessful || response.body()?.isValid != true) {
                     Log.w("MainActivity", "Token validation failed: ${response.code()} - clearing token")
@@ -323,7 +382,7 @@ fun AppNavigation(modifier: Modifier = Modifier) {
                 Log.w("MainActivity", "Token validation network error: ${e.message} - proceeding anyway")
             }
 
-            authToken = savedToken
+            authToken = savedToken ?: tokenManager.getAccessToken()
 
             // Navigate to main if we have a valid token
             navController.navigate("main") {
