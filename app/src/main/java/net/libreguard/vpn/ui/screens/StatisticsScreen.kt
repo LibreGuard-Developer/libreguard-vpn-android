@@ -22,41 +22,73 @@ import net.libreguard.vpn.data.DailyUsage
 import net.libreguard.vpn.ui.theme.*
 import net.libreguard.vpn.viewmodel.VpnViewModel
 import java.util.Locale
+import kotlinx.coroutines.delay
 
 /**
  * Statistics Screen - Usage data and analytics
  * Based on design from Statistics.tsx
- * Features: Ripple effects on cards, real connection history
+ * Features: Ripple effects on cards, real connection history, per-user data isolation
+ * Now uses ViewModel's user-scoped ConnectionHistoryManager for proper per-user stats
  */
 @Composable
 fun StatisticsScreen(viewModel: VpnViewModel) {
     val context = LocalContext.current
-    val historyManager = remember { ConnectionHistoryManager(context) }
+
+    // CRITICAL: Use ViewModel's ConnectionHistoryManager for per-user data isolation
+    val historyManager = remember { viewModel.getHistoryManager() }
 
     var timeRange by remember { mutableStateOf("week") }
 
-    // Get real data from history manager based on selected time range
-    val recentConnections = remember { historyManager.getRecentConnections(5) }
-    val hasData = recentConnections.isNotEmpty()
+    // Observe statistics refresh trigger for real-time updates
+    val statisticsRefreshTrigger by viewModel.statisticsRefreshTrigger.collectAsState()
 
-    // Reactive data that changes with timeRange
-    val dailyStats = remember(timeRange) {
+    // Observe real-time session data from ViewModel
+    val dataUsageInfo by viewModel.dataUsageInfo.collectAsState()
+    val isConnected by viewModel.isConnected.collectAsState()
+
+    // Force periodic refresh when connected for real-time stats display
+    var refreshCounter by remember { mutableStateOf(0L) }
+    LaunchedEffect(isConnected) {
+        while (isConnected) {
+            delay(2000L)  // Update every 2 seconds for live stats
+            refreshCounter++
+        }
+    }
+
+    // Current session data in MB (real-time from DataUsageManager)
+    // Re-compute when dataUsageInfo changes OR when refreshCounter increments
+    val currentSessionMB = remember(dataUsageInfo, refreshCounter) {
+        dataUsageInfo.sessionBytesUsed / (1024.0 * 1024.0)
+    }
+
+    // Get real data from history manager based on selected time range
+    // Re-fetch when statisticsRefreshTrigger changes (connection added/updated)
+    // Also include refreshCounter for live updates during active session
+    val recentConnections = remember(statisticsRefreshTrigger, refreshCounter) {
+        historyManager.getRecentConnections(5)
+    }
+    val hasData = recentConnections.isNotEmpty() || isConnected
+
+    // Reactive data that changes with timeRange, refresh trigger, or live counter
+    val dailyStats = remember(timeRange, statisticsRefreshTrigger, refreshCounter) {
         if (timeRange == "week") historyManager.getDailyStats()
         else historyManager.getDailyStatsForMonth()
     }
 
-    val totalDuration = remember(timeRange) {
+    val totalDuration = remember(timeRange, statisticsRefreshTrigger, refreshCounter) {
         if (timeRange == "week") historyManager.getTotalDurationThisWeek()
         else historyManager.getTotalDurationThisMonth()
     }
 
-    val mostActiveDay = remember { historyManager.getMostActiveDay() }
-    val peakUsageTime = remember { historyManager.getPeakUsageTime() }
+    val mostActiveDay = remember(statisticsRefreshTrigger, refreshCounter) { historyManager.getMostActiveDay() }
+    val peakUsageTime = remember(statisticsRefreshTrigger, refreshCounter) { historyManager.getPeakUsageTime() }
 
-    // Calculate totals
+    // Calculate totals - include current session data for real-time accuracy
     val totalUpload = dailyStats.sumOf { it.upload }
     val totalDownload = dailyStats.sumOf { it.download }
-    val totalData = totalUpload + totalDownload
+    // Add current session to total if connected (session not yet saved to history)
+    val liveSessionData = if (isConnected) currentSessionMB else 0.0
+    val totalData = totalUpload + totalDownload + liveSessionData
 
     Column(
         modifier = Modifier

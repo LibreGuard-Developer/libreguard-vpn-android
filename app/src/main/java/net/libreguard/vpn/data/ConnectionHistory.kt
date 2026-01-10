@@ -61,14 +61,47 @@ data class ConnectionRecord(
 
 /**
  * Manager for persisting and retrieving connection history
+ * Supports per-user data isolation - each user has their own connection history
  */
-class ConnectionHistoryManager(context: Context) {
-    private val prefs: SharedPreferences = context.getSharedPreferences("connection_history", Context.MODE_PRIVATE)
+class ConnectionHistoryManager(private val context: Context) {
     private val gson = Gson()
     private val maxRecords = 50
 
+    // Current user ID for user-specific storage
+    private var currentUserId: String? = null
+
+    /**
+     * Get user-specific SharedPreferences
+     */
+    private fun getPrefs(): SharedPreferences {
+        val prefsName = if (currentUserId != null) {
+            "connection_history_$currentUserId"
+        } else {
+            "connection_history_default"
+        }
+        return context.getSharedPreferences(prefsName, Context.MODE_PRIVATE)
+    }
+
+    /**
+     * Set the current user ID for user-specific history tracking
+     */
+    fun setUserId(userId: String) {
+        if (currentUserId != userId) {
+            currentUserId = userId
+            android.util.Log.d("ConnectionHistory", "Switched to user: $userId")
+        }
+    }
+
+    /**
+     * Clear current user context (logout) - preserves persisted data
+     */
+    fun clearUser() {
+        android.util.Log.d("ConnectionHistory", "Cleared user context. Previous user: $currentUserId")
+        currentUserId = null
+    }
+
     fun getHistory(): List<ConnectionRecord> {
-        val json = prefs.getString("records", null) ?: return emptyList()
+        val json = getPrefs().getString("records", null) ?: return emptyList()
         val type = object : TypeToken<List<ConnectionRecord>>() {}.type
         return try {
             gson.fromJson(json, type) ?: emptyList()
@@ -101,7 +134,7 @@ class ConnectionHistoryManager(context: Context) {
 
     private fun saveHistory(records: List<ConnectionRecord>) {
         val json = gson.toJson(records)
-        prefs.edit().putString("records", json).apply()
+        getPrefs().edit().putString("records", json).apply()
     }
 
     fun getRecentConnections(limit: Int = 5): List<ConnectionRecord> {

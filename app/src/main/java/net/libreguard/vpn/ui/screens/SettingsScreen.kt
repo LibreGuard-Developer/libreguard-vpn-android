@@ -353,25 +353,72 @@ fun SettingsScreen(
                 }
                 HorizontalDivider(color = Border, modifier = Modifier.padding(start = 0.dp))
 
-                SettingsToggleRow(
-                    icon = Icons.Default.Power,
-                    title = "Auto-Connect",
-                    subtitle = "Connect on app launch",
-                    checked = autoConnectEnabled,
-                    onCheckedChange = { isChecked ->
-                        viewModel.setAutoConnect(isChecked)
+                // Auto-Connect Toggle with PRO badge for free users
+                Box {
+                    SettingsToggleRow(
+                        icon = Icons.Default.Power,
+                        title = "Auto-Connect",
+                        subtitle = "Connect on app launch",
+                        checked = autoConnectEnabled,
+                        enabled = isPro,
+                        onCheckedChange = { isChecked ->
+                            viewModel.setAutoConnect(isChecked)
+                        },
+                        onRowClick = if (!isPro) onNavigateToUpgrade else null
+                    )
+                    // PRO badge for free users
+                    if (!isPro) {
+                        Surface(
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .offset(x = (-16).dp, y = 16.dp),
+                            shape = RoundedCornerShape(6.dp),
+                            color = Primary
+                        ) {
+                            Text(
+                                text = "PRO",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = PrimaryForeground,
+                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
+                                fontSize = 9.sp
+                            )
+                        }
                     }
-                )
+                }
                 HorizontalDivider(color = Border, modifier = Modifier.padding(start = 68.dp))
-                SettingsToggleRow(
-                    icon = Icons.Default.Shield,
-                    title = "Kill Switch",
-                    subtitle = "Block internet if VPN drops",
-                    checked = killSwitchEnabled,
-                    onCheckedChange = { isChecked ->
-                        viewModel.setKillSwitch(isChecked)
+
+                // Kill Switch Toggle with PRO badge for free users
+                Box {
+                    SettingsToggleRow(
+                        icon = Icons.Default.Shield,
+                        title = "Kill Switch",
+                        subtitle = "Block internet if VPN drops",
+                        checked = killSwitchEnabled,
+                        enabled = isPro,
+                        onCheckedChange = { isChecked ->
+                            viewModel.setKillSwitch(isChecked)
+                        },
+                        onRowClick = if (!isPro) onNavigateToUpgrade else null
+                    )
+                    // PRO badge for free users
+                    if (!isPro) {
+                        Surface(
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .offset(x = (-16).dp, y = 16.dp),
+                            shape = RoundedCornerShape(6.dp),
+                            color = Primary
+                        ) {
+                            Text(
+                                text = "PRO",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = PrimaryForeground,
+                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
+                                fontSize = 9.sp
+                            )
+                        }
                     }
-                )
+                }
             }
 
             Spacer(modifier = Modifier.height(24.dp))
@@ -456,7 +503,7 @@ fun SettingsScreen(
                     color = MutedForeground
                 )
                 Text(
-                    text = "Open-source privacy VPN",
+                    text = "Open-source VPN app",
                     style = MaterialTheme.typography.bodySmall,
                     color = MutedForeground
                 )
@@ -679,11 +726,22 @@ private fun SettingsToggleRow(
     title: String,
     subtitle: String,
     checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit
+    enabled: Boolean = true,
+    onCheckedChange: (Boolean) -> Unit,
+    onRowClick: (() -> Unit)? = null
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .then(
+                if (onRowClick != null) {
+                    Modifier.clickable { onRowClick() }
+                } else if (enabled) {
+                    Modifier.clickable { onCheckedChange(!checked) }
+                } else {
+                    Modifier
+                }
+            )
             .padding(16.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -691,13 +749,13 @@ private fun SettingsToggleRow(
             modifier = Modifier
                 .size(40.dp)
                 .clip(RoundedCornerShape(8.dp))
-                .background(Primary.copy(alpha = 0.1f)),
+                .background(Primary.copy(alpha = if (enabled) 0.1f else 0.05f)),
             contentAlignment = Alignment.Center
         ) {
             Icon(
                 imageVector = icon,
                 contentDescription = null,
-                tint = Primary,
+                tint = if (enabled) Primary else MutedForeground,
                 modifier = Modifier.size(20.dp)
             )
         }
@@ -706,7 +764,7 @@ private fun SettingsToggleRow(
             Text(
                 text = title,
                 style = MaterialTheme.typography.titleSmall,
-                color = Foreground
+                color = if (enabled) Foreground else MutedForeground
             )
             Text(
                 text = subtitle,
@@ -716,12 +774,17 @@ private fun SettingsToggleRow(
         }
         Switch(
             checked = checked,
-            onCheckedChange = onCheckedChange,
+            onCheckedChange = if (enabled) onCheckedChange else null,
+            enabled = enabled,
             colors = SwitchDefaults.colors(
                 checkedThumbColor = PrimaryForeground,
                 checkedTrackColor = Primary,
                 uncheckedThumbColor = PrimaryForeground,
-                uncheckedTrackColor = SwitchBackground
+                uncheckedTrackColor = SwitchBackground,
+                disabledCheckedThumbColor = MutedForeground,
+                disabledCheckedTrackColor = MutedForeground.copy(alpha = 0.3f),
+                disabledUncheckedThumbColor = MutedForeground,
+                disabledUncheckedTrackColor = SwitchBackground.copy(alpha = 0.5f)
             )
         )
     }

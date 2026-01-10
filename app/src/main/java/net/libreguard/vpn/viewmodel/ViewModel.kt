@@ -168,6 +168,11 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     private var currentConnectionStartTime: Long? = null
     private var currentConnectionDataStart: Double = 0.0
 
+    // Statistics refresh trigger - increments when connection history is updated
+    // Statistics screen observes this to refresh data in real-time
+    private val _statisticsRefreshTrigger = MutableStateFlow(0L)
+    val statisticsRefreshTrigger: StateFlow<Long> = _statisticsRefreshTrigger
+
     // Track when connection was established (for grace period in ghost detection)
     private var connectionEstablishedTimestamp: Long? = null
 
@@ -715,6 +720,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             // Clear user data properly - this preserves the user's total data usage
             dataUsageManager.clearUser()
 
+            // Clear user-specific connection history context (preserves data, clears user context)
+            connectionHistoryManager.clearUser()
+
             // Clear user-scoped cached VPN configs
             try {
                 clearUserScopedVpnCaches()
@@ -722,10 +730,24 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 Log.w(TAG, "Failed clearing user-scoped caches on logout: ${e.message}")
             }
 
+            // Reset protocol to default (IKEv2) on logout to prevent free users inheriting Pro protocol
+            _selectedProtocol.value = VpnProtocol.IKEV2_IPSEC
+
+            // Reset Auto-Connect and Kill-Switch in-memory state (persisted data stays intact per user)
+            _autoConnectEnabled.value = false
+            _killSwitchEnabled.value = false
+            killSwitchManager.setEnabled(false)
+            Log.d(TAG, "Reset Auto-Connect and Kill-Switch state on logout")
+
+            // CRITICAL: Clear subscription data to reset isPro status for next user
+            subscriptionViewModel.clearSubscriptionData()
+            Log.d(TAG, "Cleared subscription data on logout")
+
             // Clear auth token and all related state
             authToken = null
             currentUserId = null
             _selectedServer.value = null
+            _isQuickConnectMode.value = true  // Reset to Quick Connect mode for next login
             _errorMessage.value = "Logged out successfully"
 
             // Clear only session-related persisted state, preserving user data
@@ -980,10 +1002,13 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setAuthToken(token: String) {
+        // Check if this is a NEW login vs just a re-render with the same token
+        val isNewLogin = authToken != token
+
         authToken = token
         // Save token immediately for persistence
         sharedPrefs.edit().putString("auth_token", token).apply()
-        Log.d(TAG, "Auth token set and persisted")
+        Log.d(TAG, "Auth token set and persisted (isNewLogin=$isNewLogin)")
 
         // CRITICAL FIX: Create stable user ID that persists across login sessions
         // Instead of using token hash (which changes), extract user info from token or create persistent ID
@@ -992,6 +1017,15 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         sharedPrefs.edit().putString("current_user_id", userId).apply()
         dataUsageManager.setUserId(userId)
 
+        // CRITICAL: Set user ID for connection history manager (per-user stats isolation)
+        connectionHistoryManager.setUserId(userId)
+
+        // CRITICAL: Only reset to Quick Connect mode on FRESH login, not on screen navigation
+        if (isNewLogin) {
+            _isQuickConnectMode.value = true
+            Log.d(TAG, "Reset to Quick Connect mode for NEW user: $userId")
+        }
+
         // Pass auth token to DataUsageManager for server quota sync
         dataUsageManager.setAuthToken(token)
 
@@ -999,6 +1033,12 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
         // CRITICAL FIX: Set auth token in SubscriptionViewModel with user ID for cache scoping
         subscriptionViewModel.setAuthToken(token, userId)
+
+        // Only perform full initialization on NEW login, not on screen navigation re-renders
+        if (!isNewLogin) {
+            Log.d(TAG, "Skipping full initialization - same token (screen navigation)")
+            return
+        }
 
         // Clean legacy, non-scoped OpenVPN caches to avoid cross-user leakage
         try {
@@ -1037,6 +1077,13 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to fetch subscription status: ${e.message}")
             }
+
+            // CRITICAL: Reload user-specific settings AFTER subscription status is known
+            // This ensures Pro-only features are enforced correctly
+            loadDefaultProtocol()
+            loadAutoConnectPreference()
+            loadKillSwitchPreference()
+            Log.d(TAG, "Reloaded user-specific settings for user: $userId")
 
             // Wait before loading quota to stagger requests
             delay(1500L)
@@ -2129,6 +2176,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         connectionHistoryManager.addRecord(record)
         Log.d(TAG, "Started tracking connection to ${server.serverName}")
 
+        // Trigger statistics refresh for real-time UI updates
+        _statisticsRefreshTrigger.value = System.currentTimeMillis()
+
         // Start connection duration timer
         startConnectionTimer()
 
@@ -2243,6 +2293,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             dataUsedMB = dataUsedMB
         )
         Log.d(TAG, "Stopped tracking connection. Data used: ${String.format(java.util.Locale.US, "%.2f", dataUsedMB)} MB")
+
+        // Trigger statistics refresh for real-time UI updates
+        _statisticsRefreshTrigger.value = System.currentTimeMillis()
 
         currentConnectionStartTime = null
         currentConnectionDataStart = 0.0
@@ -2818,28 +2871,56 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
     /**
      * Load auto-connect preference from SharedPreferences
-     * Called during init
+     * Now user-scoped: each user has their own auto-connect preference
+     * Pro-only enforcement: Free users cannot have auto-connect enabled
      */
     private fun loadAutoConnectPreference() {
         try {
-            val enabled = sharedPrefs.getBoolean("auto_connect_enabled", false)
+            // Use user-scoped key if user ID is available
+            val prefsKey = if (currentUserId != null) {
+                "auto_connect_enabled_${currentUserId}"
+            } else {
+                "auto_connect_enabled"
+            }
+
+            var enabled = sharedPrefs.getBoolean(prefsKey, false)
+
+            // CRITICAL: Enforce Pro-only feature
+            // If user has Auto-Connect enabled but is not Pro, reset to disabled
+            if (enabled && !isPro.value) {
+                Log.w(TAG, "User has Auto-Connect enabled but is not Pro - resetting to disabled")
+                enabled = false
+                // Save the corrected preference
+                sharedPrefs.edit().putBoolean(prefsKey, false).apply()
+            }
+
             _autoConnectEnabled.value = enabled
-            Log.d(TAG, "Loaded Auto-Connect preference: $enabled")
+            Log.d(TAG, "Loaded Auto-Connect preference: $enabled (user: ${currentUserId ?: "global"})")
         } catch (e: Exception) {
             Log.w(TAG, "Failed to load auto-connect preference: ${e.message}")
+            _autoConnectEnabled.value = false
         }
     }
 
     /**
      * Enable or disable auto-connect on app launch
      * Persists preference to SharedPreferences
+     * Now user-scoped: each user has their own auto-connect preference
      */
     fun setAutoConnect(enabled: Boolean) {
         _autoConnectEnabled.value = enabled
+
+        // Use user-scoped key if user ID is available
+        val prefsKey = if (currentUserId != null) {
+            "auto_connect_enabled_${currentUserId}"
+        } else {
+            "auto_connect_enabled"
+        }
+
         sharedPrefs.edit()
-            .putBoolean("auto_connect_enabled", enabled)
+            .putBoolean(prefsKey, enabled)
             .apply()
-        Log.d(TAG, "Auto-Connect preference set to: $enabled")
+        Log.d(TAG, "Auto-Connect preference set to: $enabled (user: ${currentUserId ?: "global"})")
     }
 
     /**
@@ -2965,30 +3046,59 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
     /**
      * Load Kill Switch preference from SharedPreferences
-     * Called during init
+     * Now user-scoped: each user has their own kill switch preference
+     * Pro-only enforcement: Free users cannot have kill switch enabled
      */
     private fun loadKillSwitchPreference() {
         try {
-            val enabled = sharedPrefs.getBoolean("kill_switch_enabled", false)
+            // Use user-scoped key if user ID is available
+            val prefsKey = if (currentUserId != null) {
+                "kill_switch_enabled_${currentUserId}"
+            } else {
+                "kill_switch_enabled"
+            }
+
+            var enabled = sharedPrefs.getBoolean(prefsKey, false)
+
+            // CRITICAL: Enforce Pro-only feature
+            // If user has Kill Switch enabled but is not Pro, reset to disabled
+            if (enabled && !isPro.value) {
+                Log.w(TAG, "User has Kill Switch enabled but is not Pro - resetting to disabled")
+                enabled = false
+                // Save the corrected preference
+                sharedPrefs.edit().putBoolean(prefsKey, false).apply()
+            }
+
             _killSwitchEnabled.value = enabled
             killSwitchManager.setEnabled(enabled)
-            Log.d(TAG, "Loaded Kill Switch preference: $enabled")
+            Log.d(TAG, "Loaded Kill Switch preference: $enabled (user: ${currentUserId ?: "global"})")
         } catch (e: Exception) {
             Log.w(TAG, "Failed to load kill switch preference: ${e.message}")
+            _killSwitchEnabled.value = false
+            killSwitchManager.setEnabled(false)
         }
     }
 
     /**
      * Enable or disable Kill Switch
      * Persists preference to SharedPreferences
+     * Now user-scoped: each user has their own kill switch preference
      */
     fun setKillSwitch(enabled: Boolean) {
         _killSwitchEnabled.value = enabled
+
+        // Use user-scoped key if user ID is available
+        val prefsKey = if (currentUserId != null) {
+            "kill_switch_enabled_${currentUserId}"
+        } else {
+            "kill_switch_enabled"
+        }
+
         sharedPrefs.edit()
-            .putBoolean("kill_switch_enabled", enabled)
+            .putBoolean(prefsKey, enabled)
             .apply()
         killSwitchManager.setEnabled(enabled)
-        Log.d(TAG, "Kill Switch preference set to: $enabled")
+        Log.d(TAG, "Kill Switch preference set to: $enabled (user: ${currentUserId ?: "global"})")
     }
 
     /**
@@ -3015,14 +3125,32 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
     /**
      * Load default protocol preference from SharedPreferences
-     * Defaults to IKEV2_IPSEC if not previously set
+     * Now user-scoped: each user has their own protocol preference
+     * Enforces Pro-only protocols: if user is not Pro and has OpenVPN saved, reset to IKEv2
      */
     private fun loadDefaultProtocol() {
         try {
-            val protocolName = sharedPrefs.getString("default_protocol", VpnProtocol.IKEV2_IPSEC.displayName)
-            val protocol = VpnProtocol.values().find { it.displayName == protocolName } ?: VpnProtocol.IKEV2_IPSEC
+            // Use user-scoped key if user ID is available
+            val prefsKey = if (currentUserId != null) {
+                "default_protocol_${currentUserId}"
+            } else {
+                "default_protocol"
+            }
+
+            val protocolName = sharedPrefs.getString(prefsKey, VpnProtocol.IKEV2_IPSEC.displayName)
+            var protocol = VpnProtocol.values().find { it.displayName == protocolName } ?: VpnProtocol.IKEV2_IPSEC
+
+            // CRITICAL: Enforce Pro-only protocols
+            // If user has OpenVPN saved but is not Pro, reset to IKEv2
+            if (protocol == VpnProtocol.OPENVPN && !isPro.value) {
+                Log.w(TAG, "User has OpenVPN saved but is not Pro - resetting to IKEv2")
+                protocol = VpnProtocol.IKEV2_IPSEC
+                // Save the corrected preference
+                sharedPrefs.edit().putString(prefsKey, protocol.displayName).apply()
+            }
+
             _selectedProtocol.value = protocol
-            Log.d(TAG, "Loaded Default Protocol preference: ${protocol.displayName}")
+            Log.d(TAG, "Loaded Default Protocol preference: ${protocol.displayName} (user: ${currentUserId ?: "global"})")
         } catch (e: Exception) {
             Log.w(TAG, "Failed to load default protocol preference: ${e.message}")
             _selectedProtocol.value = VpnProtocol.IKEV2_IPSEC
@@ -3031,14 +3159,23 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
     /**
      * Save default protocol preference to SharedPreferences
+     * Now user-scoped: each user has their own protocol preference
      * Called when user selects a protocol in Settings
      */
     fun saveDefaultProtocol(protocol: VpnProtocol) {
         _selectedProtocol.value = protocol
+
+        // Use user-scoped key if user ID is available
+        val prefsKey = if (currentUserId != null) {
+            "default_protocol_${currentUserId}"
+        } else {
+            "default_protocol"
+        }
+
         sharedPrefs.edit()
-            .putString("default_protocol", protocol.displayName)
+            .putString(prefsKey, protocol.displayName)
             .apply()
-        Log.d(TAG, "Default Protocol preference set to: ${protocol.displayName}")
+        Log.d(TAG, "Default Protocol preference set to: ${protocol.displayName} (user: ${currentUserId ?: "global"})")
     }
 
     /**
@@ -3060,4 +3197,18 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             connectToVpn()
         }
     }
+
+    /**
+     * Get current session data usage in MB
+     * Used by Statistics screen for real-time "live session" display
+     */
+    fun getCurrentSessionDataMB(): Double {
+        return _dataUsageInfo.value.sessionBytesUsed / (1024.0 * 1024.0)
+    }
+
+    /**
+     * Get the connection history manager for the Statistics screen
+     * This ensures the Statistics screen uses the same user-scoped instance
+     */
+    fun getHistoryManager(): ConnectionHistoryManager = connectionHistoryManager
 }
