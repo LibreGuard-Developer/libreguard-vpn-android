@@ -80,34 +80,8 @@ fun DashboardScreen(
     // Check if user is over limit
     val isOverLimit = remember(dataUsageInfo) { dataUsageInfo.isOverLimit }
 
-    // IP addresses
-    var userIP by remember { mutableStateOf("Loading...") }
-
-    // Fetch user's real IP address from ipify API once on load
-    LaunchedEffect(Unit) {
-        try {
-            withContext(Dispatchers.IO) {
-                val url = URL("https://api.ipify.org?format=json")
-                val connection = url.openConnection() as HttpURLConnection
-                connection.requestMethod = "GET"
-                connection.connectTimeout = 5000
-                connection.readTimeout = 5000
-
-                if (connection.responseCode == 200) {
-                    val response = connection.inputStream.bufferedReader().use { it.readText() }
-                    val jsonObject = JSONObject(response)
-                    val ip = jsonObject.getString("ip")
-                    withContext(Dispatchers.Main) {
-                        userIP = ip
-                    }
-                }
-                connection.disconnect()
-            }
-        } catch (e: Exception) {
-            android.util.Log.e("DashboardScreen", "Failed to fetch user IP: ${e.message}")
-            userIP = "Unknown"
-        }
-    }
+    // User's real IP from ViewModel (captured before VPN connection, persists across navigation)
+    val userIP by viewModel.userIP.collectAsState()
 
     LaunchedEffect(authToken) {
         viewModel.setAuthToken(authToken)

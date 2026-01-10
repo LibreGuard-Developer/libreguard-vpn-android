@@ -180,6 +180,10 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     private val _vpnIP = MutableStateFlow("")
     val vpnIP: StateFlow<String> = _vpnIP
 
+    // User's real IP (before VPN connection) - captured before connecting
+    private val _userIP = MutableStateFlow("Loading...")
+    val userIP: StateFlow<String> = _userIP
+
     // Token validation for early revocation detection
     private var tokenValidationManager: TokenValidationManager? = null
 
@@ -233,6 +237,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
         // Start background VPN state monitoring to detect ghost connections
         startVpnStateMonitoring()
+
+        // Fetch user's real IP on app startup (only if not connected)
+        fetchUserIP()
     }
 
     /**
@@ -1243,6 +1250,10 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     fun connectToVpn() {
         val server = _selectedServer.value
 
+        // IMPORTANT: Capture user's real IP BEFORE connecting to VPN
+        // This ensures "Your IP" displays the actual user IP, not the VPN server IP
+        fetchUserIP()
+
         // Avoid capturing authToken early; token may be refreshed.
         val initialToken = RetrofitClient.getTokenManager().getAccessToken()
 
@@ -2167,6 +2178,54 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 Log.e(TAG, "Failed to verify server IP: ${e.message}")
                 withContext(Dispatchers.Main) {
                     _vpnIP.value = serverIp
+                }
+            }
+        }
+    }
+
+    /**
+     * Fetch user's real IP address BEFORE connecting to VPN.
+     * This captures the user's actual IP so it can be displayed as "Your IP" while connected.
+     * Should only be called when VPN is disconnected to get the true IP.
+     */
+    fun fetchUserIP() {
+        // Only fetch if VPN is not connected to avoid getting VPN server IP
+        if (_isConnected.value) {
+            Log.d(TAG, "Skipping user IP fetch - VPN is connected")
+            return
+        }
+
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val url = java.net.URL("https://api.ipify.org?format=json")
+                val connection = url.openConnection() as java.net.HttpURLConnection
+                connection.requestMethod = "GET"
+                connection.connectTimeout = 5000
+                connection.readTimeout = 5000
+
+                if (connection.responseCode == 200) {
+                    val response = connection.inputStream.bufferedReader().use { it.readText() }
+                    val jsonObject = org.json.JSONObject(response)
+                    val ip = jsonObject.getString("ip")
+                    withContext(Dispatchers.Main) {
+                        _userIP.value = ip
+                        Log.d(TAG, "User's real IP captured: $ip")
+                    }
+                } else {
+                    Log.w(TAG, "Failed to fetch user IP: HTTP ${connection.responseCode}")
+                    withContext(Dispatchers.Main) {
+                        if (_userIP.value == "Loading...") {
+                            _userIP.value = "Unknown"
+                        }
+                    }
+                }
+                connection.disconnect()
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to fetch user IP: ${e.message}")
+                withContext(Dispatchers.Main) {
+                    if (_userIP.value == "Loading...") {
+                        _userIP.value = "Unknown"
+                    }
                 }
             }
         }
