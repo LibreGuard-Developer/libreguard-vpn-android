@@ -32,6 +32,7 @@ import net.libreguard.vpn.ui.screens.ConfirmEmailScreen
 import net.libreguard.vpn.ui.screens.UpgradeScreen
 import net.libreguard.vpn.ui.screens.CardPaymentScreen
 import net.libreguard.vpn.ui.screens.MoneroPaymentScreen
+import net.libreguard.vpn.ui.screens.DeviceManagementScreen
 import net.libreguard.vpn.ui.theme.LibreGuardVPNTheme
 import net.libreguard.vpn.viewmodel.VpnViewModel
 import net.libreguard.vpn.util.TokenManager
@@ -217,6 +218,44 @@ fun AppNavigation(modifier: Modifier = Modifier) {
         }
         onDispose {
             context.unregisterReceiver(upgradeReceiver)
+        }
+    }
+
+    // State for device limit exceeded dialog
+    var pendingDeviceLimitPayload by remember { mutableStateOf<String?>(null) }
+
+    // Handle Device Limit Exceeded Broadcast - shows device picker WITHOUT logging out
+    DisposableEffect(Unit) {
+        val deviceLimitReceiver = object : BroadcastReceiver() {
+            override fun onReceive(ctx: Context?, intent: Intent?) {
+                if (intent?.action == "net.libreguard.vpn.ACTION_DEVICE_LIMIT_EXCEEDED") {
+                    android.util.Log.d("MainActivity", "Received ACTION_DEVICE_LIMIT_EXCEEDED broadcast")
+                    val payload = intent.getStringExtra("payload")
+                    if (!payload.isNullOrBlank()) {
+                        android.util.Log.d("MainActivity", "Device limit payload received, navigating to login for device management")
+                        // Store payload in prefs for LoginScreen to pick up
+                        context.getSharedPreferences("vpn_state_prefs", Context.MODE_PRIVATE)
+                            .edit()
+                            .putString("pending_device_limit_exceeded", payload)
+                            .apply()
+                        // Navigate to login screen with device limit flag
+                        // The token is still valid, user just needs to remove a device
+                        pendingDeviceLimitPayload = payload
+                        navController.navigate("login") {
+                            popUpTo(0) { inclusive = true }
+                        }
+                    }
+                }
+            }
+        }
+        val deviceLimitFilter = IntentFilter("net.libreguard.vpn.ACTION_DEVICE_LIMIT_EXCEEDED")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            context.registerReceiver(deviceLimitReceiver, deviceLimitFilter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            context.registerReceiver(deviceLimitReceiver, deviceLimitFilter, Context.RECEIVER_NOT_EXPORTED)
+        }
+        onDispose {
+            context.unregisterReceiver(deviceLimitReceiver)
         }
     }
 
@@ -437,6 +476,9 @@ fun AppNavigation(modifier: Modifier = Modifier) {
                     onDismissForcedLogoutReason = { forcedLogoutReasonJson = null },
                     onNavigateToUpgrade = {
                         navController.navigate("upgrade")
+                    },
+                    onNavigateToDeviceManagement = {
+                        navController.navigate("deviceManagement")
                     },
                     onLoginSuccess = { token ->
                         authToken = token
@@ -660,6 +702,24 @@ fun AppNavigation(modifier: Modifier = Modifier) {
                 },
                 onChooseMonero = {
                     navController.navigate("payment/monero")
+                }
+            )
+        }
+
+        composable("deviceManagement") {
+            // Device management screen for handling device limit scenarios
+            Log.d("MainActivity", "========== NAVIGATED TO DEVICE MANAGEMENT ==========")
+            Log.d("MainActivity", "Auth token: ${if (authToken.isNullOrBlank()) "NULL/BLANK" else "EXISTS"}")
+
+            DeviceManagementScreen(
+                onNavigateBack = {
+                    Log.d("MainActivity", "Device management: Back pressed")
+                    navController.popBackStack()
+                },
+                onDeviceRemoved = {
+                    Log.d("MainActivity", "Device management: Device removed callback")
+                    // Optionally navigate back to login after successful device removal
+                    // User can then retry login
                 }
             )
         }

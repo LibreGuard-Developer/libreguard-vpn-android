@@ -3,6 +3,7 @@ package net.libreguard.vpn.network
 import okhttp3.ResponseBody
 import retrofit2.Response
 import retrofit2.http.Body
+import retrofit2.http.DELETE
 import retrofit2.http.GET
 import retrofit2.http.Header
 import retrofit2.http.POST
@@ -293,4 +294,54 @@ interface ApiService {
     suspend fun checkCanConnect(
         @Header("Authorization") authorization: String
     ): Response<CanConnectResponse>
+
+    // ===== DEVICE MANAGEMENT ENDPOINTS =====
+    @GET("api/devices")
+    suspend fun getDevices(
+        @Header("Authorization") authorization: String
+    ): Response<DeviceListResponse>
+
+    @POST("api/devices/remove/{id}")
+    suspend fun removeDevice(
+        @Header("Authorization") authorization: String,
+        @Path("id") deviceId: Int
+    ): Response<DeviceActionResponse>
+
+    @DELETE("api/devices/{id}")
+    suspend fun deleteDevice(
+        @Header("Authorization") authorization: String,
+        @Path("id") deviceId: Int
+    ): Response<DeviceActionResponse>
+
+    @POST("api/devices/remove-all-others")
+    suspend fun removeAllOtherDevices(
+        @Header("Authorization") authorization: String
+    ): Response<BulkActionResponse>
+
+    @POST("api/devices/remove-all-inactive")
+    suspend fun removeAllInactiveDevices(
+        @Header("Authorization") authorization: String
+    ): Response<BulkActionResponse>
+
+    // ===== PRE-AUTH DEVICE MANAGEMENT (Password-based, no JWT required) =====
+    @POST("api/devices/pre-auth/remove")
+    suspend fun removeDevicePreAuth(
+        @Body request: PreAuthDeviceRemovalRequest
+    ): Response<DeviceRemovalResponse>
+
+    @POST("api/devices/pre-auth/remove-multiple")
+    suspend fun removeMultipleDevicesPreAuth(
+        @Body request: PreAuthMultipleDeviceRemovalRequest
+    ): Response<DeviceRemovalResponse>
+
+    // ===== PRE-AUTH DEVICE MANAGEMENT (OAuth-based, no JWT required) =====
+    @POST("api/devices/pre-auth/oauth/remove")
+    suspend fun removeDevicePreAuthOAuth(
+        @Body request: PreAuthOAuthDeviceRemovalRequest
+    ): Response<DeviceRemovalResponse>
+
+    @POST("api/devices/pre-auth/oauth/remove-multiple")
+    suspend fun removeMultipleDevicesPreAuthOAuth(
+        @Body request: PreAuthOAuthMultipleDeviceRemovalRequest
+    ): Response<DeviceRemovalResponse>
 }

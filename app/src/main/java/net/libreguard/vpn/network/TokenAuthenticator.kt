@@ -34,6 +34,15 @@ class TokenAuthenticator(
     private val maxRefreshAttempts = 2
 
     override fun authenticate(route: Route?, response: Response): Request? {
+        val url = response.request.url.encodedPath
+
+        // Skip authentication for pre-auth endpoints
+        // These endpoints don't use JWT tokens, so token refresh doesn't apply
+        if (url.contains("/pre-auth/")) {
+            android.util.Log.d(TAG, "Skipping token refresh for pre-auth endpoint: $url")
+            return null
+        }
+
         val retryCount = response.request.header(HEADER_AUTH_RETRY)?.toIntOrNull() ?: 0
         if (retryCount >= MAX_RETRY_PER_REQUEST) {
             android.util.Log.w(TAG, "Auth retry limit reached ($retryCount). Not attempting further refresh for ${response.request.url}")

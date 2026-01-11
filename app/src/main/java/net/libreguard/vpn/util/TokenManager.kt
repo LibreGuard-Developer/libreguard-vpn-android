@@ -40,7 +40,18 @@ class TokenManager(context: Context) {
     }
 
     fun getAccessToken(): String? {
-        return sharedPreferences.getString(KEY_ACCESS_TOKEN, null)
+        val token = sharedPreferences.getString(KEY_ACCESS_TOKEN, null)
+        android.util.Log.d("TokenManager", "========== GET ACCESS TOKEN ==========")
+        android.util.Log.d("TokenManager", "Token exists: ${token != null}")
+        android.util.Log.d("TokenManager", "Token is blank: ${token.isNullOrBlank()}")
+        if (token != null) {
+            android.util.Log.d("TokenManager", "Token length: ${token.length}")
+            android.util.Log.d("TokenManager", "Token prefix: ${token.take(20)}...")
+        } else {
+            android.util.Log.e("TokenManager", "TOKEN IS NULL - User may need to login")
+        }
+        android.util.Log.d("TokenManager", "======================================")
+        return token
     }
 
     fun getRefreshToken(): String? {

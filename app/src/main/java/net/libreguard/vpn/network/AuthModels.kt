@@ -173,6 +173,7 @@ data class LogoutResponse(
 
 /**
  * Error response returned when device limit is exceeded (409 Conflict).
+ * Backend may optionally include devices array for pre-login device management.
  */
 data class DeviceLimitErrorResponse(
     @SerializedName("message")
@@ -188,5 +189,152 @@ data class DeviceLimitErrorResponse(
     @SerializedName("email")
     val email: String? = null,
     @SerializedName("userId")
-    val userId: String? = null
+    val userId: String? = null,
+    @SerializedName("devices")
+    val devices: List<DeviceDto>? = null // Optional: device list for first-login scenario
 )
+
+// ===== DEVICE MANAGEMENT =====
+
+/**
+ * Device information returned from device management endpoints.
+ */
+data class DeviceDto(
+    @SerializedName("id")
+    val id: Int,
+    @SerializedName("deviceId")
+    val deviceId: String,
+    @SerializedName("deviceName")
+    val deviceName: String? = null,
+    @SerializedName("deviceType")
+    val deviceType: String? = null,
+    @SerializedName("osVersion")
+    val osVersion: String? = null,
+    @SerializedName("appVersion")
+    val appVersion: String? = null,
+    @SerializedName("lastSeenAt")
+    val lastSeenAt: String? = null, // ISO 8601 timestamp
+    @SerializedName("firstSeenAt")
+    val firstSeenAt: String? = null, // ISO 8601 timestamp
+    @SerializedName("isActive")
+    val isActive: Boolean = false,
+    @SerializedName("isCurrent")
+    val isCurrent: Boolean = false,
+    @SerializedName("daysSinceLastSeen")
+    val daysSinceLastSeen: Int? = null,
+    @SerializedName("deviceNickname")
+    val deviceNickname: String? = null,
+    @SerializedName("createdAt")
+    val createdAt: String? = null // ISO 8601 timestamp (optional, may not be in all responses)
+)
+
+/**
+ * Response from GET /api/devices
+ */
+data class DeviceListResponse(
+    @SerializedName("devices")
+    val devices: List<DeviceDto>,
+    @SerializedName("message")
+    val message: String? = null
+)
+
+/**
+ * Response from single device operations (remove/delete)
+ */
+data class DeviceActionResponse(
+    @SerializedName("success")
+    val success: Boolean,
+    @SerializedName("message")
+    val message: String
+)
+
+/**
+ * Response from bulk device operations (remove-all-others, remove-all-inactive)
+ */
+data class BulkActionResponse(
+    @SerializedName("success")
+    val success: Boolean,
+    @SerializedName("message")
+    val message: String,
+    @SerializedName("devicesRemoved")
+    val devicesRemoved: Int = 0
+)
+
+/**
+ * Sealed class for API error handling with specific error types
+ */
+sealed class ApiError {
+    data class RateLimited(val retryAfterSeconds: Int) : ApiError()
+    data class Unauthorized(val message: String) : ApiError()
+    data class DeviceProtected(val message: String) : ApiError()
+    data class ServerError(val statusCode: Int, val message: String) : ApiError()
+    data class NetworkError(val throwable: Throwable) : ApiError()
+    data class Unknown(val statusCode: Int, val message: String?) : ApiError()
+}
+
+// ===== PRE-AUTH DEVICE MANAGEMENT =====
+
+/**
+ * Request for removing device before login (password-based authentication)
+ */
+data class PreAuthDeviceRemovalRequest(
+    @SerializedName("email")
+    val email: String,
+    @SerializedName("password")
+    val password: String,
+    @SerializedName("deviceIdToRemove")
+    val deviceIdToRemove: Int
+)
+
+/**
+ * Request for removing multiple devices before login
+ */
+data class PreAuthMultipleDeviceRemovalRequest(
+    @SerializedName("email")
+    val email: String,
+    @SerializedName("password")
+    val password: String,
+    @SerializedName("deviceIdsToRemove")
+    val deviceIdsToRemove: List<Int>
+)
+
+/**
+ * Request for removing device before login (OAuth-based authentication)
+ */
+data class PreAuthOAuthDeviceRemovalRequest(
+    @SerializedName("idToken")
+    val idToken: String,
+    @SerializedName("provider")
+    val provider: String = "Google",
+    @SerializedName("deviceIdToRemove")
+    val deviceIdToRemove: Int
+)
+
+/**
+ * Request for removing multiple devices before login (OAuth)
+ */
+data class PreAuthOAuthMultipleDeviceRemovalRequest(
+    @SerializedName("idToken")
+    val idToken: String,
+    @SerializedName("provider")
+    val provider: String = "Google",
+    @SerializedName("deviceIdsToRemove")
+    val deviceIdsToRemove: List<Int>
+)
+
+/**
+ * Response from pre-auth device removal operations
+ */
+data class DeviceRemovalResponse(
+    @SerializedName("success")
+    val success: Boolean,
+    @SerializedName("message")
+    val message: String,
+    @SerializedName("deviceId")
+    val deviceId: String? = null,
+    @SerializedName("removedDeviceCount")
+    val removedDeviceCount: Int = 0,
+    @SerializedName("removedDeviceIds")
+    val removedDeviceIds: List<String>? = null
+)
+

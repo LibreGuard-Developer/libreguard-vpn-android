@@ -14,6 +14,14 @@ class AuthInterceptor(
 ) : Interceptor {
     override fun intercept(chain: Interceptor.Chain): Response {
         val originalRequest = chain.request()
+        val url = originalRequest.url.encodedPath
+
+        // Skip authentication for pre-auth endpoints (OAuth and password-based)
+        // These endpoints authenticate via the request body, not JWT tokens
+        if (url.contains("/pre-auth/")) {
+            Log.d(TAG, "Skipping Authorization header for pre-auth endpoint: $url")
+            return chain.proceed(originalRequest)
+        }
 
         val token = tokenManager.getAccessToken()
 
@@ -70,39 +78,14 @@ class AuthInterceptor(
             return response
         }
 
-        // Handle 403: could be subscription/tier issue OR actual auth issue
+        // Handle 403: could be subscription/tier issue, device limit exceeded, OR actual auth issue
         if (response.code == 403) {
-            // Peek at response body to differentiate between subscription issues and auth issues
+            // Peek at response body to differentiate between different 403 scenarios
             val peekBody = response.peekBody(Long.MAX_VALUE)
             val responseBodyString = try {
                 peekBody.string()
             } catch (e: Exception) {
                 ""
-            }
-
-            // ===== Device limit exceeded (forced logout reason + upgrade path) =====
-            // Backend may return DEVICE_LIMIT_EXCEEDED with requiresDeviceManagement=true.
-            // We persist this as a logout reason so LoginScreen can show the user why they were logged out.
-            try {
-                if (!responseBodyString.isNullOrBlank()) {
-                    val jo = JSONObject(responseBodyString)
-                    val errorCode = jo.optString("errorCode", "")
-                    if (errorCode.equals("DEVICE_LIMIT_EXCEEDED", ignoreCase = true)) {
-                        val prefs = context.getSharedPreferences("vpn_state_prefs", Context.MODE_PRIVATE)
-                        val payload = JSONObject()
-                        payload.put("type", "DEVICE_LIMIT_EXCEEDED")
-                        payload.put("message", jo.optString("message", "Device limit exceeded"))
-                        payload.put("currentDevices", jo.optInt("currentDevices", -1))
-                        payload.put("maxDevices", jo.optInt("maxDevices", -1))
-                        payload.put("planType", jo.optString("planType", ""))
-                        payload.put("requiresDeviceManagement", jo.optBoolean("requiresDeviceManagement", false))
-                        payload.put("deviceId", jo.optString("deviceId", ""))
-                        payload.put("timestamp", System.currentTimeMillis())
-                        prefs.edit().putString("pending_forced_logout_reason", payload.toString()).apply()
-                    }
-                }
-            } catch (_: Exception) {
-                // best-effort only
             }
 
             // Attempt to parse structured JSON for explicit keys
@@ -122,6 +105,21 @@ class AuthInterceptor(
                 }
             } catch (e: Exception) {
                 // ignore parse errors and fallback to keyword detection
+            }
+
+            // Check if this is a DEVICE_LIMIT_EXCEEDED error - DO NOT logout, broadcast device limit event instead
+            try {
+                if (!responseBodyString.isNullOrBlank()) {
+                    val jo = JSONObject(responseBodyString)
+                    val errorCode = jo.optString("errorCode", "")
+                    if (errorCode.equals("DEVICE_LIMIT_EXCEEDED", ignoreCase = true)) {
+                        Log.w(TAG, "Received 403 with DEVICE_LIMIT_EXCEEDED - broadcasting device limit event (NOT logging out). Request=${newRequest.method} ${newRequest.url}")
+                        broadcastDeviceLimitExceeded(responseBodyString, token)
+                        return response
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to check for device limit error: ${e.message}")
             }
 
             // Keyword fallback detection
@@ -213,7 +211,87 @@ class AuthInterceptor(
         }
     }
 
+    /**
+     * Broadcast device limit exceeded event - does NOT logout the user.
+     * The user has a valid token but needs to remove a device before using the app.
+     */
+    private fun broadcastDeviceLimitExceeded(responseBody: String, token: String?) {
+        try {
+            val prefs = context.getSharedPreferences("vpn_state_prefs", Context.MODE_PRIVATE)
+
+            // Parse response and build payload
+            val payload = JSONObject()
+            payload.put("type", "DEVICE_LIMIT_EXCEEDED")
+            payload.put("timestamp", System.currentTimeMillis())
+
+            try {
+                val jo = JSONObject(responseBody)
+                payload.put("message", jo.optString("message", "Device limit exceeded"))
+                payload.put("currentDevices", jo.optInt("currentDevices", -1))
+                payload.put("maxDevices", jo.optInt("maxDevices", -1))
+                payload.put("planType", jo.optString("planType", ""))
+                payload.put("requiresDeviceManagement", jo.optBoolean("requiresDeviceManagement", false))
+                payload.put("deviceId", jo.optString("deviceId", ""))
+
+                // Include devices array if present
+                if (jo.has("devices")) {
+                    payload.put("devices", jo.getJSONArray("devices"))
+                }
+
+                // Extract email from JWT token
+                var emailToStore = jo.optString("email", "")
+                if (emailToStore.isBlank() && token != null) {
+                    emailToStore = extractEmailFromJwt(token)
+                }
+                payload.put("email", emailToStore)
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to parse device limit response: ${e.message}")
+            }
+
+            // Store the payload for LoginScreen or MainActivity to pick up
+            prefs.edit().putString("pending_device_limit_exceeded", payload.toString()).apply()
+
+            // Broadcast the event
+            val deviceLimitIntent = Intent("net.libreguard.vpn.ACTION_DEVICE_LIMIT_EXCEEDED")
+            deviceLimitIntent.setPackage(context.packageName)
+            deviceLimitIntent.putExtra("payload", payload.toString())
+            context.sendBroadcast(deviceLimitIntent)
+
+            Log.d(TAG, "Device limit exceeded broadcast sent (user NOT logged out)")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error broadcasting device limit exceeded", e)
+        }
+    }
+
     companion object {
         private const val TAG = "AuthInterceptor"
+
+        /**
+         * Extract email from JWT token payload.
+         * JWT format: header.payload.signature (base64 encoded)
+         */
+        fun extractEmailFromJwt(token: String): String {
+            return try {
+                val parts = token.split(".")
+                if (parts.size >= 2) {
+                    val payload = parts[1]
+                    // Add padding if needed for base64 decoding
+                    val paddedPayload = when (payload.length % 4) {
+                        2 -> payload + "=="
+                        3 -> payload + "="
+                        else -> payload
+                    }
+                    val decodedBytes = android.util.Base64.decode(paddedPayload, android.util.Base64.URL_SAFE or android.util.Base64.NO_WRAP)
+                    val decodedPayload = String(decodedBytes, Charsets.UTF_8)
+                    val jsonPayload = JSONObject(decodedPayload)
+                    jsonPayload.optString("email", "")
+                } else {
+                    ""
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to extract email from JWT: ${e.message}")
+                ""
+            }
+        }
     }
 }
