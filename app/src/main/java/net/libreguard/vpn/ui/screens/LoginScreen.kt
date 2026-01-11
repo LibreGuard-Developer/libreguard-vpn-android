@@ -550,11 +550,9 @@ fun LoginScreen(
                             googleUserEmail = account?.email
                             googleIdToken = idToken
                             handleDeviceLimitError(errorBody, account?.email)
-                            // Automatically show device picker if devices are available
-                            if (!deviceLimitError?.devices.isNullOrEmpty()) {
-                                android.util.Log.d("LoginScreen", "Google Sign In got 409 with ${deviceLimitError?.devices?.size} devices - showing picker")
-                                showDevicePickerDialog = true
-                            }
+                            // DO NOT auto-show device picker - let user click "Manage Devices" button
+                            // This gives user control over when to see the device list
+                            android.util.Log.d("LoginScreen", "Google Sign In got 409 with ${deviceLimitError?.devices?.size ?: 0} devices - user will click Manage Devices to see list")
                         }
                         400 -> {
                             handleDeviceLimitError(errorBody, account?.email)
@@ -1073,7 +1071,7 @@ fun LoginScreen(
 
                             // Show different button based on whether devices are available
                             if (!deviceLimitError?.devices.isNullOrEmpty()) {
-                                // Devices available from 409 response - show quick picker button
+                                // Devices available from 409 response - show device picker on click
                                 OutlinedButton(
                                     onClick = { showDevicePickerDialog = true },
                                     modifier = Modifier.fillMaxWidth(),
@@ -1094,7 +1092,7 @@ fun LoginScreen(
                                             modifier = Modifier.size(20.dp)
                                         )
                                         Spacer(modifier = Modifier.width(8.dp))
-                                        Text("Select Device to Remove")
+                                        Text("Manage Devices")
                                     }
                                 }
                             } else {
@@ -1128,7 +1126,7 @@ fun LoginScreen(
 
                             Text(
                                 text = if (!deviceLimitError?.devices.isNullOrEmpty()) {
-                                    "Select a device to remove and automatically retry login."
+                                    "Click Manage Devices to select a device to remove."
                                 } else {
                                     "Enter your password to manage devices and remove one to free up space."
                                 },
@@ -1290,7 +1288,7 @@ fun LoginScreen(
                                         modifier = Modifier.size(20.dp)
                                     )
                                     Spacer(modifier = Modifier.width(8.dp))
-                                    Text("Select Device to Remove")
+                                    Text("Manage Devices")
                                 }
                             } else {
                                 // No devices in response - user needs to click to fetch via login API
@@ -1323,7 +1321,7 @@ fun LoginScreen(
 
                             Text(
                                 text = if (!devicesArray.isNullOrEmpty()) {
-                                    "Select a device to remove and automatically retry login."
+                                    "Click Manage Devices to select a device to remove."
                                 } else {
                                     "Enter your password to manage devices and remove one to free up space."
                                 },
