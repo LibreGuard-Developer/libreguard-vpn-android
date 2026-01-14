@@ -34,6 +34,7 @@ fun MoneroPaymentScreen(
     isWaitingForPayment: Boolean,
     hoursRemaining: Int,
     minutesRemaining: Int,
+    secondsRemaining: Int = 0,
     onClose: () -> Unit,
     onRefresh: (() -> Unit)? = null,
     onSuccess: (() -> Unit)? = null
@@ -134,7 +135,7 @@ fun MoneroPaymentScreen(
                         )
                     }
                     Text(
-                        text = String.format("%02d:%02d", hoursRemaining, minutesRemaining),
+                        text = String.format("%02d:%02d:%02d", hoursRemaining, minutesRemaining, secondsRemaining),
                         style = MaterialTheme.typography.headlineSmall,
                         color = Primary
                     )

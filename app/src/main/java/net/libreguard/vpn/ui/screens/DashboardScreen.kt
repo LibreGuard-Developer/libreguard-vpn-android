@@ -574,6 +574,149 @@ fun DashboardScreen(
                 }
             }
         }
+
+        // Data Usage Card - Fixed at Bottom (Free Plan Only, when disconnected)
+        // Matches design-reference: Dashboard.tsx Data Usage Card at bottom
+        if (!isPro && !isConnected && !isConnecting) {
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Cache values to prevent flickering on tab switches
+            // rememberUpdatedState keeps the last value until new data arrives
+            val cachedMonthlyPercentage = rememberUpdatedState(monthlyPercentage)
+            val cachedDataUsageTotal = rememberUpdatedState(dataUsageInfo.formattedTotal)
+            val cachedDataUsageRemaining = rememberUpdatedState(dataUsageInfo.formattedRemaining)
+
+            // Get color based on cached percentage
+            val usageColor = when {
+                cachedMonthlyPercentage.value >= 100f -> Destructive
+                cachedMonthlyPercentage.value > 90f -> Destructive
+                cachedMonthlyPercentage.value > 70f -> StatusConnecting
+                else -> Primary
+            }
+
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 0.dp)
+                    .padding(bottom = 16.dp),  // ~2mm separation from nav bar
+                shape = RoundedCornerShape(12.dp),
+                color = CardBackground,
+                border = ButtonDefaults.outlinedButtonBorder(enabled = true),
+                shadowElevation = 4.dp
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    // Header row
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Monthly Data Usage",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Foreground
+                        )
+                        Text(
+                            text = "${cachedDataUsageTotal.value} / ${dataUsageInfo.formattedLimit}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MutedForeground
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    // Progress Bar
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(8.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(Secondary)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxHeight()
+                                .fillMaxWidth((cachedMonthlyPercentage.value / 100f).coerceIn(0f, 1f))
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(usageColor)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    // Percentage and Remaining
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = "${cachedMonthlyPercentage.value.toFixed(1)}% used",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = usageColor
+                        )
+                        Text(
+                            text = "${cachedDataUsageRemaining.value} left",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MutedForeground
+                        )
+                    }
+
+                    // Warning if close to limit (over 80%)
+                    if (cachedMonthlyPercentage.value >= 80f) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        HorizontalDivider(color = Border)
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Warning,
+                                contentDescription = null,
+                                tint = if (cachedMonthlyPercentage.value >= 100f) Destructive else StatusConnecting,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Text(
+                                text = when {
+                                    cachedMonthlyPercentage.value >= 100f -> "Out of data! • Upgrade to Pro for unlimited"
+                                    cachedMonthlyPercentage.value > 90f -> "Almost out of data! • Upgrade to Pro for unlimited"
+                                    else -> "Running low • Upgrade to Pro for unlimited"
+                                },
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (cachedMonthlyPercentage.value >= 100f) Destructive else StatusConnecting
+                            )
+                        }
+                    }
+
+                    // Reset date display
+                    val formattedResetDate = formatResetDate(dataUsageInfo.resetDate)
+                    if (formattedResetDate != null) {
+                        Spacer(modifier = Modifier.height(if (cachedMonthlyPercentage.value >= 80f) 8.dp else 6.dp))
+                        if (cachedMonthlyPercentage.value < 80f) {
+                            HorizontalDivider(color = Border)
+                            Spacer(modifier = Modifier.height(8.dp))
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Next reset",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MutedForeground
+                            )
+                            Text(
+                                text = formattedResetDate,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Foreground
+                            )
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -669,5 +812,33 @@ private fun getFlagEmoji(country: String): String {
         "ireland" -> "🇮🇪"
         "poland" -> "🇵🇱"
         else -> "🏳️"
+    }
+}
+
+/**
+ * Format ISO 8601 date string to "MMM DD, YYYY" format
+ * Example: "2026-02-01T00:00:00Z" -> "Feb 01, 2026"
+ */
+private fun formatResetDate(isoDate: String?): String? {
+    if (isoDate.isNullOrBlank()) return null
+    return try {
+        // Parse ISO 8601 format: "2026-02-01T00:00:00Z"
+        val parts = isoDate.split("T")[0].split("-")
+        if (parts.size == 3) {
+            val year = parts[0]
+            val month = parts[1].toIntOrNull() ?: return null
+            val day = parts[2]
+
+            val months = arrayOf(
+                "", "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+            )
+
+            if (month in 1..12) {
+                "${months[month]} ${day.padStart(2, '0')}, $year"
+            } else null
+        } else null
+    } catch (e: Exception) {
+        null
     }
 }

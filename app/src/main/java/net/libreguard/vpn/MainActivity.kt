@@ -780,6 +780,7 @@ fun AppNavigation(modifier: Modifier = Modifier) {
                 val isLoading by subscriptionViewModel.isLoading.collectAsState()
                 val hoursRemaining by subscriptionViewModel.hoursRemaining.collectAsState()
                 val minutesRemaining by subscriptionViewModel.minutesRemaining.collectAsState()
+                val secondsRemaining by subscriptionViewModel.secondsRemaining.collectAsState()
 
                 // Initialize Monero payment flow
                 LaunchedEffect(Unit) {
@@ -790,22 +791,24 @@ fun AppNavigation(modifier: Modifier = Modifier) {
                     subscriptionViewModel.fetchLatestMoneroInvoice()
                 }
 
-                // Display the payment screen once we have invoice data
-                moneroInvoice?.let { invoice ->
+                // Display the payment screen once we have invoice data AND price data
+                if (moneroInvoice != null && moneroPrice != null) {
+                    val invoice = moneroInvoice!!
+                    val price = moneroPrice!!
                     val status = moneroPaymentStatus
-                    val price = moneroPrice
 
                     MoneroPaymentScreen(
                         paymentAddress = invoice.paymentAddress,
                         xmrAmount = invoice.amount,
-                        usdAmount = price?.usdAmount ?: 4.00,
-                        xmrPrice = price?.xmrPriceUsd ?: 170.00,
+                        usdAmount = invoice.amount * price.xmrPriceUsd,
+                        xmrPrice = price.xmrPriceUsd,
                         confirmations = status?.confirmations ?: 0,
                         requiredConfirmations = status?.requiredConfirmations ?: 10,
                         isLoading = isLoading,
                         isWaitingForPayment = status?.status == "Pending",
                         hoursRemaining = hoursRemaining,
                         minutesRemaining = minutesRemaining,
+                        secondsRemaining = secondsRemaining,
                         onClose = {
                             subscriptionViewModel.stopMoneroPolling()
                             navController.popBackStack()
@@ -820,8 +823,8 @@ fun AppNavigation(modifier: Modifier = Modifier) {
                             navController.popBackStack()
                         }
                     )
-                } ?: run {
-                    // Show loading while creating invoice
+                } else {
+                    // Show loading while fetching price and creating/loading invoice
                     Box(
                         modifier = Modifier.fillMaxSize(),
                         contentAlignment = Alignment.Center

@@ -61,6 +61,9 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
     private val _minutesRemaining = MutableStateFlow(0)
     val minutesRemaining: StateFlow<Int> = _minutesRemaining
 
+    private val _secondsRemaining = MutableStateFlow(0)
+    val secondsRemaining: StateFlow<Int> = _secondsRemaining
+
     private var currentUserId: String? = null
     private var moneroPollingJob: Job? = null
     private var timerJob: Job? = null
@@ -300,14 +303,8 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
                         _moneroInvoice.value = invoice
                         Log.d(TAG, "Monero invoice created: ${invoice.invoiceId}")
 
-                        // Fetch initial status with confirmations
-                        fetchMoneroStatus(invoice.invoiceId)
-
-                        // Start timer countdown
-                        startExpirationTimer(invoice.expiresAt)
-
-                        // Start polling for payment status
-                        startMoneroPaymentPolling(invoice.invoiceId)
+                        // CRITICAL: Fetch status to get expiresAt (create-invoice doesn't return it per API spec)
+                        fetchMoneroStatusAndStartTimer(invoice.invoiceId)
                     } else {
                         _errorMessage.value = "Failed to create invoice: ${response.code()}"
                     }
@@ -325,6 +322,7 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
 
     /**
      * Fetch latest pending Monero invoice (to resume payment)
+     * Since latest-invoice endpoint now returns expiresAt directly, we can start the timer immediately
      */
     fun fetchLatestMoneroInvoice() {
         val authHeader = getAuthHeaderOrNull()
@@ -345,25 +343,41 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
                 withContext(Dispatchers.Main) {
                     if (response.isSuccessful && response.body() != null) {
                         val invoice = response.body()!!
+
+                        // If server ever returns an already-expired invoice, immediately request a fresh one
+                        val isExpired = try {
+                            invoice.expiresAt?.let {
+                                val expirationTime = java.time.Instant.parse(it).toEpochMilli()
+                                expirationTime <= System.currentTimeMillis()
+                            } ?: false
+                        } catch (_: Exception) { false }
+
+                        if (isExpired) {
+                            Log.w(TAG, "latest-invoice returned expired invoice ${invoice.invoiceId}; requesting new one")
+                            stopMoneroPolling()
+                            createMoneroInvoice()
+                            return@withContext
+                        }
+
                         _moneroInvoice.value = invoice
-                        Log.d(TAG, "Latest Monero invoice fetched: ${invoice.invoiceId}")
+                        Log.d(TAG, "Latest Monero invoice fetched: ${invoice.invoiceId}, expiresAt: ${invoice.expiresAt}")
 
-                        // Fetch current status with confirmations
-                        fetchMoneroStatus(invoice.invoiceId)
-
-                        // Start timer countdown
-                        startExpirationTimer(invoice.expiresAt)
-
-                        // Start polling for payment status
-                        startMoneroPaymentPolling(invoice.invoiceId)
+                        // Latest-invoice now returns expiresAt, so we can start timer directly
+                        if (invoice.expiresAt != null) {
+                            startExpirationTimer(invoice.expiresAt)
+                            fetchMoneroStatusForPolling(invoice.invoiceId)
+                        } else {
+                            Log.w(TAG, "expiresAt missing from latest-invoice, fetching status")
+                            fetchMoneroStatusAndStartTimer(invoice.invoiceId)
+                        }
+                        _isLoading.value = false
                     } else if (response.code() == 404) {
-                        // No pending invoice, create a new one
                         Log.d(TAG, "No pending invoice found, creating new one")
                         createMoneroInvoice()
                     } else {
                         _errorMessage.value = "Failed to fetch invoice: ${response.code()}"
+                        _isLoading.value = false
                     }
-                    _isLoading.value = false
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error fetching latest Monero invoice", e)
@@ -376,9 +390,10 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
     }
 
     /**
-     * Fetch Monero payment status (with confirmations)
+     * Fetch Monero payment status only for confirmations and start polling
+     * Used when we already have expiresAt from latest-invoice
      */
-    private suspend fun fetchMoneroStatus(invoiceId: String) {
+    private suspend fun fetchMoneroStatusForPolling(invoiceId: String) {
         try {
             val response = RetrofitClient.instance.getMoneroPaymentStatus(
                 authorization = getAuthHeaderOrNull()!!,
@@ -386,55 +401,133 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
             )
 
             if (response.isSuccessful && response.body() != null) {
+                val statusResponse = response.body()!!
                 withContext(Dispatchers.Main) {
-                    _moneroPaymentStatus.value = response.body()
-                    Log.d(TAG, "Monero status: ${response.body()?.status}, confirmations: ${response.body()?.confirmations}/${response.body()?.requiredConfirmations}")
+                    _moneroPaymentStatus.value = statusResponse
+                    Log.d(TAG, "Monero status: ${statusResponse.status}, confirmations: ${statusResponse.confirmations}/${statusResponse.requiredConfirmations}")
+
+                    // Start polling for payment updates (timer already started from latest-invoice expiresAt)
+                    startMoneroPaymentPolling(invoiceId)
+                }
+            } else {
+                Log.e(TAG, "Failed to fetch Monero status: ${response.code()}")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error fetching Monero status for polling", e)
+        }
+    }
+
+    /**
+     * Fetch Monero payment status, start timer, and begin polling
+     * Called after creating an invoice (create-invoice doesn't return expiresAt)
+     */
+    private suspend fun fetchMoneroStatusAndStartTimer(invoiceId: String) {
+        try {
+            val response = RetrofitClient.instance.getMoneroPaymentStatus(
+                authorization = getAuthHeaderOrNull()!!,
+                invoiceId = invoiceId
+            )
+
+            if (response.isSuccessful && response.body() != null) {
+                val statusResponse = response.body()!!
+
+                // CRITICAL: Check if invoice is already expired before starting timer
+                val isExpired = try {
+                    statusResponse.expiresAt?.let {
+                        val expirationTime = java.time.Instant.parse(it).toEpochMilli()
+                        expirationTime <= System.currentTimeMillis()
+                    } ?: false
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error checking status expiration: ${e.message}")
+                    false
+                }
+
+                withContext(Dispatchers.Main) {
+                    _moneroPaymentStatus.value = statusResponse
+                    Log.d(TAG, "Monero status: ${statusResponse.status}, confirmations: ${statusResponse.confirmations}/${statusResponse.requiredConfirmations}, expiresAt: ${statusResponse.expiresAt}, isExpired: $isExpired")
+
+                    if (isExpired) {
+                        Log.w(TAG, "Status shows invoice expired; requesting new invoice")
+                        stopMoneroPolling()
+                        _isLoading.value = false
+                        createMoneroInvoice()
+                    } else {
+                        startExpirationTimer(statusResponse.expiresAt)
+                        startMoneroPaymentPolling(invoiceId)
+                    }
+                }
+            } else {
+                Log.e(TAG, "Failed to fetch Monero status: ${response.code()}")
+                withContext(Dispatchers.Main) {
+                    _errorMessage.value = "Failed to verify invoice status"
+                    _isLoading.value = false
                 }
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error fetching Monero status", e)
+            withContext(Dispatchers.Main) {
+                _errorMessage.value = "Error: ${e.localizedMessage}"
+                _isLoading.value = false
+            }
         }
     }
 
     /**
      * Start countdown timer for invoice expiration
+     * Updates every 1 second to display real-time HH:MM:SS countdown
+     * Server-provided expiresAt is createdAt + 24 hours (per API spec)
      */
     private fun startExpirationTimer(expiresAt: String?) {
         timerJob?.cancel()
 
         if (expiresAt == null) {
             Log.w(TAG, "No expiration time provided for invoice")
+            _hoursRemaining.value = 0
+            _minutesRemaining.value = 0
+            _secondsRemaining.value = 0
             return
         }
 
         timerJob = viewModelScope.launch(Dispatchers.IO) {
             try {
                 val expirationTime = java.time.Instant.parse(expiresAt).toEpochMilli()
+                Log.d(TAG, "Timer started for expiration at: $expiresAt (${expirationTime} ms)")
 
                 while (true) {
-                    val now = System.currentTimeMillis()
-                    val remaining = expirationTime - now
+                    val remainingMs = expirationTime - System.currentTimeMillis()
 
-                    if (remaining <= 0) {
+                    // Stop immediately if already expired
+                    if (remainingMs <= 0) {
                         withContext(Dispatchers.Main) {
                             _hoursRemaining.value = 0
                             _minutesRemaining.value = 0
+                            _secondsRemaining.value = 0
+                            Log.d(TAG, "Invoice expiration timer completed")
                         }
                         break
                     }
 
-                    val hours = (remaining / (1000 * 60 * 60)).toInt()
-                    val minutes = ((remaining % (1000 * 60 * 60)) / (1000 * 60)).toInt()
+                    val totalSeconds = (remainingMs / 1000).toInt().coerceAtLeast(0)
+                    val hours = totalSeconds / 3600
+                    val minutes = (totalSeconds % 3600) / 60
+                    val seconds = totalSeconds % 60
 
                     withContext(Dispatchers.Main) {
                         _hoursRemaining.value = hours
                         _minutesRemaining.value = minutes
+                        _secondsRemaining.value = seconds
+                        Log.d(TAG, "Timer tick: ${String.format("%02d:%02d:%02d", hours, minutes, seconds)}")
                     }
 
-                    delay(60000) // Update every minute
+                    delay(1000L)
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Error in expiration timer", e)
+                Log.e(TAG, "Error parsing expiration time or running timer", e)
+                withContext(Dispatchers.Main) {
+                    _hoursRemaining.value = 0
+                    _minutesRemaining.value = 0
+                    _secondsRemaining.value = 0
+                }
             }
         }
     }
@@ -453,9 +546,8 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
             val pollInterval = 30000L // 30 seconds
             val startTime = System.currentTimeMillis()
 
-            while (System.currentTimeMillis() - startTime < maxPollingDuration) {
-                var shouldStopPolling = false
-                try {
+            try {
+                while (System.currentTimeMillis() - startTime < maxPollingDuration) {
                     delay(pollInterval)
 
                     val authHeader = getAuthHeaderOrNull()
@@ -473,14 +565,17 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
 
                     if (response.isSuccessful && response.body() != null) {
                         val statusResponse = response.body()!!
+                        val shouldStop = statusResponse.status.equals("Completed", ignoreCase = true) ||
+                            statusResponse.status.equals("Paid", ignoreCase = true) ||
+                            statusResponse.status.equals("Expired", ignoreCase = true) ||
+                            statusResponse.status.equals("Failed", ignoreCase = true)
+
                         withContext(Dispatchers.Main) {
                             _moneroPaymentStatus.value = statusResponse
                             Log.d(TAG, "Monero payment status: ${statusResponse.status}, confirmations: ${statusResponse.confirmations}/${statusResponse.requiredConfirmations}")
 
-                            // Stop polling if completed or failed
-                            if (statusResponse.status.equals("Completed", ignoreCase = true) ||
-                                statusResponse.status.equals("Paid", ignoreCase = true) ||
-                                statusResponse.status.equals("Failed", ignoreCase = true)) {
+                            // Stop polling if completed, paid, expired, or failed
+                            if (shouldStop) {
                                 _isMoneroPolling.value = false
                                 if (statusResponse.status.equals("Completed", ignoreCase = true) ||
                                     statusResponse.status.equals("Paid", ignoreCase = true)) {
@@ -488,23 +583,31 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
                                     lastSubscriptionCheckTime = 0 // Force cache refresh
                                     fetchSubscriptionStatus()
                                 }
-                                shouldStopPolling = true
                             }
                         }
+
+                        if (shouldStop) break
                     } else {
                         Log.w(TAG, "Failed to check payment status: ${response.code()}")
                     }
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error polling payment status", e)
                 }
 
-                if (shouldStopPolling) break
-            }
-
-            // Polling timeout
-            withContext(Dispatchers.Main) {
-                _isMoneroPolling.value = false
-                _errorMessage.value = "Payment verification timeout. Please check your transaction."
+                // Polling timeout (only if not already stopped)
+                if (_isMoneroPolling.value) {
+                    withContext(Dispatchers.Main) {
+                        _isMoneroPolling.value = false
+                        _errorMessage.value = "Payment verification timeout. Please check your transaction."
+                    }
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                // Normal cancellation when job is stopped - don't log as error
+                Log.d(TAG, "Monero polling cancelled")
+                throw e
+            } catch (e: Exception) {
+                Log.e(TAG, "Error polling payment status", e)
+                withContext(Dispatchers.Main) {
+                    _isMoneroPolling.value = false
+                }
             }
         }
     }
@@ -665,6 +768,7 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
         _moneroPrice.value = null
         _hoursRemaining.value = 0
         _minutesRemaining.value = 0
+        _secondsRemaining.value = 0
         _errorMessage.value = null
         moneroPollingJob?.cancel()
         timerJob?.cancel()

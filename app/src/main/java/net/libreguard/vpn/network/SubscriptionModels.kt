@@ -72,7 +72,7 @@ data class MoneroPriceResponse(
     @SerializedName("usdAmount")
     val usdAmount: Double,
     @SerializedName("xmrPriceUsd")
-    val xmrPriceUsd: Double?,
+    val xmrPriceUsd: Double,
     @SerializedName("currency")
     val currency: String,
     @SerializedName("product")

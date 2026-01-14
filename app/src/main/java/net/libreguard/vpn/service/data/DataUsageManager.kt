@@ -39,10 +39,12 @@ class DataUsageManager(private val context: Context) {
 
     // Auth token for API calls
     private var authToken: String? = null
+    private var previousAuthToken: String? = null  // Track previous token to detect changes
 
     // Server-synced quota state
     private var isUnlimited: Boolean = false
     private var serverUsedBytes: Long? = null  // null = not synced yet
+    private var resetDate: String? = null  // ISO 8601 format from API
     private var lastServerSync: Long = 0L
     private val SERVER_SYNC_INTERVAL_MS = 5 * 60 * 1000L  // Sync every 5 minutes
 
@@ -499,7 +501,8 @@ class DataUsageManager(private val context: Context) {
             uploadSpeedMbps = uploadSpeedMbps,
             isUnlimited = isUnlimited,
             isOverLimit = isOverLimit,
-            formattedRemaining = if (isUnlimited) "Unlimited" else formatBytes(remainingBytes)
+            formattedRemaining = if (isUnlimited) "Unlimited" else formatBytes(remainingBytes),
+            resetDate = resetDate  // Add reset date from API
         )
 
         _dataUsage.value = info
@@ -525,18 +528,35 @@ class DataUsageManager(private val context: Context) {
 
     /**
      * Set auth token for API calls
+     * Only clears cached data if token actually changes (logout), not on screen navigation
      */
     fun setAuthToken(token: String?) {
-        authToken = token
+        // Only reset data if token actually changed (prevents flickering on screen navigation)
+        if (token != previousAuthToken) {
+            authToken = token
+            previousAuthToken = token
 
-        // Clear local counters so UI doesn't show stale cached totals before server sync
-        totalBytesUsed.set(0L)
-        sessionBytesUsed.set(0L)
-        serverUsedBytes = null
-        lastServerSync = 0L
-        updateDataUsageInfo()
-
-        Log.d(TAG, "Auth token ${if (token != null) "set" else "cleared"}")
+            if (token == null) {
+                // Only clear on logout (token becomes null)
+                totalBytesUsed.set(0L)
+                sessionBytesUsed.set(0L)
+                serverUsedBytes = null
+                resetDate = null
+                lastServerSync = 0L
+                updateDataUsageInfo()
+                Log.d(TAG, "Auth token cleared on logout")
+            } else {
+                // New token - may be new user, clear counters to prepare for fresh sync
+                totalBytesUsed.set(0L)
+                sessionBytesUsed.set(0L)
+                serverUsedBytes = null
+                resetDate = null
+                lastServerSync = 0L
+                updateDataUsageInfo()
+                Log.d(TAG, "Auth token set - awaiting server sync")
+            }
+        }
+        // If token is same as previous, do nothing (normal screen navigation)
     }
 
     /**
@@ -578,12 +598,13 @@ class DataUsageManager(private val context: Context) {
                     serverUsedBytes = safeUsed
                     dataLimitBytes = effectiveLimit
                     isUnlimited = quota.isUnlimited
+                    resetDate = quota.resetDate  // Capture reset date from API
                     lastServerSync = now
 
                     Log.d(TAG, "Quota synced: used=${formatBytes(safeUsed)}, " +
                             "limit=${if (quota.isUnlimited) "Unlimited" else formatBytes(effectiveLimit)}, " +
                             "rawLimit=${quota.bytesLimit}, remaining=${quota.bytesRemaining ?: 0L}, " +
-                            "usagePercentage=${quota.usagePercentage}%")
+                            "usagePercentage=${quota.usagePercentage}%, resetDate=${resetDate}")
 
                     // Update UI with server data
                     withContext(Dispatchers.Main) {
@@ -738,7 +759,8 @@ data class DataUsageInfo(
     // Server-synced fields
     val isUnlimited: Boolean = false,
     val isOverLimit: Boolean = false,
-    val formattedRemaining: String = "5.0 GB"
+    val formattedRemaining: String = "5.0 GB",
+    val resetDate: String? = null  // ISO 8601 format: "2026-02-01T00:00:00Z"
 )
 
 /**
