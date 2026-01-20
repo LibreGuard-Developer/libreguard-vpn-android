@@ -1,8 +1,10 @@
 package net.libreguard.vpn
 
+import android.annotation.SuppressLint
 import android.net.Uri
 import android.os.Bundle
 import android.util.Log
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -71,6 +73,7 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
+@SuppressLint("UnspecifiedRegisterReceiverFlag")
 fun AppNavigation(modifier: Modifier = Modifier) {
     val navController = rememberNavController()
     val context = LocalContext.current
@@ -192,7 +195,7 @@ fun AppNavigation(modifier: Modifier = Modifier) {
             context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
         } else {
             // Use the not-exported flag as well on older SDKs to satisfy lint/security checks
-            context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            context.registerReceiver(receiver, filter)
         }
         onDispose {
             context.unregisterReceiver(receiver)
@@ -214,7 +217,7 @@ fun AppNavigation(modifier: Modifier = Modifier) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             context.registerReceiver(upgradeReceiver, upgradeFilter, Context.RECEIVER_NOT_EXPORTED)
         } else {
-            context.registerReceiver(upgradeReceiver, upgradeFilter, Context.RECEIVER_NOT_EXPORTED)
+            context.registerReceiver(upgradeReceiver, upgradeFilter)
         }
         onDispose {
             context.unregisterReceiver(upgradeReceiver)
@@ -252,7 +255,7 @@ fun AppNavigation(modifier: Modifier = Modifier) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             context.registerReceiver(deviceLimitReceiver, deviceLimitFilter, Context.RECEIVER_NOT_EXPORTED)
         } else {
-            context.registerReceiver(deviceLimitReceiver, deviceLimitFilter, Context.RECEIVER_NOT_EXPORTED)
+            context.registerReceiver(deviceLimitReceiver, deviceLimitFilter)
         }
         onDispose {
             context.unregisterReceiver(deviceLimitReceiver)
@@ -733,9 +736,34 @@ fun AppNavigation(modifier: Modifier = Modifier) {
                 val checkoutUrl by subscriptionViewModel.checkoutUrl.collectAsState()
                 val isLoading by subscriptionViewModel.isLoading.collectAsState()
                 val errorMessage by subscriptionViewModel.errorMessage.collectAsState()
+                // Observe payment verification result
+                val paymentVerificationResult by subscriptionViewModel.paymentVerificationResult.collectAsState()
+                // Observe subscription status for polling success
+                val isPro by subscriptionViewModel.isPro.collectAsState()
 
                 Log.d("PaymentCard", "Current checkoutUrl state: ${checkoutUrl?.take(50) ?: "null"}")
-                Log.d("PaymentCard", "isLoading: $isLoading, errorMessage: $errorMessage")
+                Log.d("PaymentCard", "isLoading: $isLoading, errorMessage: $errorMessage, paymentVerified: $paymentVerificationResult, isPro: $isPro")
+
+                // Start polling for subscription status
+                DisposableEffect(Unit) {
+                    subscriptionViewModel.startPollingSubscriptionStatus()
+                    onDispose {
+                        subscriptionViewModel.stopPollingSubscriptionStatus()
+                    }
+                }
+
+                // Handle payment verification success or polling success
+                LaunchedEffect(paymentVerificationResult, isPro) {
+                    if (paymentVerificationResult == true || isPro) {
+                        Log.d("PaymentCard", "Payment verified or Pro status detected! Navigating to main.")
+                        vpnViewModel.updateSubscriptionStatus()
+                        Toast.makeText(context, "Pro upgrade successful", Toast.LENGTH_LONG).show()
+                        navController.navigate("main") {
+                            popUpTo("upgrade") { inclusive = true }
+                            launchSingleTop = true
+                        }
+                    }
+                }
 
                 // Fetch checkout URL once when entering this screen
                 LaunchedEffect(token) {
@@ -755,10 +783,13 @@ fun AppNavigation(modifier: Modifier = Modifier) {
                     onClose = {
                         navController.popBackStack()
                     },
+                    onCheckPayment = { orderId ->
+                        Log.d("PaymentCard", "Order ID detected: $orderId - verifying...")
+                        subscriptionViewModel.verifyPayment(orderId)
+                    },
                     onSuccess = {
-                        // CRITICAL FIX: Trigger subscription status refresh after payment
-                        vpnViewModel?.updateSubscriptionStatus()
-                        navController.popBackStack()
+                        Log.d("PaymentCard", "Success URL detected, forcing immediate subscription update")
+                        subscriptionViewModel.subscriptionUpdated()
                     }
                 )
             } ?: run {
@@ -817,10 +848,14 @@ fun AppNavigation(modifier: Modifier = Modifier) {
                             subscriptionViewModel.checkMoneroPaymentStatus(invoice.invoiceId)
                         },
                         onSuccess = {
-                            // CRITICAL FIX: Trigger subscription status refresh after payment confirmed
-                            vpnViewModel?.updateSubscriptionStatus()
+                            // CRITICAL FIX: After confirmed payment, refresh status and return to dashboard
+                            vpnViewModel.updateSubscriptionStatus()
                             subscriptionViewModel.stopMoneroPolling()
-                            navController.popBackStack()
+                            Toast.makeText(context, "Pro upgrade successful", Toast.LENGTH_LONG).show()
+                            navController.navigate("main") {
+                                popUpTo("upgrade") { inclusive = true }
+                                launchSingleTop = true
+                            }
                         }
                     )
                 } else {

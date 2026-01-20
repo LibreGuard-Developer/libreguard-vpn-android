@@ -262,6 +262,12 @@ interface ApiService {
         @Header("Authorization") authorization: String
     ): Response<CheckoutUrlResponse>
 
+    @POST("api/webhooks/lemonsqueezy/check-payment-status/{orderId}")
+    suspend fun checkPaymentStatus(
+        @Header("Authorization") authorization: String,
+        @Path("orderId") orderId: String
+    ): Response<PaymentStatusResponse>
+
     // ===== MONERO PAYMENT =====
     @GET("api/monero/price")
     suspend fun getMoneroPrice(

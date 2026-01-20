@@ -8,6 +8,7 @@ import net.libreguard.vpn.network.RetrofitClient
 import net.libreguard.vpn.network.SubscriptionStatusResponse
 import net.libreguard.vpn.network.MoneroInvoiceResponse
 import net.libreguard.vpn.network.MoneroStatusResponse
+import net.libreguard.vpn.network.PaymentStatusResponse
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -43,6 +44,9 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
     private val _checkoutUrl = MutableStateFlow<String?>(null)
     val checkoutUrl: StateFlow<String?> = _checkoutUrl
 
+    private val _paymentVerificationResult = MutableStateFlow<Boolean?>(null)
+    val paymentVerificationResult: StateFlow<Boolean?> = _paymentVerificationResult
+
     private val _moneroInvoice = MutableStateFlow<MoneroInvoiceResponse?>(null)
     val moneroInvoice: StateFlow<MoneroInvoiceResponse?> = _moneroInvoice
 
@@ -66,6 +70,7 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
 
     private var currentUserId: String? = null
     private var moneroPollingJob: Job? = null
+    private var subscriptionPollingJob: Job? = null
     private var timerJob: Job? = null
     private var lastSubscriptionCheckTime = 0L
 
@@ -100,7 +105,7 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
     /**
      * Fetch subscription status from backend
      */
-    fun fetchSubscriptionStatus() {
+    fun fetchSubscriptionStatus(force: Boolean = false) {
         val authHeader = getAuthHeaderOrNull()
         if (authHeader == null) {
             _errorMessage.value = "Authentication required"
@@ -109,7 +114,7 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
 
         // Check cache validity
         val now = System.currentTimeMillis()
-        if (now - lastSubscriptionCheckTime < SUBSCRIPTION_CACHE_TTL_MS) {
+        if (!force && now - lastSubscriptionCheckTime < SUBSCRIPTION_CACHE_TTL_MS) {
             Log.d(TAG, "Using cached subscription status (TTL valid)")
             return
         }
@@ -243,6 +248,61 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
                 withContext(Dispatchers.Main) {
                     _errorMessage.value = "Error: ${e.localizedMessage}"
                     _isLoading.value = false
+                }
+            }
+        }
+    }
+
+    /**
+     * Verify payment with Lemon Squeezy using order ID
+     * This triggers the "Self-Healing" mechanism on the backend
+     */
+    fun verifyPayment(orderId: String) {
+        val authHeader = getAuthHeaderOrNull()
+        if (authHeader == null) {
+            _errorMessage.value = "Authentication required"
+            return
+        }
+
+        _isLoading.value = true
+
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                Log.d(TAG, "Verifying payment for order: $orderId")
+                val response = RetrofitClient.instance.checkPaymentStatus(
+                    authorization = authHeader,
+                    orderId = orderId
+                )
+
+                withContext(Dispatchers.Main) {
+                    if (response.isSuccessful && response.body() != null) {
+                        val status = response.body()!!
+                        Log.d(TAG, "Payment verification result: found=${status.found}, status=${status.status}, recovered=${status.recovered}")
+
+                        if (status.found && status.status == "paid") {
+                            _paymentVerificationResult.value = true
+                            // Refresh subscription status immediately
+                            fetchSubscriptionStatus()
+                        } else if (status.found && status.status == "Succeeded") { // Handle Lemon Squeezy typical status
+                            _paymentVerificationResult.value = true
+                            fetchSubscriptionStatus()
+                        } else {
+                            _errorMessage.value = "Payment status: ${status.status}"
+                            _paymentVerificationResult.value = false
+                        }
+                    } else {
+                        Log.w(TAG, "Payment verification failed: ${response.code()}")
+                        _errorMessage.value = "Verification failed: ${response.code()}"
+                        _paymentVerificationResult.value = false
+                    }
+                    _isLoading.value = false
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error verifying payment", e)
+                withContext(Dispatchers.Main) {
+                    _errorMessage.value = "Error: ${e.localizedMessage}"
+                    _isLoading.value = false
+                    _paymentVerificationResult.value = false
                 }
             }
         }
@@ -757,6 +817,39 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
     }
 
     /**
+     * Start polling subscription status
+     * Used during payment flows to detect upgrade completion
+     */
+    fun startPollingSubscriptionStatus() {
+        if (subscriptionPollingJob?.isActive == true) return
+
+        subscriptionPollingJob = viewModelScope.launch {
+            Log.d(TAG, "Starting subscription status polling")
+            while (true) {
+                // Force fetch ignoring cache TTL
+                fetchSubscriptionStatus(force = true)
+                // Stop if upgraded to Pro
+                if (_isPro.value) {
+                    Log.d(TAG, "User is PRO, stopping polling")
+                    break
+                }
+                delay(5000) // Poll every 5 seconds
+            }
+        }
+    }
+
+    /**
+     * Stop subscription status polling
+     */
+    fun stopPollingSubscriptionStatus() {
+        if (subscriptionPollingJob?.isActive == true) {
+            Log.d(TAG, "Stopping subscription status polling")
+            subscriptionPollingJob?.cancel()
+            subscriptionPollingJob = null
+        }
+    }
+
+    /**
      * Clear all subscription data and cached state
      */
     fun clearSubscriptionData() {
@@ -771,6 +864,7 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
         _secondsRemaining.value = 0
         _errorMessage.value = null
         moneroPollingJob?.cancel()
+        subscriptionPollingJob?.cancel()
         timerJob?.cancel()
         _isMoneroPolling.value = false
         lastSubscriptionCheckTime = 0

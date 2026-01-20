@@ -27,6 +27,7 @@ fun CardPaymentScreen(
     checkoutUrl: String,
     isLoading: Boolean,
     onClose: () -> Unit,
+    onCheckPayment: ((String) -> Unit)? = null,
     onSuccess: (() -> Unit)? = null
 ) {
     var showWebView by remember { mutableStateOf(false) }
@@ -217,6 +218,26 @@ fun CardPaymentScreen(
                                                     super.onPageStarted(view, url, favicon)
                                                     Log.d(TAG, "WebView page started: $url")
                                                     isWebViewLoading = true
+
+                                                    // Check for Lemon Squeezy order_id in URL
+                                                    if (url != null && onCheckPayment != null) {
+                                                        try {
+                                                            val uri = android.net.Uri.parse(url)
+                                                            val orderId = uri.getQueryParameter("order_id")
+                                                            if (!orderId.isNullOrBlank()) {
+                                                                Log.d(TAG, "Detected order_id in URL: $orderId")
+                                                                onCheckPayment(orderId)
+                                                            }
+                                                            // Also check for success/thank-you path which might indicate payment done
+                                                            // Some implementations might rely on different params
+                                                            if (url.contains("/checkout/success") || url.contains("/thank-you")) {
+                                                                Log.d(TAG, "Detected success URL pattern")
+                                                                onSuccess?.invoke()
+                                                            }
+                                                        } catch (e: Exception) {
+                                                            Log.e(TAG, "Error parsing URL: $url", e)
+                                                        }
+                                                    }
                                                 }
 
                                                 override fun onPageFinished(view: WebView?, url: String?) {

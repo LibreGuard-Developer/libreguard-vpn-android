@@ -65,6 +65,19 @@ data class CheckoutUrlResponse(
     val userId: String
 )
 
+data class PaymentStatusResponse(
+    @SerializedName("found")
+    val found: Boolean,
+    @SerializedName("status")
+    val status: String,
+    @SerializedName("paidAt")
+    val paidAt: String?,
+    @SerializedName("message")
+    val message: String?,
+    @SerializedName("recovered")
+    val recovered: Boolean
+)
+
 // ===== MONERO PAYMENT =====
 data class MoneroPriceResponse(
     @SerializedName("xmrAmount")
