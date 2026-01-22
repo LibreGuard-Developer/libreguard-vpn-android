@@ -12,8 +12,10 @@ import android.os.IBinder
 import android.os.ParcelFileDescriptor
 import android.security.KeyChain
 import android.security.KeyChainException
+import android.widget.Toast
 import org.strongswan.android.security.LocalCertificateKeyStoreManager
 import android.util.Log
+import net.libreguard.vpn.service.VpnNotificationManager
 import net.libreguard.vpn.util.VpnConfigManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -65,6 +67,7 @@ class StrongSwanHandler(
     private var tunMonitorJob: Job? = null
     private val authFailureCount = AtomicInteger(0)
     private val isMonitoring = AtomicBoolean(false)
+    private val dataLimitNotificationShown = AtomicBoolean(false)
     @Volatile private var lastLogPosition = 0L
 
     private val stateServiceConnection = object : ServiceConnection {
@@ -146,12 +149,15 @@ class StrongSwanHandler(
         startTunMonitoring()
     }
 
-    private fun stopLogMonitoring() {
+    private fun stopLogMonitoring(cancelActiveJob: Boolean = true) {
         isMonitoring.set(false)
-        logMonitorJob?.cancel()
-        logMonitorJob = null
+        if (cancelActiveJob) {
+            logMonitorJob?.cancel()
+            logMonitorJob = null
+        }
+        tunMonitorJob?.cancel()
+        tunMonitorJob = null
         authFailureCount.set(0)
-        stopTunMonitoring()
         Log.d(tag, "Stopped log monitoring")
     }
 
@@ -293,8 +299,32 @@ class StrongSwanHandler(
 
                 // CRITICAL: EAP_TLS failure with AUTH_FAILED means immediate connection failure
                 // Don't wait for threshold if we have clear authentication rejection
-                if ((hasEapTlsFailed && hasAuthFailed) || hasCertRevoked || hasCertUnknown) {
-                    Log.e(tag, "Critical authentication failure detected - forcing disconnect immediately")
+                // Also treating regular AUTH_FAILED as critical for immediate revocation response
+                if ((hasEapTlsFailed && hasAuthFailed) || hasCertRevoked || hasCertUnknown || hasAuthFailed) {
+                    Log.e(tag, "Critical authentication failure detected - forcing aggressive disconnect")
+
+                    // CRITICAL FIX: Clear the VPN profile BEFORE stopping service
+                    // This prevents CharonVpnService from auto-reconnecting with the same profile
+                    try {
+                        val clearIntent = Intent(appContext, CharonVpnService::class.java)
+                        clearIntent.action = CharonVpnService.DISCONNECT_ACTION
+                        appContext.startService(clearIntent)
+                        delay(100) // Give service time to clear profile
+                        Log.d(tag, "Profile cleared - preventing auto-reconnect")
+                    } catch (e: Exception) {
+                        Log.e(tag, "Failed to clear profile: ${e.message}")
+                    }
+
+                    // IMMEDIATELY stop the CharonVpnService to tear down the tunnel
+                    // This prevents the rapid reconnection loop
+                    try {
+                        val stopIntent = Intent(appContext, CharonVpnService::class.java)
+                        appContext.stopService(stopIntent)
+                        Log.d(tag, "Emergency stop: CharonVpnService stopped due to auth failure")
+                    } catch (e: Exception) {
+                        Log.e(tag, "Failed emergency stop: ${e.message}")
+                    }
+
                     withContext(Dispatchers.Main) {
                         handleAuthenticationFailure()
                     }
@@ -324,8 +354,21 @@ class StrongSwanHandler(
     }
 
     private fun handleAuthenticationFailure() {
-        stopLogMonitoring()
-        _state.value = ConnectionState.Error("Authentication failed: Certificate revoked or invalid")
+        stopLogMonitoring(cancelActiveJob = false)
+        _state.value = ConnectionState.Error("Authentication failed: Traffic limit exceeded or certificate invalid")
+
+        // Fire persistent notification/toast even if UI is backgrounded
+        if (dataLimitNotificationShown.compareAndSet(false, true)) {
+            try {
+                VpnNotificationManager.showDataLimitExceeded(appContext)
+                Toast.makeText(appContext, "VPN disconnected: data limit exceeded", Toast.LENGTH_LONG).show()
+            } catch (e: Exception) {
+                Log.e(tag, "Failed to show data-limit notification", e)
+            }
+        }
+
+        // NOTE: Notification will be shown by ViewModel based on error message
+        // This allows proper detection of data limit vs certificate issues
 
         // Give UI a moment to show error, then transition to disconnected
         monitoringScope.launch {
@@ -342,7 +385,7 @@ class StrongSwanHandler(
     }
 
     private fun handleConnectionFailure(message: String) {
-        stopLogMonitoring()
+        stopLogMonitoring(cancelActiveJob = false)
         _state.value = ConnectionState.Error(message)
         monitoringScope.launch {
             delay(300)
@@ -381,6 +424,7 @@ class StrongSwanHandler(
                 }
 
                 _state.value = ConnectionState.Connecting
+                dataLimitNotificationShown.set(false)
                 Log.d(tag, "Starting IKEv2 connection with VpnProfile object")
 
                 // Reset auth failure tracking
@@ -783,12 +827,12 @@ class StrongSwanHandler(
                 }
 
             } catch (ex: Exception) {
-                Log.e(tag, "Connect failed", ex)
-                stopLogMonitoring()
-                _state.value = ConnectionState.Error("Connect failed: ${ex.message}")
-                _state.value = ConnectionState.Disconnected
-                currentProfile = null
-                false
+                 Log.e(tag, "Connect failed", ex)
+                 stopLogMonitoring()
+                 _state.value = ConnectionState.Error("Connect failed: ${ex.message}")
+                 _state.value = ConnectionState.Disconnected
+                 currentProfile = null
+                 false
             } finally {
                 // Release the connection lock
                 isConnecting.set(false)
@@ -898,24 +942,37 @@ class StrongSwanHandler(
 
                 var disconnectSuccess = false
 
-                // Method 1: Try to stop CharonVpnService directly
+                // Method 0: CRITICAL - Clear profile FIRST to prevent auto-reconnect
+                try {
+                    val clearIntent = Intent(appContext, CharonVpnService::class.java).apply {
+                        action = CharonVpnService.DISCONNECT_ACTION
+                    }
+                    appContext.startService(clearIntent)
+                    delay(100) // Give service time to clear profile
+                    Log.d(tag, "Profile cleared to prevent auto-reconnect")
+                } catch (e: Exception) {
+                    Log.w(tag, "Failed to clear profile: ${e.message}")
+                }
+
+                // Method 1: Try to stop CharonVpnService directly (MOST IMPORTANT - DO THIS SECOND)
                 try {
                     val stopIntent = Intent(appContext, CharonVpnService::class.java)
                     val stopResult = appContext.stopService(stopIntent)
                     Log.d(tag, "Stop service result: $stopResult")
-                    if (stopResult) disconnectSuccess = true
+                    // Assume success if we stopped the service, but keep trying other methods just in case
+                    disconnectSuccess = true
                 } catch (e: Exception) {
                     Log.w(tag, "Failed to stop CharonVpnService: ${e.message}")
                 }
 
-                // Method 2: Try multiple disconnect action approaches
+                // Method 2: Try multiple disconnect action approaches (backup)
                  try {
                     // Try with explicit in-app CharonVpnService disconnect action
                      val disconnectIntent1 = Intent(appContext, CharonVpnService::class.java).apply {
                          action = CharonVpnService.DISCONNECT_ACTION
                      }
                      appContext.startService(disconnectIntent1)
-                     Log.d(tag, "Sent explicit disconnect action")
+                     Log.d(tag, "Sent explicit disconnect action (backup)")
 
                     // Also try generic disconnect action (fallback)
                      val disconnectIntent2 = Intent(appContext, CharonVpnService::class.java).apply {
@@ -972,14 +1029,11 @@ class StrongSwanHandler(
                 Log.d(tag, "VPN disconnect process completed (success: $disconnectSuccess)")
                 return@withContext true // Always return true since we've cleaned up our state
 
-            } catch (ex: Exception) {
-                Log.e(tag, "Disconnect failed", ex)
-                _state.value = ConnectionState.Error("Disconnect failed: ${ex.message}")
-                _state.value = ConnectionState.Disconnected
-                currentProfile = null
-                false
-            } finally {
+            } catch (e: Exception) {
+                Log.e(tag, "Failed to disconnect", e)
                 stopLogMonitoring()
+                _state.value = ConnectionState.Error("Disconnect failed: ${e.message}")
+                false
             }
         }
     }

@@ -26,6 +26,7 @@ import net.libreguard.vpn.network.RemoteVpnServer
 import net.libreguard.vpn.network.RetrofitClient
 import net.libreguard.vpn.network.VpnConfigRequest
 import net.libreguard.vpn.service.LibreGuardVpnService
+import net.libreguard.vpn.service.VpnNotificationManager
 import net.libreguard.vpn.service.vpn.ConnectionState
 import net.libreguard.vpn.service.vpn.OpenVpnHandler
 import net.libreguard.vpn.service.vpn.StrongSwanHandler
@@ -1448,6 +1449,10 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                     Log.w(TAG, "Data usage quota exceeded: ${canConnectResult.reason}")
                     _errorMessage.value = canConnectResult.message ?: "Data limit exceeded. Upgrade to Pro for unlimited data."
                     _isConnecting.value = false
+
+                    // Show persistent notification for data limit exceeded
+                    VpnNotificationManager.showDataLimitExceeded(getApplication<Application>().applicationContext)
+
                     // Emit upgrade event for data limit exceeded
                     _upgradeEvents.emit(mapOf(
                         "reason" to "Data limit exceeded",
@@ -1968,6 +1973,25 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                                 _errorMessage.value = state.message
                                 Log.e(TAG, "Connection error via StateFlow: ${state.message}")
 
+                                // Show notification for data limit exceeded
+                                if (state.message.contains("Traffic limit exceeded", ignoreCase = true) ||
+                                    state.message.contains("Data limit", ignoreCase = true)) {
+                                    Log.w(TAG, "Data limit exceeded detected - showing notification")
+                                    VpnNotificationManager.showDataLimitExceeded(getApplication<Application>().applicationContext)
+
+                                    // Also emit upgrade event
+                                    viewModelScope.launch {
+                                        _upgradeEvents.emit(mapOf(
+                                            "reason" to "Data limit exceeded while connected",
+                                            "resource_type" to "data_quota",
+                                            "resource_id" to null,
+                                            "required_tier" to "Pro",
+                                            "message" to "Your monthly data limit has been reached. VPN has been disconnected.",
+                                            "reset_date" to dataUsageManager.dataUsage.value.resetDate
+                                        ))
+                                    }
+                                }
+
                                 // Notify Kill Switch of unexpected disconnect if we were connected
                                 if (wasConnected) {
                                     Log.w(TAG, "Connection lost unexpectedly: ${state.message}")
@@ -2384,6 +2408,26 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                         is ConnectionState.Error -> {
                             _errorMessage.value = st.message
                             val wasConnected = _isConnected.value
+
+                            // Show notification for data limit exceeded
+                            if (st.message.contains("Traffic limit exceeded", ignoreCase = true) ||
+                                st.message.contains("Data limit", ignoreCase = true)) {
+                                Log.w(TAG, "Data limit exceeded detected - showing notification")
+                                VpnNotificationManager.showDataLimitExceeded(getApplication<Application>().applicationContext)
+
+                                // Also emit upgrade event
+                                viewModelScope.launch {
+                                    _upgradeEvents.emit(mapOf(
+                                        "reason" to "Data limit exceeded while connected",
+                                        "resource_type" to "data_quota",
+                                        "resource_id" to null,
+                                        "required_tier" to "Pro",
+                                        "message" to "Your monthly data limit has been reached. VPN has been disconnected.",
+                                        "reset_date" to dataUsageManager.dataUsage.value.resetDate
+                                    ))
+                                }
+                            }
+
                             // Treat as disconnected in UI
                             if (wasConnected) {
                                 Log.w(TAG, "Connection error from handler: ${st.message}")

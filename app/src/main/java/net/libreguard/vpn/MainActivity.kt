@@ -1,10 +1,12 @@
 package net.libreguard.vpn
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.net.Uri
 import android.os.Bundle
 import android.util.Log
 import android.widget.Toast
+import android.content.pm.PackageManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -53,7 +55,8 @@ import net.libreguard.vpn.util.LogoutManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.collectAsState
-import org.json.JSONObject
+import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
 
 class MainActivity : ComponentActivity() {
 
@@ -100,6 +103,29 @@ fun AppNavigation(modifier: Modifier = Modifier) {
     // SharedPreferences for persisting registration flow state across process death
     val regPrefs = remember { context.getSharedPreferences("registration_flow_prefs", android.content.Context.MODE_PRIVATE) }
 
+    // Notification permission prompt state (ask once on Android 13+)
+    val notifPrefs = remember { context.getSharedPreferences("notification_permission_prefs", Context.MODE_PRIVATE) }
+    var notificationPermissionAsked by rememberSaveable { mutableStateOf(notifPrefs.getBoolean("asked_notification_permission", false)) }
+
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        notifPrefs.edit().putBoolean("asked_notification_permission", true).apply()
+        notificationPermissionAsked = true
+        if (!granted) {
+            Toast.makeText(context, "Enable notifications to get VPN alerts", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    LaunchedEffect(notificationPermissionAsked) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+            if (!granted && !notificationPermissionAsked) {
+                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+    }
+
     // Load initial values from SharedPreferences (handles process death)
     val initialRegEmail = remember { regPrefs.getString("reg_email", null) }
     val initialRegPassword = remember { regPrefs.getString("reg_password", null) }
@@ -132,6 +158,18 @@ fun AppNavigation(modifier: Modifier = Modifier) {
     ) { result ->
         // RESULT_OK means permission granted; RESULT_CANCELED means user denied/backed out
         vpnViewModel.onVpnPermissionResult(result.resultCode == android.app.Activity.RESULT_OK)
+    }
+
+    // Collect VPN permission requests from the ViewModel and launch the system consent dialog.
+    LaunchedEffect(vpnViewModel) {
+        vpnViewModel.vpnPermissionRequests.collect { intent ->
+            try {
+                vpnConsentLauncher.launch(intent)
+            } catch (e: Exception) {
+                Log.e("MainActivity", "Failed to launch VPN consent: ${e.message}", e)
+                vpnViewModel.onVpnPermissionResult(false)
+            }
+        }
     }
 
     // Coroutine scope for async logout operations

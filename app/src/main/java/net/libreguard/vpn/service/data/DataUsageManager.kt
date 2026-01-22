@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import net.libreguard.vpn.network.RetrofitClient
+import net.libreguard.vpn.service.VpnNotificationManager
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.max
 
@@ -70,6 +71,9 @@ class DataUsageManager(private val context: Context) {
     private var baselineTxBytes = 0L
     private var vpnStartTime = 0L
 
+    // Ensure we only fire a single over-limit notification per overage window
+    private val overLimitNotificationShown = java.util.concurrent.atomic.AtomicBoolean(false)
+
     // Speed calculation tracking
     private var lastRxBytes = 0L
     private var lastTxBytes = 0L
@@ -116,6 +120,7 @@ class DataUsageManager(private val context: Context) {
                 totalBytesUsed.set(0L)
                 sessionBytesUsed.set(0L)
                 isVpnSessionActive = false
+                overLimitNotificationShown.set(false)
 
                 loadPersistedData()
                 Log.d(TAG, "Switched from user: $previousUserId to user: $userId")
@@ -140,6 +145,7 @@ class DataUsageManager(private val context: Context) {
         totalBytesUsed.set(0L)
         sessionBytesUsed.set(0L)
         isVpnSessionActive = false
+        overLimitNotificationShown.set(false)
         updateDataUsageInfo()
         Log.d(TAG, "Cleared current user state. Previous user's data is persisted.")
     }
@@ -358,6 +364,63 @@ class DataUsageManager(private val context: Context) {
         scope.launch {
             updateDataUsageStats()
             saveDataUsage()
+
+            // Force quota refresh from server after disconnect
+            // This ensures the UI shows updated quota, especially after auth failures
+            forceQuotaRefresh()
+        }
+    }
+
+    /**
+     * Force quota refresh from server, bypassing rate limiting
+     * Use this after critical events like disconnect, auth failure, etc.
+     */
+    suspend fun forceQuotaRefresh() {
+        val token = authToken
+        if (token == null) {
+            Log.w(TAG, "Cannot force quota refresh: no auth token")
+            return
+        }
+
+        try {
+            Log.d(TAG, "Force refreshing quota from server (bypassing rate limit)...")
+            val response = withContext(Dispatchers.IO) {
+                RetrofitClient.instance.getUsageQuota("Bearer $token")
+            }
+
+            if (response.isSuccessful) {
+                val quota = response.body()
+                if (quota != null) {
+                    // Use the correct field names from API response
+                    val safeUsed = max(0L, quota.bytesUsed)
+                    val effectiveLimit = when {
+                        quota.isUnlimited -> Long.MAX_VALUE
+                        quota.bytesLimit != null && quota.bytesLimit > 0 -> quota.bytesLimit
+                        else -> DEFAULT_FREE_LIMIT_BYTES // fallback for bad server responses
+                    }
+
+                    // Update server-synced values
+                    serverUsedBytes = safeUsed
+                    dataLimitBytes = effectiveLimit
+                    isUnlimited = quota.isUnlimited
+                    resetDate = quota.resetDate
+                    lastServerSync = System.currentTimeMillis()
+
+                    Log.d(TAG, "FORCED quota sync: used=${formatBytes(safeUsed)}, " +
+                            "limit=${if (quota.isUnlimited) "Unlimited" else formatBytes(effectiveLimit)}, " +
+                            "remaining=${quota.bytesRemaining ?: 0L}, " +
+                            "usagePercentage=${quota.usagePercentage}%, resetDate=${resetDate}")
+
+                    // Update UI with server data
+                    withContext(Dispatchers.Main) {
+                        updateDataUsageInfo()
+                    }
+                }
+            } else {
+                Log.w(TAG, "Failed to force quota refresh: ${response.code()} - ${response.message()}")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error force refreshing quota from server", e)
         }
     }
 
@@ -502,10 +565,24 @@ class DataUsageManager(private val context: Context) {
             isUnlimited = isUnlimited,
             isOverLimit = isOverLimit,
             formattedRemaining = if (isUnlimited) "Unlimited" else formatBytes(remainingBytes),
-            resetDate = resetDate  // Add reset date from API
+            resetDate = resetDate
         )
 
         _dataUsage.value = info
+
+        // Reset latch if user went back under limit
+        if (!isOverLimit) {
+            overLimitNotificationShown.set(false)
+        }
+
+        // Fire a persistent system notification when over limit, even in background
+        if (isOverLimit && overLimitNotificationShown.compareAndSet(false, true)) {
+            try {
+                VpnNotificationManager.showDataLimitExceeded(context)
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to show over-limit notification", e)
+            }
+        }
 
         // Log warning if approaching limit (only for limited users)
         if (!isUnlimited && usagePercentage > 80f) {
@@ -554,6 +631,7 @@ class DataUsageManager(private val context: Context) {
                 lastServerSync = 0L
                 updateDataUsageInfo()
                 Log.d(TAG, "Auth token set - awaiting server sync")
+                overLimitNotificationShown.set(false)
             }
         }
         // If token is same as previous, do nothing (normal screen navigation)
@@ -573,7 +651,9 @@ class DataUsageManager(private val context: Context) {
         // Rate limit syncing
         val now = System.currentTimeMillis()
         if (now - lastServerSync < SERVER_SYNC_INTERVAL_MS && lastServerSync > 0) {
-            Log.d(TAG, "Skipping quota sync, last sync was ${(now - lastServerSync) / 1000}s ago")
+            val secondsAgo = (now - lastServerSync) / 1000
+            val secondsUntilNext = (SERVER_SYNC_INTERVAL_MS - (now - lastServerSync)) / 1000
+            Log.d(TAG, "Skipping quota sync, last sync was ${secondsAgo}s ago (next allowed in ${secondsUntilNext}s)")
             return
         }
 
