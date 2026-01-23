@@ -35,6 +35,7 @@
     <!-- Generic registration messages -->
     <string name="registration_generic_error">We couldn’t create your account. Please check your information or try logging in.</string>
     <string name="registration_account_exists_login">An account with this email already exists. Please log in.</string>
+    <string name="login_failed">Login failed. Please try again.</string>
 
     <!-- Google Sign-In -->
     <string name="sign_in_with_google">Sign in with Google</string>

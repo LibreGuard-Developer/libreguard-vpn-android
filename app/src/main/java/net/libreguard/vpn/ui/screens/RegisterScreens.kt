@@ -471,7 +471,8 @@ fun ConfirmEmailScreen(
 ) {
     var info by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
-    var isLoading by remember { mutableStateOf(false) }
+    var isResendLoading by remember { mutableStateOf(false) }
+    var isLoginInProgress by remember { mutableStateOf(false) }
     var remainingMillis by remember { mutableStateOf(120_000L) }
     var expired by remember { mutableStateOf(false) }
 
@@ -516,7 +517,7 @@ fun ConfirmEmailScreen(
         }
     }
 
-    // Poll for confirmation
+    // Poll for confirmation only when a confirmation token is present; otherwise stay on waiting screen.
     LaunchedEffect(userId, initialToken) {
         info = context.getString(R.string.polling_waiting_confirmation)
         val uid = userId
@@ -531,84 +532,46 @@ fun ConfirmEmailScreen(
                 }.getOrNull()
 
                 if (confirmResp?.isSuccessful == true || confirmResp?.code() == 200 || confirmResp?.code() == 409) {
+                    Log.d("ConfirmEmail", "Confirmation accepted (code=${confirmResp?.code()}) - attempting login")
                     val loginReq = AuthRequest(
                         email = email,
                         password = password,
                         deviceId = deviceId,
                         appVersion = appVersion
                     )
-                    val loginResp = runCatching {
-                        RetrofitClient.instance.login(loginReq)
-                    }.getOrNull()
+                    val loginResp = runCatching { RetrofitClient.instance.login(loginReq) }.getOrNull()
 
                     if (loginResp?.isSuccessful == true) {
                         val authResponse = loginResp.body()
                         if (authResponse != null && !authResponse.token.isNullOrBlank()) {
                             val persisted = persistAuthResponse(authResponse)
-                        val savedToken = tokenManager.getAccessToken()
-                        if (persisted && savedToken != null) {
-                            onConfirmed(authResponse)
+                            val savedToken = tokenManager.getAccessToken()
+                            if (persisted && savedToken != null) {
+                                onConfirmed(authResponse)
+                            } else {
+                                Log.w("ConfirmEmail", "Failed to persist auth response or retrieve saved token after login. persisted=$persisted, savedToken=$savedToken")
+                                error = context.getString(R.string.login_failed)
+                            }
+                            return@LaunchedEffect
                         } else {
-                            Log.w("ConfirmEmail", "Failed to persist auth response or retrieve saved token after initial login. persisted=$persisted, savedToken=$savedToken")
-                            onBackToLogin()
+                            Log.w("ConfirmEmail", "Login response missing token after confirmation")
+                            error = context.getString(R.string.login_failed)
                         }
-                        return@LaunchedEffect
                     } else {
-                        Log.w("ConfirmEmail", "Initial login response missing token. authResponse=$authResponse")
-                    }
-                }
-                Log.w("ConfirmEmail", "Initial email confirmation or login failed, redirecting to login")
-                onBackToLogin()
-            } else {
-                Log.w("ConfirmEmail", "Confirmation response not successful: code=${confirmResp?.code()}, message=${confirmResp?.body()?.message}")
-                error = confirmResp?.body()?.message ?: "Failed to confirm email"
-                onBackToLogin()
-            }
-        } catch (e: Throwable) {
-            Log.e("ConfirmEmail", "Exception during email confirmation flow: ${e.message}", e)
-            error = e.localizedMessage
-            onBackToLogin()
-        }
-    } else if (!uid.isNullOrBlank() || email.isNotBlank()) {
-        if (email.isNotBlank() && password.isNotBlank()) {
-            Log.d("ConfirmEmail", "Attempting auto-login with email=$email")
-            val loginReq = AuthRequest(
-                email = email,
-                password = password,
-                deviceId = deviceId,
-                appVersion = appVersion
-            )
-            val loginResp = runCatching {
-                RetrofitClient.instance.login(loginReq)
-            }.getOrNull()
-
-            if (loginResp?.isSuccessful == true) {
-                val authResponse = loginResp.body()
-                if (authResponse != null && !authResponse.token.isNullOrBlank()) {
-                    val persisted = persistAuthResponse(authResponse)
-                    val savedToken = tokenManager.getAccessToken()
-                    if (persisted && savedToken != null) {
-                        Log.d("ConfirmEmail", "Auto-login successful, calling onConfirmed")
-                        onConfirmed(authResponse)
-                    } else {
-                        Log.w("ConfirmEmail", "Auto-login failed to persist token. persisted=$persisted, savedToken=$savedToken")
-                        onBackToLogin()
+                        Log.w("ConfirmEmail", "Login failed after confirmation: code=${loginResp?.code()}, success=${loginResp?.isSuccessful}")
+                        error = loginResp?.errorBody()?.string() ?: context.getString(R.string.login_failed)
                     }
                 } else {
-                    Log.w("ConfirmEmail", "Auto-login response missing token")
-                    onBackToLogin()
+                    Log.w("ConfirmEmail", "Confirmation response not successful: code=${confirmResp?.code()}, message=${confirmResp?.body()?.message}")
+                    error = confirmResp?.body()?.message ?: context.getString(R.string.verification_link_expired)
                 }
-            } else {
-                Log.w("ConfirmEmail", "Auto-login failed: code=${loginResp?.code()}, isSuccessful=${loginResp?.isSuccessful}")
-                onBackToLogin()
+            } catch (e: Throwable) {
+                Log.e("ConfirmEmail", "Exception during email confirmation flow: ${e.message}", e)
+                error = e.localizedMessage
             }
-        } else {
-            Log.w("ConfirmEmail", "Auto-login cannot proceed: missing email or password. email.isNotBlank=${email.isNotBlank()}, password.isNotBlank=${password.isNotBlank()}")
+        } else if (email.isBlank()) {
+            Log.w("ConfirmEmail", "No email provided, redirecting to login")
             onBackToLogin()
-        }
-    } else {
-        Log.w("ConfirmEmail", "No userId or email provided, redirecting to login")
-        onBackToLogin()
         }
     }
 
@@ -758,7 +721,7 @@ fun ConfirmEmailScreen(
             Button(
                 onClick = {
                     scope.launch {
-                        isLoading = true
+                        isResendLoading = true
                         error = null
                         try {
                             val resp = RetrofitClient.instance.resendConfirmation(ResendConfirmationRequest(email))
@@ -772,14 +735,14 @@ fun ConfirmEmailScreen(
                         } catch (t: Throwable) {
                             error = t.localizedMessage
                         } finally {
-                            isLoading = false
+                            isResendLoading = false
                         }
                     }
                 },
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(56.dp),
-                enabled = !isLoading,
+                enabled = !isResendLoading,
                 shape = RoundedCornerShape(12.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = if (expired) Primary else Secondary,
@@ -787,7 +750,7 @@ fun ConfirmEmailScreen(
                     disabledContainerColor = Secondary.copy(alpha = 0.5f)
                 )
             ) {
-                if (isLoading) {
+                if (isResendLoading) {
                     CircularProgressIndicator(
                         modifier = Modifier.size(24.dp),
                         color = if (expired) PrimaryForeground else Primary,
@@ -805,17 +768,68 @@ fun ConfirmEmailScreen(
 
             // Back to login button
             OutlinedButton(
-                onClick = onBackToLogin,
+                onClick = {
+                    scope.launch {
+                        if (email.isBlank() || password.isBlank()) {
+                            error = context.getString(R.string.login_failed)
+                            return@launch
+                        }
+                        isLoginInProgress = true
+                        error = null
+                        try {
+                            val loginReq = AuthRequest(
+                                email = email,
+                                password = password,
+                                deviceId = deviceId,
+                                appVersion = appVersion
+                            )
+                            val loginResp = runCatching { RetrofitClient.instance.login(loginReq) }.getOrNull()
+                            if (loginResp?.isSuccessful == true) {
+                                val authResponse = loginResp.body()
+                                if (authResponse != null && !authResponse.token.isNullOrBlank()) {
+                                    val persisted = persistAuthResponse(authResponse)
+                                    val savedToken = tokenManager.getAccessToken()
+                                    if (persisted && savedToken != null) {
+                                        onConfirmed(authResponse)
+                                    } else {
+                                        error = context.getString(R.string.login_failed)
+                                    }
+                                } else {
+                                    error = context.getString(R.string.login_failed)
+                                }
+                            } else {
+                                val code = loginResp?.code()
+                                error = if (code == 401) {
+                                    "Email not confirmed yet. Please tap the confirmation link, then try again."
+                                } else {
+                                    "Login failed: ${code ?: "unknown"}"
+                                }
+                            }
+                        } catch (t: Throwable) {
+                            error = t.localizedMessage
+                        } finally {
+                            isLoginInProgress = false
+                        }
+                    }
+                },
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(56.dp),
+                enabled = !isLoginInProgress,
                 shape = RoundedCornerShape(12.dp),
                 border = ButtonDefaults.outlinedButtonBorder(enabled = true)
             ) {
-                Text(
-                    text = "I've verified my email",
-                    style = MaterialTheme.typography.labelLarge
-                )
+                if (isLoginInProgress) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(24.dp),
+                        strokeWidth = 2.dp
+                    )
+                } else {
+                    Text(
+                        text = "I've verified my email",
+                        style = MaterialTheme.typography.labelLarge
+                    )
+                }
             }
 
             // Error message
