@@ -10,6 +10,7 @@ import android.content.pm.PackageManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Box
@@ -25,6 +26,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.compose.currentBackStackEntryAsState
 import kotlinx.coroutines.delay
 import net.libreguard.vpn.ui.screens.LoginScreen
 import net.libreguard.vpn.ui.screens.MainScreen
@@ -302,7 +304,8 @@ fun AppNavigation(modifier: Modifier = Modifier) {
 
     // Handle deep links that bring the app to foreground after email confirmation
     LaunchedEffect(Unit) {
-        val data: Uri? = (context as? MainActivity)?.intent?.data
+        val mainActivity = context as? MainActivity
+        val data: Uri? = mainActivity?.intent?.data
         data?.let { uri ->
             // We expect libreguardvpn://email/confirmed?userId=...&token=...
             // The token here is a CONFIRMATION token, NOT an auth token
@@ -330,8 +333,23 @@ fun AppNavigation(modifier: Modifier = Modifier) {
                         android.util.Log.d("MainActivity", "Credentials available for auto-login: email=$regEmail")
                     }
 
-                    // Navigate to confirmEmail screen which will handle the proper login flow
-                    navController.navigate("confirmEmail")
+                    // CRITICAL FIX: Only navigate to confirmEmail if not already there
+                    // If already on confirmEmail, the state update above will trigger auto-login
+                    // This prevents duplicate confirmEmail entries in back stack
+                    val currentRoute = navController.currentBackStackEntry?.destination?.route
+                    if (currentRoute != "confirmEmail") {
+                        android.util.Log.d("MainActivity", "Deep link: Navigating to confirmEmail from $currentRoute")
+                        navController.navigate("confirmEmail") {
+                            popUpTo("login") { inclusive = false }
+                            launchSingleTop = true
+                        }
+                    } else {
+                        android.util.Log.d("MainActivity", "Deep link: Already on confirmEmail, state updated for auto-login")
+                        // State is already updated above, ConfirmEmailScreen will handle auto-login
+                    }
+
+                    // Clear the intent data to prevent re-processing if activity is recreated
+                    mainActivity?.intent?.data = null
                 }
             }
         }
@@ -463,10 +481,9 @@ fun AppNavigation(modifier: Modifier = Modifier) {
             }
 
             authToken = savedToken ?: tokenManager.getAccessToken()
-
-            // Navigate to main if we have a valid token
             navController.navigate("main") {
-                popUpTo("login") { inclusive = true }
+                popUpTo(0) { inclusive = true }
+                launchSingleTop = true
             }
 
             // IMPORTANT: Trigger auto-connect AFTER navigation and delay
@@ -505,13 +522,35 @@ fun AppNavigation(modifier: Modifier = Modifier) {
         }
     }
 
+    // Global back handler - intercept ALL back presses based on current route
+    // Removed global handler in favor of per-screen handling to ensure correct interception order
+
     NavHost(
         navController = navController,
         startDestination = "login",
         modifier = modifier
     ) {
         composable("login") {
-            if (!isCheckingToken) { // Only show login screen after checking token
+            if (authToken != null) {
+                // Already authenticated - redirect immediately without rendering
+                LaunchedEffect(Unit) {
+                    navController.navigate("main") {
+                        popUpTo(0) { inclusive = true }
+                        launchSingleTop = true
+                    }
+                }
+                // Show empty box while redirecting
+                Box(modifier = Modifier.fillMaxSize())
+            } else if (isCheckingToken) {
+                // Show loading while checking token
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator()
+                }
+            } else {
+                // Not authenticated - show login screen
                 LoginScreen(
                     forcedLogoutReasonJson = forcedLogoutReasonJson,
                     onDismissForcedLogoutReason = { forcedLogoutReasonJson = null },
@@ -523,9 +562,16 @@ fun AppNavigation(modifier: Modifier = Modifier) {
                     },
                     onLoginSuccess = { token ->
                         authToken = token
-                        // Token is already saved in LoginScreen
+                        // Clear registration state on successful login
+                        regUserId = null
+                        regEmail = null
+                        regToken = null
+                        regPassword = null
+                        regPrefs.edit().clear().apply()
+
                         navController.navigate("main") {
-                            popUpTo("login") { inclusive = true }
+                            popUpTo(navController.graph.startDestinationId) { inclusive = true }
+                            launchSingleTop = true
                         }
                     },
                     onRequires2FA = { email ->
@@ -536,8 +582,6 @@ fun AppNavigation(modifier: Modifier = Modifier) {
                         navController.navigate("register")
                     },
                     onNavigateToEmailVerification = { email, _ ->
-                        // Preserve email for email verification flow - do NOT clear state
-                        // State will be cleared only on successful login or explicit "Back to Login"
                         regEmail = email
                         navController.navigate("confirmEmail")
                     }
@@ -546,108 +590,192 @@ fun AppNavigation(modifier: Modifier = Modifier) {
         }
 
         composable("register") {
-            RegisterScreen(
-                onBack = { navController.popBackStack() },
-                onRegistrationNeedsConfirmation = { userId, email, password, token ->
-                    regUserId = userId
-                    regEmail = email
-                    regPassword = password
-                    regToken = token
-                    navController.navigate("confirmEmail")
+            if (authToken != null) {
+                // Already authenticated - redirect immediately without rendering
+                LaunchedEffect(Unit) {
+                    navController.navigate("main") {
+                        popUpTo(0) { inclusive = true }
+                        launchSingleTop = true
+                    }
                 }
-            )
+                // Show empty box while redirecting
+                Box(modifier = Modifier.fillMaxSize())
+            } else {
+                RegisterScreen(
+                    onBack = { navController.popBackStack() },
+                    onRegistrationNeedsConfirmation = { userId, email, password, token ->
+                        regUserId = userId
+                        regEmail = email
+                        regPassword = password
+                        regToken = token
+                        navController.navigate("confirmEmail")
+                    }
+                )
+            }
         }
 
         composable("confirmEmail") {
-            val uid = regUserId
-            val emailParam = regEmail
-            val tokenParam = regToken
-            val passwordParam = regPassword
+            if (authToken != null) {
+                // Already authenticated - redirect immediately without rendering
+                LaunchedEffect(Unit) {
+                    // Clear registration state
+                    regUserId = null
+                    regEmail = null
+                    regToken = null
+                    regPassword = null
+                    regPrefs.edit().clear().apply()
 
-            android.util.Log.d("MainActivity", "confirmEmail composable: uid=$uid, email=$emailParam, password=${if (!passwordParam.isNullOrBlank()) "[set]" else "[EMPTY]"}, token=${tokenParam?.take(10)}")
-
-            if (!emailParam.isNullOrBlank()) {
-                val emailNonNull: String = emailParam
-                android.util.Log.d("MainActivity", "Rendering ConfirmEmailScreen with email=$emailNonNull, hasPassword=${!passwordParam.isNullOrBlank()}")
-                ConfirmEmailScreen(
-                    userId = uid ?: "",
-                    email = emailNonNull,
-                    password = passwordParam ?: "",
-                    initialToken = tokenParam,
-                    onConfirmed = { authResponse ->
-                        android.util.Log.d("MainActivity", "onConfirmed called with token=${authResponse.token?.take(30)}...")
-                        // Persist full auth response like LoginScreen does
-                        val tokenManager = TokenManager(context)
-                        if (authResponse.token != null) {
-                            tokenManager.saveTokens(authResponse.token, authResponse.refreshToken ?: "")
-                            authResponse.deviceId?.let { tokenManager.saveDeviceId(it) }
-                            if (authResponse.activeDevices != null && authResponse.maxDevices != null) {
-                                tokenManager.saveDeviceMetadata(authResponse.activeDevices, authResponse.maxDevices)
-                            }
-                            authToken = authResponse.token
-                            android.util.Log.d("MainActivity", "Token saved and authToken set, navigating to main")
-
-                            // Navigate and clear state only after successful login
-                            navController.navigate("main") {
-                                popUpTo("login") { inclusive = true }
-                            }
-                            // Clear registration state only after successful navigation
-                            regUserId = null; regEmail = null; regToken = null; regPassword = null
-                        } else {
-                            android.util.Log.e("MainActivity", "onConfirmed called but token is null")
-                        }
-                    },
-                    onBackToLogin = {
-                        // Clear registration flow state
-                        regUserId = null; regEmail = null; regToken = null; regPassword = null
-                        navController.navigate("login") {
-                            popUpTo("login") { inclusive = true }
-                        }
+                    navController.navigate("main") {
+                        popUpTo(navController.graph.startDestinationId) { inclusive = true }
+                        launchSingleTop = true
                     }
-                )
+                }
+                // Show empty box while redirecting
+                Box(modifier = Modifier.fillMaxSize())
             } else {
-                // Email is missing - can't do auto-login without credentials
-                // But only redirect if we haven't successfully logged in yet
-                if (authToken == null) {
-                    // This can happen if app was killed and credentials weren't persisted
-                    android.util.Log.e("MainActivity", "confirmEmail: Email is missing and not logged in! Redirecting to login.")
-                    LaunchedEffect(Unit) {
-                        regUserId = null; regEmail = null; regToken = null; regPassword = null
-                        navController.navigate("login") {
-                            popUpTo("confirmEmail") { inclusive = true }
+                val uid = regUserId
+                val emailParam = regEmail
+                val tokenParam = regToken
+                val passwordParam = regPassword
+
+                android.util.Log.d("MainActivity", "confirmEmail composable: uid=$uid, email=$emailParam, password=${if (!passwordParam.isNullOrBlank()) "[set]" else "[EMPTY]"}, token=${tokenParam?.take(10)}")
+
+                if (!emailParam.isNullOrBlank()) {
+                    val emailNonNull: String = emailParam
+                    android.util.Log.d("MainActivity", "Rendering ConfirmEmailScreen with email=$emailNonNull, hasPassword=${!passwordParam.isNullOrBlank()}")
+                    ConfirmEmailScreen(
+                        userId = uid ?: "",
+                        email = emailNonNull,
+                        password = passwordParam ?: "",
+                        initialToken = tokenParam,
+                        onConfirmed = { authResponse ->
+                            android.util.Log.d("MainActivity", "onConfirmed called with token=${authResponse.token?.take(30)}...")
+                            // Persist full auth response like LoginScreen does
+                            val tokenManager = TokenManager(context)
+                            if (authResponse.token != null) {
+                                tokenManager.saveTokens(authResponse.token, authResponse.refreshToken ?: "")
+                                authResponse.deviceId?.let { tokenManager.saveDeviceId(it) }
+                                if (authResponse.activeDevices != null && authResponse.maxDevices != null) {
+                                    tokenManager.saveDeviceMetadata(authResponse.activeDevices, authResponse.maxDevices)
+                                }
+                                authToken = authResponse.token
+                                android.util.Log.d("MainActivity", "Token saved and authToken set, navigating to main")
+
+                                // Clear registration state BEFORE navigation
+                                regUserId = null
+                                regEmail = null
+                                regToken = null
+                                regPassword = null
+                                regPrefs.edit().clear().apply()
+
+                                // Navigate with complete back stack clearing
+                                navController.navigate("main") {
+                                    popUpTo(0) { inclusive = true }
+                                    launchSingleTop = true
+                                }
+                            } else {
+                                android.util.Log.e("MainActivity", "onConfirmed called but token is null")
+                            }
+                        },
+                        onBackToLogin = {
+                            // Clear registration flow state
+                            regUserId = null
+                            regEmail = null
+                            regToken = null
+                            regPassword = null
+                            regPrefs.edit().clear().apply()
+
+                            navController.navigate("login") {
+                                popUpTo(0) { inclusive = true }
+                                launchSingleTop = true
+                            }
                         }
-                    }
+                    )
                 } else {
-                    // Already logged in (authToken is set), just show nothing
-                    // This prevents redirect loop when state is cleared after successful login
-                    android.util.Log.d("MainActivity", "confirmEmail: Email is missing but already logged in (authToken present), doing nothing")
+                    // Email is missing - can't do auto-login without credentials
+                    // But only redirect if we haven't successfully logged in yet
+                    if (authToken == null) {
+                        // This can happen if app was killed and credentials weren't persisted
+                        android.util.Log.e("MainActivity", "confirmEmail: Email is missing and not logged in! Redirecting to login.")
+                        LaunchedEffect(Unit) {
+                            regUserId = null
+                            regEmail = null
+                            regToken = null
+                            regPassword = null
+                            regPrefs.edit().clear().apply()
+
+                            navController.navigate("login") {
+                                popUpTo(0) { inclusive = true }
+                                launchSingleTop = true
+                            }
+                        }
+                    } else {
+                        // Already logged in (authToken is set), just show nothing
+                        // This prevents redirect loop when state is cleared after successful login
+                        android.util.Log.d("MainActivity", "confirmEmail: Email is missing but already logged in (authToken present), doing nothing")
+                    }
                 }
             }
         }
 
         composable("twoFactor") {
-            pendingEmail?.let { email ->
+            if (authToken != null) {
+                // Already authenticated - redirect immediately without rendering
+                LaunchedEffect(Unit) {
+                    navController.navigate("main") {
+                        popUpTo(0) { inclusive = true }
+                        launchSingleTop = true
+                    }
+                }
+                // Show empty box while redirecting
+                Box(modifier = Modifier.fillMaxSize())
+            } else if (pendingEmail != null) {
                 TwoFactorVerificationScreen(
-                    email = email,
+                    email = pendingEmail!!,
                     onVerificationSuccess = { token ->
                         authToken = token
                         pendingEmail = null
+                        // Clear registration state on successful 2FA login
+                        regUserId = null
+                        regEmail = null
+                        regToken = null
+                        regPassword = null
+                        regPrefs.edit().clear().apply()
+
                         navController.navigate("main") {
-                            popUpTo("login") { inclusive = true }
+                            popUpTo(0) { inclusive = true }
+                            launchSingleTop = true
                         }
                     },
                     onBackToLogin = {
                         pendingEmail = null
                         navController.navigate("login") {
-                            popUpTo("twoFactor") { inclusive = true }
+                            popUpTo(0) { inclusive = true }
+                            launchSingleTop = true
                         }
                     }
                 )
+            } else {
+                // No pending email and not authenticated - redirect to login
+                LaunchedEffect(Unit) {
+                    navController.navigate("login") {
+                        popUpTo(0) { inclusive = true }
+                        launchSingleTop = true
+                    }
+                }
+                Box(modifier = Modifier.fillMaxSize())
             }
         }
 
         composable("main") {
             authToken?.let { token ->
+                // Force BackHandler here inside the composable
+                // This ensures it registers AFTER NavHost's internal handler and actually intercepts the event
+                BackHandler(enabled = true) {
+                    // Exit app when pressing back on main screen
+                    (context as? ComponentActivity)?.finish()
+                }
+
                 MainScreen(
                     authToken = token,
                     vpnViewModel = vpnViewModel,
@@ -656,7 +784,8 @@ fun AppNavigation(modifier: Modifier = Modifier) {
                         coroutineScope.launch {
                             disconnectThenLogout {
                                 navController.navigate("login") {
-                                    popUpTo("main") { inclusive = true }
+                                    popUpTo(navController.graph.startDestinationId) { inclusive = true }
+                                    launchSingleTop = true
                                 }
                             }
                         }
@@ -668,16 +797,13 @@ fun AppNavigation(modifier: Modifier = Modifier) {
                         navController.navigate("upgrade")
                     },
                     onNavigateToTwoFactor = {
-                        android.util.Log.d("MainActivity", "onNavigateToTwoFactor (MainScreen) called, authToken is ${if (authToken == null) "NULL" else "present"}")
                         navController.navigate("twoFactorSettings")
                     }
                 )
-            } ?: run {
-                // If token is null, navigate back to login
-                LaunchedEffect(Unit) {
-                    navController.navigate("login") {
-                        popUpTo("main") { inclusive = true }
-                    }
+            } ?: LaunchedEffect(Unit) {
+                navController.navigate("login") {
+                    popUpTo(navController.graph.startDestinationId) { inclusive = true }
+                    launchSingleTop = true
                 }
             }
         }
@@ -685,88 +811,69 @@ fun AppNavigation(modifier: Modifier = Modifier) {
         composable("settings") {
             authToken?.let { token ->
                 SettingsScreen(
-                    onNavigateBack = {
-                        navController.popBackStack()
-                    },
-                    onNavigateToTwoFactor = {
-                        android.util.Log.d("MainActivity", "onNavigateToTwoFactor called, authToken is ${if (authToken == null) "NULL" else "present"}")
-                        navController.navigate("twoFactorSettings")
-                    },
-                    onNavigateToUpgrade = {
-                        navController.navigate("upgrade")
-                    },
+                    onNavigateBack = { navController.popBackStack() },
+                    onNavigateToTwoFactor = { navController.navigate("twoFactorSettings") },
+                    onNavigateToUpgrade = { navController.navigate("upgrade") },
                     onLogout = {
                         // Disconnect VPN first, then logout
                         coroutineScope.launch {
                             disconnectThenLogout {
                                 navController.navigate("login") {
                                     popUpTo(0) { inclusive = true }
+                                    launchSingleTop = true
                                 }
                             }
                         }
                     }
                 )
+            } ?: LaunchedEffect(Unit) {
+                navController.navigate("login") {
+                    popUpTo(0) { inclusive = true }
+                    launchSingleTop = true
+                }
             }
         }
 
         composable("twoFactorSettings") {
-            android.util.Log.d("MainActivity", "twoFactorSettings composable called, authToken is ${if (authToken == null) "NULL" else "present"}")
             authToken?.let { token ->
-                android.util.Log.d("MainActivity", "Rendering TwoFactorSettingsScreen with token: ${token.take(20)}...")
                 TwoFactorSettingsScreen(
                     authToken = token,
-                    onNavigateBack = {
-                        android.util.Log.d("MainActivity", "TwoFactorSettings onNavigateBack called")
-                        navController.popBackStack()
-                    }
+                    onNavigateBack = { navController.popBackStack() }
                 )
-            } ?: run {
-                // If token is null, this shouldn't happen, but log it
-                android.util.Log.e("MainActivity", "twoFactorSettings: authToken is NULL! Redirecting to login")
-                LaunchedEffect(Unit) {
-                    navController.navigate("login") {
-                        popUpTo("twoFactorSettings") { inclusive = true }
-                    }
+            } ?: LaunchedEffect(Unit) {
+                navController.navigate("login") {
+                    popUpTo(0) { inclusive = true }
+                    launchSingleTop = true
                 }
             }
         }
 
-        // ===== SUBSCRIPTION ROUTES =====
-        composable("upgrade") {
-            // Allow access to upgrade even when logged out (so forced-logout flows can upgrade).
-            UpgradeScreen(
-                onNavigateBack = {
-                    navController.popBackStack()
-                },
-                onChooseCard = {
-                    navController.navigate("payment/card")
-                },
-                onChooseMonero = {
-                    navController.navigate("payment/monero")
-                }
-            )
-        }
-
         composable("deviceManagement") {
-            // Device management screen for handling device limit scenarios
-            Log.d("MainActivity", "========== NAVIGATED TO DEVICE MANAGEMENT ==========")
-            Log.d("MainActivity", "Auth token: ${if (authToken.isNullOrBlank()) "NULL/BLANK" else "EXISTS"}")
-
-            DeviceManagementScreen(
-                onNavigateBack = {
-                    Log.d("MainActivity", "Device management: Back pressed")
-                    navController.popBackStack()
-                },
-                onDeviceRemoved = {
-                    Log.d("MainActivity", "Device management: Device removed callback")
-                    // Optionally navigate back to login after successful device removal
-                    // User can then retry login
+            if (authToken == null) {
+                LaunchedEffect(Unit) {
+                    navController.navigate("login") {
+                        popUpTo(0) { inclusive = true }
+                        launchSingleTop = true
+                    }
                 }
-            )
+                Box(modifier = Modifier.fillMaxSize())
+            } else {
+                DeviceManagementScreen(
+                    onNavigateBack = { navController.popBackStack() },
+                    onDeviceRemoved = { }
+                )
+            }
         }
 
         composable("payment/card") {
             authToken?.let { token ->
+                // Force BackHandler to redirect to upgrade instead of auth screens
+                BackHandler(enabled = true) {
+                     navController.navigate("upgrade") {
+                        popUpTo("payment/card") { inclusive = true }
+                    }
+                }
+
                 Log.d("PaymentCard", "payment/card route composable called with token: ${token.take(20)}...")
 
                 // Create stable viewModel instance that persists across recompositions
@@ -834,14 +941,23 @@ fun AppNavigation(modifier: Modifier = Modifier) {
                 // If logged out, redirect to login; payment requires auth.
                 LaunchedEffect(Unit) {
                     navController.navigate("login") {
-                        popUpTo("payment/card") { inclusive = true }
+                        popUpTo(0) { inclusive = true }
+                        launchSingleTop = true
                     }
                 }
+                Box(modifier = Modifier.fillMaxSize())
             }
         }
 
         composable("payment/monero") {
             authToken?.let { token ->
+                // Force BackHandler to redirect to upgrade instead of auth screens
+                BackHandler(enabled = true) {
+                     navController.navigate("upgrade") {
+                        popUpTo("payment/monero") { inclusive = true }
+                    }
+                }
+
                 val subscriptionViewModel: SubscriptionViewModel = viewModel()
                 val moneroInvoice by subscriptionViewModel.moneroInvoice.collectAsState()
                 val moneroPaymentStatus by subscriptionViewModel.moneroPaymentStatus.collectAsState()
@@ -909,9 +1025,11 @@ fun AppNavigation(modifier: Modifier = Modifier) {
                 // If logged out, redirect to login; payment requires auth.
                 LaunchedEffect(Unit) {
                     navController.navigate("login") {
-                        popUpTo("payment/monero") { inclusive = true }
+                        popUpTo(0) { inclusive = true }
+                        launchSingleTop = true
                     }
                 }
+                Box(modifier = Modifier.fillMaxSize())
             }
         }
     }
