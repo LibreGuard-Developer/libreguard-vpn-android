@@ -848,6 +848,14 @@ fun AppNavigation(modifier: Modifier = Modifier) {
             }
         }
 
+        composable("upgrade") {
+            UpgradeScreen(
+                onNavigateBack = { navController.popBackStack() },
+                onChooseCard = { navController.navigate("payment/card") },
+                onChooseMonero = { navController.navigate("payment/monero") }
+            )
+        }
+
         composable("deviceManagement") {
             if (authToken == null) {
                 LaunchedEffect(Unit) {
