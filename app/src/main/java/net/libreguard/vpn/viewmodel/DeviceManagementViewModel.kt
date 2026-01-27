@@ -88,7 +88,8 @@ class DeviceManagementViewModel(application: Application) : AndroidViewModel(app
                     val deviceList = response.body()?.devices ?: emptyList()
                     Log.d(TAG, "SUCCESS: Fetched ${deviceList.size} devices")
                     deviceList.forEachIndexed { index, device ->
-                        Log.d(TAG, "  Device $index: id=${device.id}, deviceId=${device.deviceId.takeLast(8)}, isActive=${device.isActive}")
+                        val idTail = (device.deviceIdHash ?: device.deviceId ?: "").takeLast(8)
+                        Log.d(TAG, "  Device $index: id=${device.id}, deviceId=$idTail, isActive=${device.isActive}")
                     }
                     _devices.value = deviceList
                 } else {
@@ -134,7 +135,8 @@ class DeviceManagementViewModel(application: Application) : AndroidViewModel(app
             return
         }
 
-        Log.d(TAG, "Found device: deviceId=${device.deviceId.takeLast(8)}, isActive=${device.isActive}")
+        val idTail = (device.deviceIdHash ?: device.deviceId ?: "").takeLast(8)
+        Log.d(TAG, "Found device: deviceId=$idTail, isActive=${device.isActive}")
 
         viewModelScope.launch {
             try {

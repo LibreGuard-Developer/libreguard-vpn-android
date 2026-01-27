@@ -203,7 +203,9 @@ data class DeviceDto(
     @SerializedName("id")
     val id: Int,
     @SerializedName("deviceId")
-    val deviceId: String,
+    val deviceId: String? = null,
+    @SerializedName("deviceIdHash")
+    val deviceIdHash: String? = null,
     @SerializedName("deviceName")
     val deviceName: String? = null,
     @SerializedName("deviceType")

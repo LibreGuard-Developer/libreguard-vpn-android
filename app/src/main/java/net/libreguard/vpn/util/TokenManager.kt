@@ -59,20 +59,21 @@ class TokenManager(context: Context) {
     }
 
     /**
-     * Returns a stable deviceId, ensuring it is persisted.
+     * Returns a stable deviceId (SHA-256 hash). Ensures it is persisted.
      * Backend requires DeviceId for refresh and 2FA token issuance.
      */
     fun requireDeviceId(): String {
         val existing = getDeviceId()
         if (!existing.isNullOrBlank()) return existing
         ensureDeviceIdPersisted()
-        return getDeviceId() ?: DeviceIdManager(appContext).getDeviceId().also { saveDeviceId(it) }
+        return getDeviceId() ?: DeviceIdManager(appContext).getDeviceIdHash().also { saveDeviceId(it) }
     }
 
     private fun ensureDeviceIdPersisted() {
-        if (!getDeviceId().isNullOrBlank()) return
-        val deviceId = DeviceIdManager(appContext).getDeviceId()
-        saveDeviceId(deviceId)
+        val current = getDeviceId()
+        if (!current.isNullOrBlank()) return
+        val hashedId = DeviceIdManager(appContext).getDeviceIdHash()
+        saveDeviceId(hashedId)
     }
 
     fun getAppVersion(): String? {
@@ -243,8 +244,14 @@ class TokenManager(context: Context) {
      * Used for enforcing device limits and preventing token reuse.
      */
     fun saveDeviceId(deviceId: String) {
+        // Persist hashed device id; if legacy raw is passed, migrate by hashing it.
+        val normalized = if (deviceId.length == 64 && deviceId.all { it.isDigit() || (it in 'a'..'f') }) {
+            deviceId
+        } else {
+            DeviceIdManager(appContext).getDeviceIdHash()
+        }
         sharedPreferences.edit()
-            .putString(KEY_DEVICE_ID, deviceId)
+            .putString(KEY_DEVICE_ID, normalized)
             .apply()
     }
 
@@ -253,7 +260,17 @@ class TokenManager(context: Context) {
      * Returns null if no device has been bound.
      */
     fun getDeviceId(): String? {
-        return sharedPreferences.getString(KEY_DEVICE_ID, null)
+        val stored = sharedPreferences.getString(KEY_DEVICE_ID, null)
+        if (stored.isNullOrBlank()) return null
+        // If legacy raw was stored, migrate to hash
+        val isHexHash = stored.length == 64 && stored.all { it.isDigit() || (it in 'a'..'f') }
+        return if (isHexHash) {
+            stored
+        } else {
+            val hashed = DeviceIdManager(appContext).getDeviceIdHash()
+            sharedPreferences.edit().putString(KEY_DEVICE_ID, hashed).apply()
+            hashed
+        }
     }
 
     /**

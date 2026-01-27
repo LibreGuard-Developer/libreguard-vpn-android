@@ -130,6 +130,10 @@ fun LoginScreen(
 
     val tokenManager = RetrofitClient.getTokenManager()
 
+    // Helpers for device identity (prefer hashed IDs)
+    fun DeviceDto.remoteId(): String = (deviceIdHash?.takeIf { it.isNotBlank() } ?: deviceId).orEmpty()
+    fun DeviceDto.displayTail(length: Int = 8): String = remoteId().takeLast(length)
+
     // Check for pending device limit exceeded (from AuthInterceptor broadcast - user NOT logged out)
     LaunchedEffect(Unit) {
         val prefs = context.getSharedPreferences("vpn_state_prefs", Context.MODE_PRIVATE)
@@ -155,6 +159,7 @@ fun LoginScreen(
                         devices.add(DeviceDto(
                             id = dj.optInt("id", 0),
                             deviceId = dj.optString("deviceId", ""),
+                            deviceIdHash = dj.optString("deviceIdHash", null),
                             appVersion = dj.optString("appVersion"),
                             lastSeenAt = dj.optString("lastSeenAt"),
                             daysSinceLastSeen = dj.optInt("daysSinceLastSeen", 0),
@@ -233,7 +238,7 @@ fun LoginScreen(
 
             if (!parsed.devices.isNullOrEmpty()) {
                 parsed.devices.forEachIndexed { index, device ->
-                    android.util.Log.d("LoginScreen", "    Device $index: id=${device.id}, deviceId=${device.deviceId.takeLast(8)}, isActive=${device.isActive}")
+                    android.util.Log.d("LoginScreen", "    Device $index: id=${device.id}, deviceId=${device.displayTail(8)}, isActive=${device.isActive}")
                 }
             } else {
                 android.util.Log.w("LoginScreen", "WARNING: No devices array in 409 response - will show web dashboard link")
@@ -421,6 +426,7 @@ fun LoginScreen(
                                         manualDevices.add(DeviceDto(
                                             id = dj.optInt("id", 0),
                                             deviceId = dj.optString("deviceId", ""),
+                                            deviceIdHash = dj.optString("deviceIdHash", null),
                                             appVersion = dj.optString("appVersion"),
                                             lastSeenAt = dj.optString("lastSeenAt"),
                                             daysSinceLastSeen = dj.optInt("daysSinceLastSeen", 0),
@@ -790,6 +796,7 @@ fun LoginScreen(
                                                                 manualDevices.add(DeviceDto(
                                                                     id = dj.optInt("id", 0),
                                                                     deviceId = dj.optString("deviceId", ""),
+                                                                    deviceIdHash = dj.optString("deviceIdHash", null),
                                                                     appVersion = dj.optString("appVersion"),
                                                                     lastSeenAt = dj.optString("lastSeenAt"),
                                                                     daysSinceLastSeen = dj.optInt("daysSinceLastSeen", 0),
@@ -798,10 +805,10 @@ fun LoginScreen(
                                                             }
                                                             deviceLimitError = DeviceLimitErrorResponse(
                                                                 message = jo.optString("message", "Device limit reached"),
-                                                                errorCode = "DEVICE_LIMIT_EXCEEDED",
-                                                                currentDevices = activeDevicesCount,
-                                                                maxDevices = maxDevicesCount,
-                                                                planType = authResponse?.planType,
+                                                                errorCode = jo.optString("errorCode", "DEVICE_LIMIT_EXCEEDED"),
+                                                                currentDevices = jo.optInt("currentDevices", 0),
+                                                                maxDevices = jo.optInt("maxDevices", 0),
+                                                                planType = jo.optString("planType"),
                                                                 devices = manualDevices,
                                                                 email = email
                                                             )
@@ -1185,6 +1192,7 @@ fun LoginScreen(
                                     DeviceDto(
                                         id = deviceJson.optInt("id", 0),
                                         deviceId = deviceJson.optString("deviceId", ""),
+                                        deviceIdHash = deviceJson.optString("deviceIdHash", null),
                                         appVersion = deviceJson.optString("appVersion", ""),
                                         lastSeenAt = deviceJson.optString("lastSeenAt", ""),
                                         daysSinceLastSeen = deviceJson.optInt("daysSinceLastSeen", 0),
@@ -1378,7 +1386,7 @@ fun LoginScreen(
 
         // Filter out the current device - users can only remove OTHER devices
         // Removing the current device is useless as it will be re-registered on login
-        val otherDevices = deviceLimitError?.devices?.filter { it.deviceId != deviceId }
+        val otherDevices = deviceLimitError?.devices?.filter { it.remoteId() != deviceId }
         val hasOnlyCurrentDevice = otherDevices.isNullOrEmpty()
 
         android.util.Log.d("LoginScreen", "Current deviceId=$deviceId, total devices=${deviceLimitError?.devices?.size}, other devices=${otherDevices?.size}")
@@ -1504,7 +1512,7 @@ fun LoginScreen(
                             ) {
                                 Column(modifier = Modifier.padding(12.dp)) {
                                     Text(
-                                        text = device.deviceId.takeLast(12),
+                                        text = device.displayTail(12),
                                         style = MaterialTheme.typography.bodyMedium,
                                         fontWeight = FontWeight.Bold,
                                         color = Foreground
@@ -1560,7 +1568,7 @@ fun LoginScreen(
         val showDevices = devicesFromPasswordLogin != null && (passwordValidated || passwordForDeviceManagement.length >= 8)
 
         // Filter out the current device - users can only remove OTHER devices
-        val otherDevicesFromPasswordLogin = devicesFromPasswordLogin?.filter { it.deviceId != deviceId }
+        val otherDevicesFromPasswordLogin = devicesFromPasswordLogin?.filter { it.remoteId() != deviceId }
         val hasOnlyCurrentDeviceInPasswordDialog = showDevices && otherDevicesFromPasswordLogin.isNullOrEmpty()
 
         AlertDialog(
@@ -1715,7 +1723,7 @@ fun LoginScreen(
                                 ) {
                                     Column(modifier = Modifier.padding(12.dp)) {
                                         Text(
-                                            text = device.deviceId.takeLast(12),
+                                            text = device.displayTail(12),
                                             style = MaterialTheme.typography.bodyMedium,
                                             fontWeight = FontWeight.Bold,
                                             color = Foreground
@@ -1990,3 +1998,5 @@ private fun mapGoogleSignInFailure(ex: Throwable): String {
         ex.localizedMessage ?: "Unknown error"
     }
 }
+
+

@@ -49,6 +49,8 @@ fun DeviceManagementScreen(
     val successMessage by viewModel.successMessage.collectAsState()
 
     val currentDeviceId = remember { DeviceIdManager(context).getDeviceId() }
+    fun DeviceDto.remoteId(): String = (deviceIdHash?.takeIf { it.isNotBlank() } ?: deviceId).orEmpty()
+
     val snackbarHostState = remember { SnackbarHostState() }
 
     var showRemoveAllOthersDialog by remember { mutableStateOf(false) }
@@ -187,7 +189,7 @@ fun DeviceManagementScreen(
                         items(devices, key = { it.id }) { device ->
                             DeviceCard(
                                 device = device,
-                                isCurrentDevice = device.deviceId == currentDeviceId,
+                                isCurrentDevice = device.remoteId() == currentDeviceId,
                                 onRemove = { viewModel.removeDevice(device.id) },
                                 onDelete = { deviceToDelete = device }
                             )
@@ -217,7 +219,7 @@ fun DeviceCard(
     onDelete: () -> Unit
 ) {
     val deviceDisplayName = device.deviceName ?: "Unknown Device"
-    val deviceIdentifier = DeviceNameGenerator.formatDeviceIdentifier(device.deviceId)
+    val deviceIdentifier = DeviceNameGenerator.formatDeviceIdentifier(device.deviceId ?: device.deviceIdHash ?: "")
     val lastActiveText = formatLastActive(device.lastSeenAt)
 
     Card(
@@ -376,7 +378,7 @@ fun BulkActionButtons(
     onRemoveAllInactive: () -> Unit,
     currentDeviceId: String
 ) {
-    val otherDevicesCount = devices.count { it.deviceId != currentDeviceId }
+    val otherDevicesCount = devices.count { (it.deviceIdHash ?: it.deviceId) != currentDeviceId }
     val inactiveDevicesCount = devices.count { !it.isActive }
 
     Column(
@@ -604,4 +606,3 @@ fun formatLastActive(lastActive: String?): String {
         "Unknown"
     }
 }
-
