@@ -1,9 +1,14 @@
 package net.libreguard.vpn.ui.screens
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.graphics.Bitmap
+import android.widget.Toast
 import android.graphics.Color as AndroidColor
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -16,6 +21,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextAlign
@@ -504,6 +510,7 @@ private fun SetupTwoFactorDialogNew(
     onConfirm: () -> Unit,
     onDismiss: () -> Unit
 ) {
+    val context = LocalContext.current
     Dialog(onDismissRequest = onDismiss) {
         Surface(
             modifier = Modifier
@@ -567,14 +574,25 @@ private fun SetupTwoFactorDialogNew(
                     shape = RoundedCornerShape(8.dp),
                     color = Secondary
                 ) {
-                    Text(
-                        text = sharedKey,
-                        modifier = Modifier.padding(12.dp),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Primary,
-                        fontFamily = FontFamily.Monospace,
-                        textAlign = TextAlign.Center
-                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                val clip = ClipData.newPlainText("Shared Key", sharedKey)
+                                clipboard.setPrimaryClip(clip)
+                                Toast.makeText(context, "Shared key copied to clipboard", Toast.LENGTH_SHORT).show()
+                            }
+                            .padding(12.dp)
+                    ) {
+                        Text(
+                            text = sharedKey,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Primary,
+                            fontFamily = FontFamily.Monospace,
+                            textAlign = TextAlign.Center
+                        )
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(24.dp))
@@ -627,6 +645,7 @@ private fun RecoveryCodesDialogNew(
     recoveryCodes: List<String>,
     onDismiss: () -> Unit
 ) {
+    val context = LocalContext.current
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = Background,
@@ -680,13 +699,24 @@ private fun RecoveryCodesDialogNew(
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
                         recoveryCodes.forEach { code ->
-                            Text(
-                                text = code,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = Primary,
-                                fontFamily = FontFamily.Monospace,
-                                modifier = Modifier.padding(vertical = 4.dp)
-                            )
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                        val clip = ClipData.newPlainText("Recovery Code", code)
+                                        clipboard.setPrimaryClip(clip)
+                                        Toast.makeText(context, "Recovery code copied to clipboard", Toast.LENGTH_SHORT).show()
+                                    }
+                                    .padding(vertical = 4.dp)
+                            ) {
+                                Text(
+                                    text = code,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = Primary,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
                         }
                     }
                 }
