@@ -35,6 +35,9 @@ fun MoneroPaymentScreen(
     hoursRemaining: Int,
     minutesRemaining: Int,
     secondsRemaining: Int = 0,
+    paymentStatus: String? = null,
+    amountReceived: Double? = null,
+    amountRequired: Double? = null,
     onClose: () -> Unit,
     onRefresh: (() -> Unit)? = null,
     onSuccess: (() -> Unit)? = null
@@ -48,9 +51,16 @@ fun MoneroPaymentScreen(
         (confirmations.toFloat() / requiredConfirmations.coerceAtLeast(1)).coerceIn(0f, 1f)
     }
 
-    // CRITICAL FIX: Trigger onSuccess callback when payment is fully confirmed
-    LaunchedEffect(confirmations, requiredConfirmations) {
-        if (confirmations >= requiredConfirmations && confirmations > 0 && requiredConfirmations > 0) {
+    val normalizedStatus = paymentStatus?.trim()
+    val isUnderpaid = amountReceived != null && amountRequired != null && amountReceived < amountRequired
+    val shortfall = if (isUnderpaid && amountReceived != null && amountRequired != null) {
+        (amountRequired - amountReceived).coerceAtLeast(0.0)
+    } else {
+        0.0
+    }
+
+    LaunchedEffect(normalizedStatus) {
+        if (normalizedStatus != null && normalizedStatus.equals("Succeeded", ignoreCase = true)) {
             onSuccess?.invoke()
         }
     }
@@ -241,6 +251,51 @@ fun MoneroPaymentScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
+            // Payment Status
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                color = CardBackground,
+                border = ButtonDefaults.outlinedButtonBorder(enabled = true)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = "Payment status",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = Foreground
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = normalizedStatus ?: "Waiting for payment",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (normalizedStatus?.equals("Succeeded", ignoreCase = true) == true) Primary else MutedForeground
+                    )
+                    if (amountRequired != null && amountReceived != null) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "Received: ${String.format("%.6f", amountReceived)} XMR",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Foreground
+                        )
+                        Text(
+                            text = "Required: ${String.format("%.6f", amountRequired)} XMR",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Foreground
+                        )
+                        if (isUnderpaid) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Shortfall: ${String.format("%.6f", shortfall)} XMR",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MutedForeground
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
             // Confirmation Status
             Surface(
                 modifier = Modifier.fillMaxWidth(),
@@ -250,9 +305,8 @@ fun MoneroPaymentScreen(
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Text(
                             text = "Blockchain Confirmations",

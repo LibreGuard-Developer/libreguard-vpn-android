@@ -625,20 +625,18 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
 
                     if (response.isSuccessful && response.body() != null) {
                         val statusResponse = response.body()!!
-                        val shouldStop = statusResponse.status.equals("Completed", ignoreCase = true) ||
-                            statusResponse.status.equals("Paid", ignoreCase = true) ||
-                            statusResponse.status.equals("Expired", ignoreCase = true) ||
+                        val isSucceeded = statusResponse.status.equals("Succeeded", ignoreCase = true)
+                        val isTerminalFailure = statusResponse.status.equals("Expired", ignoreCase = true) ||
                             statusResponse.status.equals("Failed", ignoreCase = true)
+                        val shouldStop = isSucceeded || isTerminalFailure
 
                         withContext(Dispatchers.Main) {
                             _moneroPaymentStatus.value = statusResponse
                             Log.d(TAG, "Monero payment status: ${statusResponse.status}, confirmations: ${statusResponse.confirmations}/${statusResponse.requiredConfirmations}")
 
-                            // Stop polling if completed, paid, expired, or failed
                             if (shouldStop) {
                                 _isMoneroPolling.value = false
-                                if (statusResponse.status.equals("Completed", ignoreCase = true) ||
-                                    statusResponse.status.equals("Paid", ignoreCase = true)) {
+                                if (isSucceeded) {
                                     // Refresh subscription status after successful payment
                                     lastSubscriptionCheckTime = 0 // Force cache refresh
                                     fetchSubscriptionStatus()
@@ -706,9 +704,7 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
                         _moneroPaymentStatus.value = statusResponse
                         Log.d(TAG, "Monero payment status checked: ${statusResponse.status}, confirmations: ${statusResponse.confirmations}/${statusResponse.requiredConfirmations}")
 
-                        // If completed, refresh subscription status
-                        if (statusResponse.status.equals("Completed", ignoreCase = true) ||
-                            statusResponse.status.equals("Paid", ignoreCase = true)) {
+                        if (statusResponse.status.equals("Succeeded", ignoreCase = true)) {
                             lastSubscriptionCheckTime = 0 // Force cache refresh
                             fetchSubscriptionStatus()
                         }

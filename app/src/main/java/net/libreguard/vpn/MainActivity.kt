@@ -998,10 +998,13 @@ fun AppNavigation(modifier: Modifier = Modifier) {
                         confirmations = status?.confirmations ?: 0,
                         requiredConfirmations = status?.requiredConfirmations ?: 10,
                         isLoading = isLoading,
-                        isWaitingForPayment = status?.status == "Pending",
+                        isWaitingForPayment = status?.status?.equals("Processing", ignoreCase = true) == true,
                         hoursRemaining = hoursRemaining,
                         minutesRemaining = minutesRemaining,
                         secondsRemaining = secondsRemaining,
+                        paymentStatus = status?.status,
+                        amountReceived = status?.amountReceived,
+                        amountRequired = status?.amountRequired,
                         onClose = {
                             subscriptionViewModel.stopMoneroPolling()
                             navController.popBackStack()
