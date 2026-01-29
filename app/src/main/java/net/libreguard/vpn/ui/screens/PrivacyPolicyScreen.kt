@@ -79,11 +79,6 @@ fun PrivacyPolicyScreen(
                     style = MaterialTheme.typography.headlineMedium,
                     color = Foreground
                 )
-                Text(
-                    text = "Last updated: December 27, 2024",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MutedForeground
-                )
             }
         }
 
@@ -141,93 +136,52 @@ fun PrivacyPolicyScreen(
                 }
             }
 
-            // No-Logs Policy Section
-            PolicySection(
-                icon = Icons.Default.VisibilityOff,
-                title = "No-Logs Policy",
-                subtitle = "We Don't Track Your Activity",
-                description = "LibreGuard operates under a strict no-logs policy. We do not monitor, record, log, or store:",
-                items = listOf(
-                    "Browsing history or DNS queries",
-                    "Connection timestamps or duration",
-                    "Bandwidth usage or traffic data",
-                    "Original IP addresses while connected",
-                    "Server connections or location information"
-                )
-            )
-
-            // Data We Collect Section
-            PolicySection(
-                icon = Icons.Default.Storage,
-                title = "Information We Collect",
-                subtitle = "Account Information (Minimal)",
-                description = "To provide our service, we collect only essential information:",
-                items = listOf(
-                    "Email address (for account recovery and support)",
-                    "Payment information (processed by third-party providers, never stored on our servers)",
-                    "Subscription status (Free or Pro plan)"
-                ),
-                additionalText = "We collect aggregate server load statistics (anonymized) to optimize performance, but this data cannot be linked to individual users."
-            )
-
-            // Encryption Section
-            PolicySection(
-                icon = Icons.Default.Lock,
-                title = "Encryption & Security",
-                subtitle = null,
-                description = "All VPN connections use military-grade encryption:",
-                items = listOf(
-                    "IKEv2/IPSec: AES-256-GCM encryption with perfect forward secrecy",
-                    "OpenVPN (Pro): AES-256-CBC with SHA-512 authentication",
-                    "DNS leak protection and IPv6 blocking enabled by default",
-                    "Kill Switch feature prevents IP address exposure if VPN drops"
-                )
-            )
-
-            // Third Parties Section
-            PolicySection(
-                icon = Icons.Default.Cloud,
-                title = "Third-Party Services",
-                subtitle = null,
-                description = "We work with select third-party providers who are bound by strict privacy agreements:",
-                items = listOf(
-                    "Payment Processors: Card payments and Monero transactions are handled by certified payment gateways. We never see or store your full payment details.",
-                    "Server Infrastructure: Our VPN servers are located in secure data centers worldwide. No third party has access to user traffic or connection logs."
-                )
-            )
-
-            // Data Retention Section
-            PolicySection(
-                icon = Icons.Default.Language,
-                title = "Data Retention & Your Rights",
-                subtitle = null,
-                description = "You have complete control over your data:",
-                items = listOf(
-                    "Access: Request a copy of your account information at any time",
-                    "Deletion: Delete your account and all associated data permanently",
-                    "Portability: Export your data in a machine-readable format"
-                ),
-                additionalText = "Account information is retained only while your account is active. Upon deletion, all data is permanently removed within 30 days."
-            )
-
-            // Jurisdiction Section
+            // Redirect Link Card
             Surface(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp),
-                color = Secondary.copy(alpha = 0.5f),
-                border = ButtonDefaults.outlinedButtonBorder(enabled = true)
+                color = CardBackground,
+                border = ButtonDefaults.outlinedButtonBorder(enabled = true),
+                onClick = {
+                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://libreguard.net/Privacy"))
+                    context.startActivity(intent)
+                }
             ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        text = "Jurisdiction & Legal Requests",
-                        style = MaterialTheme.typography.titleSmall,
-                        color = Foreground
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = "LibreGuard operates under privacy-friendly jurisdiction. We cannot comply with data requests for information we don't collect or store. Our no-logs policy means there is no user activity data to provide, even if legally compelled.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MutedForeground
+                Row(
+                    modifier = Modifier.padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .background(Primary.copy(alpha = 0.1f), RoundedCornerShape(8.dp)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.OpenInNew,
+                            contentDescription = null,
+                            tint = Primary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Read Full Privacy Policy",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = Foreground
+                        )
+                        Text(
+                            text = "View the complete policy on our website",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MutedForeground
+                        )
+                    }
+                    Icon(
+                        imageVector = Icons.Default.ChevronRight,
+                        contentDescription = null,
+                        tint = MutedForeground,
+                        modifier = Modifier.size(20.dp)
                     )
                 }
             }
@@ -284,84 +238,3 @@ fun PrivacyPolicyScreen(
         }
     }
 }
-
-@Composable
-private fun PolicySection(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    title: String,
-    subtitle: String?,
-    description: String,
-    items: List<String>,
-    additionalText: String? = null
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                tint = Primary,
-                modifier = Modifier.size(20.dp)
-            )
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleMedium,
-                color = Foreground
-            )
-        }
-
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(12.dp),
-            color = CardBackground,
-            border = ButtonDefaults.outlinedButtonBorder(enabled = true)
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                if (subtitle != null) {
-                    Text(
-                        text = subtitle,
-                        style = MaterialTheme.typography.titleSmall,
-                        color = Foreground
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                }
-                Text(
-                    text = description,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MutedForeground
-                )
-                Spacer(modifier = Modifier.height(12.dp))
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items.forEach { item ->
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.Top
-                        ) {
-                            Text(
-                                text = "•",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = Primary
-                            )
-                            Text(
-                                text = item,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MutedForeground
-                            )
-                        }
-                    }
-                }
-                if (additionalText != null) {
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text(
-                        text = additionalText,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MutedForeground
-                    )
-                }
-            }
-        }
-    }
-}
-

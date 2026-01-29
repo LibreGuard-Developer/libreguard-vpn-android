@@ -36,6 +36,8 @@ import net.libreguard.vpn.ui.screens.TwoFactorVerificationScreen
 import net.libreguard.vpn.ui.screens.RegisterScreen
 import net.libreguard.vpn.ui.screens.ConfirmEmailScreen
 import net.libreguard.vpn.ui.screens.UpgradeScreen
+import net.libreguard.vpn.ui.screens.PrivacyPolicyScreen
+import net.libreguard.vpn.ui.screens.TermsOfServiceScreen
 import net.libreguard.vpn.ui.screens.CardPaymentScreen
 import net.libreguard.vpn.ui.screens.MoneroPaymentScreen
 import net.libreguard.vpn.ui.screens.DeviceManagementScreen
@@ -814,6 +816,8 @@ fun AppNavigation(modifier: Modifier = Modifier) {
                     onNavigateBack = { navController.popBackStack() },
                     onNavigateToTwoFactor = { navController.navigate("twoFactorSettings") },
                     onNavigateToUpgrade = { navController.navigate("upgrade") },
+                    onNavigateToPrivacy = { navController.navigate("privacyPolicy") },
+                    onNavigateToTerms = { navController.navigate("termsOfService") },
                     onLogout = {
                         // Disconnect VPN first, then logout
                         coroutineScope.launch {
@@ -1042,6 +1046,18 @@ fun AppNavigation(modifier: Modifier = Modifier) {
                 }
                 Box(modifier = Modifier.fillMaxSize())
             }
+        }
+
+        composable("privacyPolicy") {
+            PrivacyPolicyScreen(
+                onBack = { navController.popBackStack() }
+            )
+        }
+
+        composable("termsOfService") {
+            TermsOfServiceScreen(
+                onBack = { navController.popBackStack() }
+            )
         }
     }
 }
