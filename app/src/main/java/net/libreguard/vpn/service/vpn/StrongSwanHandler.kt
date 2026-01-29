@@ -273,6 +273,12 @@ class StrongSwanHandler(
                                   logs.contains("old path is not available", ignoreCase = true) ||
                                   logs.contains("looking for a route", ignoreCase = true)
 
+            // Check for explicit server certificate errors (NOT user fault)
+            // These indicate the server key is expired or invalid, not that the user is over quota
+            val hasServerCertInvalid = logs.contains("subject certificate invalid", ignoreCase = true)
+            val hasUntrustedKey = logs.contains("no trusted RSA public key found", ignoreCase = true)
+            val isServerCertError = hasServerCertInvalid || hasUntrustedKey
+
             // Only treat as fatal if we're giving up, not if MOBIKE is working
             val hasPeerNotResponding = (logs.contains("giving up after", ignoreCase = true) ||
                                        logs.contains("establishing IKE_SA failed", ignoreCase = true)) &&
@@ -291,17 +297,17 @@ class StrongSwanHandler(
                 Log.d(tag, "MOBIKE network path update in progress - allowing reconnection")
             }
 
-            if (hasAuthFailed || hasCertStatusIssue || hasEapTlsFailed || hasCertRevoked || hasIkeAuthFailed || hasCertUnknown) {
+            if (isServerCertError || hasAuthFailed || hasCertStatusIssue || hasEapTlsFailed || hasCertRevoked || hasIkeAuthFailed || hasCertUnknown) {
                 authFailureCount.incrementAndGet()
                 Log.w(tag, "Detected auth failure signal (count: ${authFailureCount.get()}): " +
-                          "AUTH_FAILED=$hasAuthFailed, CERT_STATUS=$hasCertStatusIssue, " +
-                          "EAP_TLS_FAILED=$hasEapTlsFailed, CERT_REVOKED=$hasCertRevoked, CERT_UNKNOWN=$hasCertUnknown")
+                          "AUTH_FAILED=$hasAuthFailed, SERVER_CERT_ERROR=$isServerCertError, " +
+                          "EAP_TLS_FAILED=$hasEapTlsFailed, CERT_REVOKED=$hasCertRevoked")
 
-                // CRITICAL: EAP_TLS failure with AUTH_FAILED means immediate connection failure
+                // CRITICAL: Server cert error, EAP_TLS failure with AUTH_FAILED means immediate connection failure
                 // Don't wait for threshold if we have clear authentication rejection
                 // Also treating regular AUTH_FAILED as critical for immediate revocation response
-                if ((hasEapTlsFailed && hasAuthFailed) || hasCertRevoked || hasCertUnknown || hasAuthFailed) {
-                    Log.e(tag, "Critical authentication failure detected - forcing aggressive disconnect")
+                if (isServerCertError || (hasEapTlsFailed && hasAuthFailed) || hasCertRevoked || hasCertUnknown || hasAuthFailed) {
+                    Log.e(tag, "Critical failure detected - forcing aggressive disconnect")
 
                     // CRITICAL FIX: Clear the VPN profile BEFORE stopping service
                     // This prevents CharonVpnService from auto-reconnecting with the same profile
@@ -326,13 +332,17 @@ class StrongSwanHandler(
                     }
 
                     withContext(Dispatchers.Main) {
-                        handleAuthenticationFailure()
+                        if (isServerCertError) {
+                            handleAuthenticationFailure("Connection failed: Server certificate invalid", false)
+                        } else {
+                            handleAuthenticationFailure("Authentication failed: Traffic limit exceeded or certificate invalid", true)
+                        }
                     }
                 } else if (authFailureCount.get() >= 2) {
                     // For other auth failures, still use threshold
                     Log.e(tag, "Authentication failure threshold reached - forcing disconnect")
                     withContext(Dispatchers.Main) {
-                        handleAuthenticationFailure()
+                        handleAuthenticationFailure("Authentication failed: Traffic limit exceeded or certificate invalid", true)
                     }
                 }
             }
@@ -353,12 +363,16 @@ class StrongSwanHandler(
         }
     }
 
-    private fun handleAuthenticationFailure() {
+    private fun handleAuthenticationFailure(
+        reason: String,
+        isDataLimit: Boolean
+    ) {
         stopLogMonitoring(cancelActiveJob = false)
-        _state.value = ConnectionState.Error("Authentication failed: Traffic limit exceeded or certificate invalid")
+        _state.value = ConnectionState.Error(reason)
 
         // Fire persistent notification/toast even if UI is backgrounded
-        if (dataLimitNotificationShown.compareAndSet(false, true)) {
+        // ONLY if it looks like a data limit issue (isDataLimit=true)
+        if (isDataLimit && dataLimitNotificationShown.compareAndSet(false, true)) {
             try {
                 VpnNotificationManager.showDataLimitExceeded(appContext)
                 Toast.makeText(appContext, "VPN disconnected: data limit exceeded", Toast.LENGTH_LONG).show()
