@@ -268,7 +268,7 @@ fun HelpSupportScreen(
                     color = MutedForeground
                 )
                 Text(
-                    text = "Build 2024.12.27",
+                    text = "Build 2026.01.29",
                     style = MaterialTheme.typography.bodySmall,
                     color = MutedForeground
                 )
