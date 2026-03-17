@@ -290,6 +290,13 @@ interface ApiService {
         @Header("Authorization") authorization: String
     ): Response<MoneroInvoiceResponse?>
 
+    // ===== GOOGLE PLAY BILLING =====
+    @POST("api/payments/google-play/verify")
+    suspend fun verifyGooglePlayPurchase(
+        @Header("Authorization") authorization: String,
+        @Body request: VerifyGooglePlayRequest
+    ): Response<VerifyGooglePlayResponse>
+
     // ===== DATA USAGE ENDPOINTS =====
     @GET("api/usage/quota")
     suspend fun getUsageQuota(

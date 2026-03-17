@@ -201,8 +201,6 @@ fun DashboardScreen(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceEvenly
             ) {
-                ProtectionIndicator(text = "DNS")
-                ProtectionIndicator(text = "IPv6")
                 ProtectionIndicator(text = "WebRTC")
             }
         }

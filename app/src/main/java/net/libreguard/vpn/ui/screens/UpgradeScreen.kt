@@ -1,23 +1,20 @@
 package net.libreguard.vpn.ui.screens
 
-import android.util.Log
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import net.libreguard.vpn.ui.components.LogoWithGradient
 import net.libreguard.vpn.ui.theme.*
-
-private const val TAG = "UpgradeScreen"
 
 private val freeFeatures = listOf(
     "Access on 1 device only" to true,
@@ -48,8 +45,7 @@ private val proFeatures = listOf(
 @Composable
 fun UpgradeScreen(
     onNavigateBack: () -> Unit,
-    onChooseCard: () -> Unit,
-    onChooseMonero: () -> Unit
+    onChooseGooglePlay: () -> Unit
 ) {
     val scrollState = rememberScrollState()
 
@@ -70,7 +66,7 @@ fun UpgradeScreen(
                 modifier = Modifier.size(40.dp)
             ) {
                 Icon(
-                    imageVector = Icons.Default.ArrowBack,
+                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                     contentDescription = "Back",
                     tint = MutedForeground
                 )
@@ -240,150 +236,27 @@ fun UpgradeScreen(
 
                     Spacer(modifier = Modifier.height(20.dp))
 
-                    Text(
-                        text = "Choose payment method:",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MutedForeground
-                    )
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    // Monero Payment (Preferred)
-                    Surface(
-                        modifier = Modifier.fillMaxWidth(),
+                    Button(
+                        onClick = onChooseGooglePlay,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(52.dp),
                         shape = RoundedCornerShape(12.dp),
-                        color = CardBackground,
-                        border = ButtonDefaults.outlinedButtonBorder(enabled = true).copy(
-                            brush = androidx.compose.ui.graphics.SolidColor(Primary)
-                        ),
-                        onClick = {
-                            Log.d(TAG, "Pay with Monero button clicked")
-                            onChooseMonero()
-                        }
+                        colors = ButtonDefaults.buttonColors(containerColor = Primary)
                     ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(16.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Row(
-                                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(40.dp)
-                                        .background(Primary.copy(alpha = 0.2f), RoundedCornerShape(8.dp)),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text("₿", style = MaterialTheme.typography.titleMedium, color = Primary)
-                                }
-                                Column {
-                                    Text(
-                                        text = "Pay with Monero (XMR)",
-                                        style = MaterialTheme.typography.titleSmall,
-                                        color = Foreground
-                                    )
-                                    Text(
-                                        text = "Recommended for privacy",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MutedForeground
-                                    )
-                                }
-                            }
-                            Surface(
-                                shape = RoundedCornerShape(8.dp),
-                                color = Primary.copy(alpha = 0.2f)
-                            ) {
-                                Text(
-                                    text = "Preferred",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = Primary,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                                )
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    // Card Payment
-                    Surface(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp),
-                        color = CardBackground,
-                        border = ButtonDefaults.outlinedButtonBorder(enabled = true),
-                        onClick = {
-                            Log.d(TAG, "Pay with Card button clicked")
-                            onChooseCard()
-                        }
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(16.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(40.dp)
-                                    .background(Secondary, RoundedCornerShape(8.dp)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.CreditCard,
-                                    contentDescription = null,
-                                    tint = MutedForeground,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
-                            Column {
-                                Text(
-                                    text = "Pay with Card",
-                                    style = MaterialTheme.typography.titleSmall,
-                                    color = Foreground
-                                )
-                                Text(
-                                    text = "Visa, Mastercard, Amex",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MutedForeground
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Why Monero Notice
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
-                color = CardBackground,
-                border = ButtonDefaults.outlinedButtonBorder(enabled = true)
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Text("₿", style = MaterialTheme.typography.titleSmall, color = Primary)
+                        Icon(
+                            imageVector = Icons.Default.Star,
+                            contentDescription = null,
+                            tint = PrimaryForeground,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "Why we recommend Monero (XMR)",
+                            text = "Subscribe with Google Play",
                             style = MaterialTheme.typography.titleSmall,
-                            color = Foreground
+                            color = PrimaryForeground
                         )
                     }
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = "Monero provides complete transaction privacy and anonymity, aligning with LibreGuard's commitment to your privacy. Unlike card payments, XMR transactions don't reveal your identity or link to your personal information.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MutedForeground
-                    )
                 }
             }
 

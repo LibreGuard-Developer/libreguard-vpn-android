@@ -488,7 +488,7 @@ fun LoginScreen(
         }
     }
 
-    val webClientId = stringResource(id = R.string.google_web_client_id)
+    val webClientId = net.libreguard.vpn.BuildConfig.GOOGLE_WEB_CLIENT_ID
     var googleLoading by remember { mutableStateOf(false) }
 
     val gso = remember {

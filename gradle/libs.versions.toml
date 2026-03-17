@@ -1,5 +1,5 @@
 [versions]
-agp = "8.12.3"
+agp = "8.13.2"
 appcompat = "1.7.1"
 converterGson = "2.11.0"
 fragmentKtx = "1.6.2"
@@ -29,6 +29,7 @@ tvMaterial = "1.0.1"
 foundation = "1.9.0"
 playServicesAuth = "21.2.0"
 mockwebserver = "4.12.0"
+playBilling = "7.1.1"
 
 # OpenVPN Libraries Catalog Definitions
 android-gradle-plugin = "8.9.3"
@@ -94,6 +95,7 @@ androidx-tv-material = { group = "androidx.tv", name = "tv-material", version.re
 androidx-foundation = { group = "androidx.compose.foundation", name = "foundation", version.ref = "foundation" }
 play-services-auth = { group = "com.google.android.gms", name = "play-services-auth", version.ref = "playServicesAuth" }
 mockwebserver = { group = "com.squareup.okhttp3", name = "mockwebserver", version.ref = "mockwebserver" }
+play-billing-ktx = { group = "com.android.billingclient", name = "billing-ktx", version.ref = "playBilling" }
 
 # OpenVPN Libraries Catalog Definitions
 android-view-material = { group = "com.google.android.material", name = "material", version.ref = "android-view-material" }

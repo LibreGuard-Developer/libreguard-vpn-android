@@ -1,3 +1,10 @@
+import java.util.Properties
+
+val localProperties = Properties().apply {
+    val f = rootProject.file("local.properties")
+    if (f.exists()) load(f.inputStream())
+}
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -23,6 +30,13 @@ android {
         vectorDrawables {
             useSupportLibrary = true
         }
+
+        buildConfigField("String", "GOOGLE_WEB_CLIENT_ID",
+            "\"${localProperties.getProperty("google.webClientId", "")}\"")
+        buildConfigField("String", "GOOGLE_ANDROID_CLIENT_ID",
+            "\"${localProperties.getProperty("google.androidClientId", "")}\"")
+        buildConfigField("String", "GOOGLE_PLAY_PRODUCT_ID",
+            "\"${localProperties.getProperty("google.playProductId", "pro_monthly_subscription")}\"")
 
         // Select variants from ics-openvpn (library has flavorDimensions: implementation, ovpnimpl)
         missingDimensionStrategy("implementation", "skeleton")
@@ -50,6 +64,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     composeOptions {
@@ -109,6 +124,9 @@ dependencies {
 
     // Google Sign-In
     implementation(libs.play.services.auth)
+
+    // Google Play Billing
+    implementation(libs.play.billing.ktx)
 
     // Testing
     testImplementation(libs.junit)

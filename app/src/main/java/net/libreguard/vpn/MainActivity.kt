@@ -40,6 +40,7 @@ import net.libreguard.vpn.ui.screens.PrivacyPolicyScreen
 import net.libreguard.vpn.ui.screens.TermsOfServiceScreen
 import net.libreguard.vpn.ui.screens.CardPaymentScreen
 import net.libreguard.vpn.ui.screens.MoneroPaymentScreen
+import net.libreguard.vpn.ui.screens.GooglePlayPaymentScreen
 import net.libreguard.vpn.ui.screens.DeviceManagementScreen
 import net.libreguard.vpn.ui.theme.LibreGuardVPNTheme
 import net.libreguard.vpn.viewmodel.VpnViewModel
@@ -196,7 +197,7 @@ fun AppNavigation(modifier: Modifier = Modifier) {
 
         // Google Sign-Out (best-effort)
         val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
-            .requestIdToken(context.getString(R.string.google_web_client_id))
+            .requestIdToken(net.libreguard.vpn.BuildConfig.GOOGLE_WEB_CLIENT_ID)
             .requestEmail()
             .build()
         GoogleSignIn.getClient(context, gso).signOut()
@@ -855,8 +856,7 @@ fun AppNavigation(modifier: Modifier = Modifier) {
         composable("upgrade") {
             UpgradeScreen(
                 onNavigateBack = { navController.popBackStack() },
-                onChooseCard = { navController.navigate("payment/card") },
-                onChooseMonero = { navController.navigate("payment/monero") }
+                onChooseGooglePlay = { navController.navigate("payment/googleplay") }
             )
         }
 
@@ -877,44 +877,28 @@ fun AppNavigation(modifier: Modifier = Modifier) {
             }
         }
 
-        composable("payment/card") {
+        composable("payment/googleplay") {
             authToken?.let { token ->
-                // Force BackHandler to redirect to upgrade instead of auth screens
                 BackHandler(enabled = true) {
-                     navController.navigate("upgrade") {
-                        popUpTo("payment/card") { inclusive = true }
+                    navController.navigate("upgrade") {
+                        popUpTo("payment/googleplay") { inclusive = true }
                     }
                 }
 
-                Log.d("PaymentCard", "payment/card route composable called with token: ${token.take(20)}...")
-
-                // Create stable viewModel instance that persists across recompositions
                 val subscriptionViewModel: SubscriptionViewModel = viewModel()
-                val checkoutUrl by subscriptionViewModel.checkoutUrl.collectAsState()
-                val isLoading by subscriptionViewModel.isLoading.collectAsState()
-                val errorMessage by subscriptionViewModel.errorMessage.collectAsState()
-                // Observe payment verification result
-                val paymentVerificationResult by subscriptionViewModel.paymentVerificationResult.collectAsState()
-                // Observe subscription status for polling success
-                val isPro by subscriptionViewModel.isPro.collectAsState()
 
-                Log.d("PaymentCard", "Current checkoutUrl state: ${checkoutUrl?.take(50) ?: "null"}")
-                Log.d("PaymentCard", "isLoading: $isLoading, errorMessage: $errorMessage, paymentVerified: $paymentVerificationResult, isPro: $isPro")
-
-                // Start polling for subscription status
-                DisposableEffect(Unit) {
-                    subscriptionViewModel.startPollingSubscriptionStatus()
-                    onDispose {
-                        subscriptionViewModel.stopPollingSubscriptionStatus()
-                    }
+                // Connect billing and set auth on entry
+                LaunchedEffect(token) {
+                    subscriptionViewModel.setAuthToken(token)
+                    subscriptionViewModel.billingManager.connect()
                 }
 
-                // Handle payment verification success or polling success
-                LaunchedEffect(paymentVerificationResult, isPro) {
-                    if (paymentVerificationResult == true || isPro) {
-                        Log.d("PaymentCard", "Payment verified or Pro status detected! Navigating to main.")
+                // Navigate to main when purchase succeeds
+                val googlePlaySuccess by subscriptionViewModel.googlePlayPurchaseSuccess.collectAsState()
+                LaunchedEffect(googlePlaySuccess) {
+                    if (googlePlaySuccess) {
                         vpnViewModel.updateSubscriptionStatus()
-                        Toast.makeText(context, "Pro upgrade successful", Toast.LENGTH_LONG).show()
+                        Toast.makeText(context, "Pro upgrade successful!", Toast.LENGTH_LONG).show()
                         navController.navigate("main") {
                             popUpTo("upgrade") { inclusive = true }
                             launchSingleTop = true
@@ -922,126 +906,22 @@ fun AppNavigation(modifier: Modifier = Modifier) {
                     }
                 }
 
-                // Fetch checkout URL once when entering this screen
-                LaunchedEffect(token) {
-                    Log.d("PaymentCard", "LaunchedEffect triggered with token: ${token.take(20)}...")
-                    Log.d("PaymentCard", "Setting auth token in ViewModel...")
-
-                    subscriptionViewModel.setAuthToken(token)
-                    Log.d("PaymentCard", "Auth token set. Calling fetchCheckoutUrl()...")
-
-                    subscriptionViewModel.fetchCheckoutUrl()
-                    Log.d("PaymentCard", "fetchCheckoutUrl() call completed, waiting for response...")
-                }
-
-                CardPaymentScreen(
-                    checkoutUrl = checkoutUrl ?: "",
-                    isLoading = isLoading,
-                    onClose = {
-                        navController.popBackStack()
-                    },
-                    onCheckPayment = { orderId ->
-                        Log.d("PaymentCard", "Order ID detected: $orderId - verifying...")
-                        subscriptionViewModel.verifyPayment(orderId)
-                    },
+                GooglePlayPaymentScreen(
+                    billingManager = subscriptionViewModel.billingManager,
+                    onClose = { navController.popBackStack() },
                     onSuccess = {
-                        Log.d("PaymentCard", "Success URL detected, forcing immediate subscription update")
-                        subscriptionViewModel.subscriptionUpdated()
+                        vpnViewModel.updateSubscriptionStatus()
+                        Toast.makeText(context, "Pro upgrade successful!", Toast.LENGTH_LONG).show()
+                        navController.navigate("main") {
+                            popUpTo("upgrade") { inclusive = true }
+                            launchSingleTop = true
+                        }
                     }
                 )
             } ?: run {
-                // If logged out, redirect to login; payment requires auth.
                 LaunchedEffect(Unit) {
                     navController.navigate("login") {
                         popUpTo(0) { inclusive = true }
-                        launchSingleTop = true
-                    }
-                }
-                Box(modifier = Modifier.fillMaxSize())
-            }
-        }
-
-        composable("payment/monero") {
-            authToken?.let { token ->
-                // Force BackHandler to redirect to upgrade instead of auth screens
-                BackHandler(enabled = true) {
-                     navController.navigate("upgrade") {
-                        popUpTo("payment/monero") { inclusive = true }
-                    }
-                }
-
-                val subscriptionViewModel: SubscriptionViewModel = viewModel()
-                val moneroInvoice by subscriptionViewModel.moneroInvoice.collectAsState()
-                val moneroPaymentStatus by subscriptionViewModel.moneroPaymentStatus.collectAsState()
-                val moneroPrice by subscriptionViewModel.moneroPrice.collectAsState()
-                val isLoading by subscriptionViewModel.isLoading.collectAsState()
-                val hoursRemaining by subscriptionViewModel.hoursRemaining.collectAsState()
-                val minutesRemaining by subscriptionViewModel.minutesRemaining.collectAsState()
-                val secondsRemaining by subscriptionViewModel.secondsRemaining.collectAsState()
-
-                // Initialize Monero payment flow
-                LaunchedEffect(Unit) {
-                    subscriptionViewModel.setAuthToken(token)
-                    // Fetch price first
-                    subscriptionViewModel.fetchMoneroPrice()
-                    // Try to fetch latest pending invoice, or create new one if none exists
-                    subscriptionViewModel.fetchLatestMoneroInvoice()
-                }
-
-                // Display the payment screen once we have invoice data AND price data
-                if (moneroInvoice != null && moneroPrice != null) {
-                    val invoice = moneroInvoice!!
-                    val price = moneroPrice!!
-                    val status = moneroPaymentStatus
-
-                    MoneroPaymentScreen(
-                        paymentAddress = invoice.paymentAddress,
-                        xmrAmount = invoice.amount,
-                        usdAmount = invoice.amount * price.xmrPriceUsd,
-                        xmrPrice = price.xmrPriceUsd,
-                        confirmations = status?.confirmations ?: 0,
-                        requiredConfirmations = status?.requiredConfirmations ?: 10,
-                        isLoading = isLoading,
-                        isWaitingForPayment = status?.status?.equals("Processing", ignoreCase = true) == true,
-                        hoursRemaining = hoursRemaining,
-                        minutesRemaining = minutesRemaining,
-                        secondsRemaining = secondsRemaining,
-                        paymentStatus = status?.status,
-                        amountReceived = status?.amountReceived,
-                        amountRequired = status?.amountRequired,
-                        onClose = {
-                            subscriptionViewModel.stopMoneroPolling()
-                            navController.popBackStack()
-                        },
-                        onRefresh = {
-                            subscriptionViewModel.checkMoneroPaymentStatus(invoice.invoiceId)
-                        },
-                        onSuccess = {
-                            // CRITICAL FIX: After confirmed payment, refresh status and return to dashboard
-                            vpnViewModel.updateSubscriptionStatus()
-                            subscriptionViewModel.stopMoneroPolling()
-                            Toast.makeText(context, "Pro upgrade successful", Toast.LENGTH_LONG).show()
-                            navController.navigate("main") {
-                                popUpTo("upgrade") { inclusive = true }
-                                launchSingleTop = true
-                            }
-                        }
-                    )
-                } else {
-                    // Show loading while fetching price and creating/loading invoice
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        CircularProgressIndicator()
-                    }
-                }
-            } ?: run {
-                // If logged out, redirect to login; payment requires auth.
-                LaunchedEffect(Unit) {
-                    navController.navigate("login") {
-                        popUpTo(0) { inclusive = true }
-                        launchSingleTop = true
                     }
                 }
                 Box(modifier = Modifier.fillMaxSize())

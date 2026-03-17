@@ -8,7 +8,7 @@ import net.libreguard.vpn.network.RetrofitClient
 import net.libreguard.vpn.network.SubscriptionStatusResponse
 import net.libreguard.vpn.network.MoneroInvoiceResponse
 import net.libreguard.vpn.network.MoneroStatusResponse
-import net.libreguard.vpn.network.PaymentStatusResponse
+import net.libreguard.vpn.core.GooglePlayBillingManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -26,6 +26,13 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
     private val sharedPrefs by lazy {
         application.getSharedPreferences("vpn_subscription_prefs", Context.MODE_PRIVATE)
     }
+
+    // Google Play Billing
+    val billingManager = GooglePlayBillingManager(application)
+
+    // Emits true once a Google Play purchase is verified by the backend
+    private val _googlePlayPurchaseSuccess = MutableStateFlow(false)
+    val googlePlayPurchaseSuccess: StateFlow<Boolean> = _googlePlayPurchaseSuccess
 
     // Subscription state
     private val _subscriptionStatus = MutableStateFlow<SubscriptionStatusResponse?>(null)
@@ -82,6 +89,18 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
         // This prevents the UI from showing "Free" while waiting for API response
         restoreCachedSubscriptionStatus()
         Log.d(TAG, "SubscriptionViewModel initialized with cached status: isPro=${_isPro.value}")
+
+        // Observe billing manager: when a Google Play purchase is verified, refresh subscription
+        viewModelScope.launch {
+            billingManager.billingState.collect { state ->
+                if (state is GooglePlayBillingManager.BillingState.PurchaseSuccess) {
+                    Log.d(TAG, "Google Play purchase verified — refreshing subscription status")
+                    _googlePlayPurchaseSuccess.value = true
+                    lastSubscriptionCheckTime = 0
+                    fetchSubscriptionStatus(force = true)
+                }
+            }
+        }
     }
 
     /**
@@ -859,6 +878,7 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
         _minutesRemaining.value = 0
         _secondsRemaining.value = 0
         _errorMessage.value = null
+        _googlePlayPurchaseSuccess.value = false
         moneroPollingJob?.cancel()
         subscriptionPollingJob?.cancel()
         timerJob?.cancel()
@@ -867,5 +887,10 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
 
         sharedPrefs.edit().clear().apply()
         Log.d(TAG, "Subscription data cleared")
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        billingManager.disconnect()
     }
 }
