@@ -207,7 +207,9 @@ fun DashboardScreen(
 
         // Unified Quick Connect / Manual Server Selection Button (when disconnected)
         // Only show if: in Quick Connect mode OR (in manual mode AND have a server selected)
-        if (!isConnected && !isConnecting && (isQuickConnectMode || selectedServer != null)) {
+        if (!isConnected && !isConnecting && (isQuickConnectMode || selectedServer
+
+                    != null)) {
             Spacer(modifier = Modifier.height(10.dp))
 
             // Single unified button that shows Quick Connect or manually selected server
