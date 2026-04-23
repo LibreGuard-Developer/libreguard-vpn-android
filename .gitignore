@@ -51,3 +51,7 @@ STRONGSWAN_CLEANUP_COMPLETE.md
 /.kotlin/errors/errors-1769688434172.log
 /p12.b64
 /p12.p12
+
+# Google Play ADI Registration (contains sensitive credentials - never commit)
+/adi-registration.properties
+
