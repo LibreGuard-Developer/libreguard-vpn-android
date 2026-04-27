@@ -33,11 +33,11 @@ fun GooglePlayPaymentScreen(
 ) {
     val context = LocalContext.current
     val billingState by billingManager.billingState.collectAsState()
-    val productDetailsList by billingManager.productDetailsList.collectAsState()
+    val subscriptionOptions by billingManager.subscriptionOptions.collectAsState()
     val scrollState = rememberScrollState()
 
-    var selectedProduct by remember(productDetailsList) {
-        mutableStateOf(productDetailsList.firstOrNull())
+    var selectedOption by remember(subscriptionOptions) {
+        mutableStateOf(subscriptionOptions.firstOrNull())
     }
 
     // Navigate away as soon as purchase is verified by backend
@@ -95,16 +95,14 @@ fun GooglePlayPaymentScreen(
             Spacer(modifier = Modifier.height(32.dp))
 
             // Subscription Options List
-            productDetailsList.forEach { product ->
-                val offer = product.subscriptionOfferDetails?.firstOrNull()
-                val price = offer?.pricingPhases?.pricingPhaseList?.firstOrNull()?.formattedPrice ?: ""
-                val isSelected = selectedProduct?.productId == product.productId
+            subscriptionOptions.forEach { option ->
+                val isSelected = selectedOption?.offerToken == option.offerToken
 
                 Surface(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(bottom = 12.dp)
-                        .clickable { selectedProduct = product }
+                        .clickable { selectedOption = option }
                         .border(
                             width = if (isSelected) 2.dp else 1.dp,
                             color = if (isSelected) Primary else MutedForeground.copy(alpha = 0.2f),
@@ -120,12 +118,12 @@ fun GooglePlayPaymentScreen(
                     ) {
                         Column {
                             Text(
-                                text = if (product.productId.contains("yearly")) "Yearly Pro" else "Monthly Pro",
+                                text = option.title,
                                 style = MaterialTheme.typography.titleMedium,
                                 color = Foreground
                             )
                             Text(
-                                text = price,
+                                text = option.formattedPrice,
                                 style = MaterialTheme.typography.bodyLarge,
                                 color = Primary
                             )
@@ -226,7 +224,7 @@ fun GooglePlayPaymentScreen(
             }
 
             // Loading state for product details
-            if (productDetailsList.isEmpty() &&
+            if (subscriptionOptions.isEmpty() &&
                 billingState !is GooglePlayBillingManager.BillingState.Error
             ) {
                 Row(
@@ -256,9 +254,9 @@ fun GooglePlayPaymentScreen(
             Button(
                 onClick = {
                     val activity = context as? Activity
-                    val product = selectedProduct
-                    if (activity != null && product != null) {
-                        billingManager.launchPurchaseFlow(activity, product)
+                    val option = selectedOption
+                    if (activity != null && option != null) {
+                        billingManager.launchPurchaseFlow(activity, option.productDetails, option.offerToken)
                     }
                 },
                 modifier = Modifier
@@ -266,7 +264,7 @@ fun GooglePlayPaymentScreen(
                     .height(52.dp),
                 shape = RoundedCornerShape(12.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = Primary),
-                enabled = !isProcessing && selectedProduct != null
+                enabled = !isProcessing && selectedOption != null
             ) {
                 if (isProcessing) {
                     CircularProgressIndicator(

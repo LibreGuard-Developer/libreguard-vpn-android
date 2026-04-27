@@ -30,6 +30,15 @@ class GooglePlayBillingManager(private val context: Context) {
         data class Error(val message: String) : BackendVerificationResult()
     }
 
+    data class SubscriptionOption(
+        val productDetails: ProductDetails,
+        val offerToken: String,
+        val basePlanId: String,
+        val offerId: String?,
+        val formattedPrice: String,
+        val title: String
+    )
+
     // ── Public state ─────────────────────────────────────────────────────────
 
     sealed class BillingState {
@@ -47,6 +56,9 @@ class GooglePlayBillingManager(private val context: Context) {
 
     private val _productDetailsList = MutableStateFlow<List<ProductDetails>>(emptyList())
     val productDetailsList: StateFlow<List<ProductDetails>> = _productDetailsList
+
+    private val _subscriptionOptions = MutableStateFlow<List<SubscriptionOption>>(emptyList())
+    val subscriptionOptions: StateFlow<List<SubscriptionOption>> = _subscriptionOptions
 
     // ── Internal ──────────────────────────────────────────────────────────────
 
@@ -135,9 +147,7 @@ class GooglePlayBillingManager(private val context: Context) {
 
     private suspend fun loadProductDetails() {
         val productIds = listOf(
-            BuildConfig.GOOGLE_PLAY_PRODUCT_ID, // usually libreguard_vpn_monthly
-            "libreguard_vpn_yearly",
-            "libreguard-vpn-yearly"
+            BuildConfig.GOOGLE_PLAY_PRODUCT_ID
         ).distinct()
 
         val productList = productIds.map { productId ->
@@ -154,10 +164,47 @@ class GooglePlayBillingManager(private val context: Context) {
         if (result.billingResult.responseCode == BillingClient.BillingResponseCode.OK) {
             val detailsList = result.productDetailsList ?: emptyList()
             _productDetailsList.value = detailsList
+
+            val options = mutableListOf<SubscriptionOption>()
+            detailsList.forEach { product ->
+                product.subscriptionOfferDetails?.forEach { offer ->
+                    val isTrial = offer.pricingPhases.pricingPhaseList.any { it.priceAmountMicros == 0L }
+                    val recurringPhase = offer.pricingPhases.pricingPhaseList.lastOrNull()
+                    val price = recurringPhase?.formattedPrice ?: ""
+                    
+                    val title = when {
+                        offer.basePlanId.contains("yearly") -> if (isTrial) "Yearly Pro (Trial)" else "Yearly Pro"
+                        else -> if (isTrial) "Monthly Pro (Trial)" else "Monthly Pro"
+                    }
+
+                    // Avoid duplicate base plans without offers if an offer exists for the same duration
+                    options.add(
+                        SubscriptionOption(
+                            productDetails = product,
+                            offerToken = offer.offerToken,
+                            basePlanId = offer.basePlanId,
+                            offerId = offer.offerId,
+                            formattedPrice = price,
+                            title = title
+                        )
+                    )
+                }
+            }
+
+            // Filter options to show the best ones (prefer v2/offers)
+            val filteredOptions = options.groupBy { 
+                if (it.basePlanId.contains("yearly")) "yearly" else "monthly" 
+            }.map { (_, group) ->
+                // Prefer offers with trials or discounts over just base plans
+                group.maxByOrNull { it.offerId?.length ?: 0 } ?: group.first()
+            }.sortedBy { it.formattedPrice.replace(Regex("[^0-9.]"), "").toDoubleOrNull() ?: 0.0 }
+
+            _subscriptionOptions.value = filteredOptions
+
             if (detailsList.isEmpty()) {
                 Log.w(TAG, "No ProductDetails returned for products $productIds — ensure they are active in Play Console")
             } else {
-                Log.d(TAG, "Loaded ${detailsList.size} ProductDetails: ${detailsList.map { it.productId }}")
+                Log.d(TAG, "Loaded ${detailsList.size} ProductDetails, Extracted ${filteredOptions.size} Offers")
             }
         } else {
             Log.e(TAG, "queryProductDetails failed: ${result.billingResult.responseCode}")
