@@ -158,6 +158,23 @@ fun GooglePlayPaymentScreen(
 
             Spacer(modifier = Modifier.height(24.dp))
 
+            // Pending verification state
+            if (billingState is GooglePlayBillingManager.BillingState.PurchasePending) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp),
+                    color = Primary.copy(alpha = 0.10f)
+                ) {
+                    Text(
+                        text = (billingState as GooglePlayBillingManager.BillingState.PurchasePending).message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Primary,
+                        modifier = Modifier.padding(12.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+
             // Error state
             if (billingState is GooglePlayBillingManager.BillingState.Error) {
                 Surface(

@@ -6,8 +6,24 @@ val localProperties = Properties().apply {
 }
 
 val adiRegistrationProperties = Properties().apply {
-    val f = rootProject.file("adi-registration.properties")
-    if (f.exists()) load(f.inputStream())
+    val assetFile = file("src/main/assets/adi-registration.properties")
+    val rootFile = rootProject.file("adi-registration.properties")
+    val sourceFile = when {
+        assetFile.exists() -> assetFile
+        rootFile.exists() -> rootFile
+        else -> null
+    }
+
+    if (sourceFile != null) {
+        val content = sourceFile.readText().trim()
+        if (content.contains("=")) {
+            // It's a properties file format
+            load(sourceFile.inputStream())
+        } else if (content.isNotEmpty()) {
+            // It's a raw fragment file format - put it into the expected key
+            setProperty("adi.registration.fragment", content)
+        }
+    }
 }
 
 plugins {
@@ -24,8 +40,8 @@ android {
         applicationId = "net.libreguard.vpn"
         minSdk = 29
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 3
+        versionName = "1.2-demo"
 
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
@@ -41,11 +57,19 @@ android {
         buildConfigField("String", "GOOGLE_ANDROID_CLIENT_ID",
             "\"${localProperties.getProperty("google.androidClientId", "")}\"")
         buildConfigField("String", "GOOGLE_PLAY_PRODUCT_ID",
-            "\"${localProperties.getProperty("google.playProductId", "pro_monthly_subscription")}\"")
+            "\"${localProperties.getProperty("google.playProductId", "libreguard_vpn_monthly")}\"")
+        buildConfigField("String", "GOOGLE_PLAY_BACKEND_SUBSCRIPTION_ID",
+            "\"${localProperties.getProperty("google.playBackendSubscriptionId", "libreguard_vpn_monthly")}\"")
 
         // Select variants from ics-openvpn (library has flavorDimensions: implementation, ovpnimpl)
         missingDimensionStrategy("implementation", "skeleton")
         missingDimensionStrategy("ovpnimpl", "ovpn23")
+
+        val adiFragmentRaw = adiRegistrationProperties.getProperty("adi.registration.fragment", "").trim()
+        val adiFragment = if (adiFragmentRaw.isBlank() || adiFragmentRaw.startsWith("PASTE") || adiFragmentRaw == "YOUR_ADI_FRAGMENT_FROM_GOOGLE_PLAY_CONSOLE" || adiFragmentRaw == "YOUR_ADI_REGISTRATION_FRAGMENT_HERE") "" else adiFragmentRaw
+        if (adiFragment.isNotEmpty()) {
+            manifestPlaceholders["adiRegistrationFragment"] = adiFragment
+        }
     }
 
     // Google Play App Signing Configuration
@@ -53,18 +77,34 @@ android {
     // which is gitignored for security. See adi-registration.properties.example for setup.
     signingConfigs {
         create("release") {
-            val adiFragment = adiRegistrationProperties.getProperty("adi.registration.fragment", "")
+            val adiFragmentRaw = adiRegistrationProperties.getProperty("adi.registration.fragment", "").trim()
+            // Treat placeholder values as missing
+            val adiFragment = if (adiFragmentRaw.isBlank() || adiFragmentRaw.startsWith("PASTE") || adiFragmentRaw == "YOUR_ADI_FRAGMENT_FROM_GOOGLE_PLAY_CONSOLE" || adiFragmentRaw == "YOUR_ADI_REGISTRATION_FRAGMENT_HERE") "" else adiFragmentRaw
+
             if (adiFragment.isNotEmpty()) {
-                // When ADI registration fragment is available, encode it for the build
-                storeFile = rootProject.file("build")  // Placeholder - actual signing handled by Play Console
-                keyAlias = "play"
-                keyPassword = "play"
-                storePassword = "play"
-                // Note: Google Play App Signing uses the ADI registration fragment to validate the build
-                enableV2Signing = true
+                // Read keystore details from local.properties for open-source safety
+                val releaseStoreFile = localProperties.getProperty("RELEASE_STORE_FILE", "")
+                val releaseStorePassword = localProperties.getProperty("RELEASE_STORE_PASSWORD", "")
+                val releaseKeyAlias = localProperties.getProperty("RELEASE_KEY_ALIAS", "")
+                val releaseKeyPassword = localProperties.getProperty("RELEASE_KEY_PASSWORD", "")
+
+                if (releaseStoreFile.isNotEmpty()) {
+                    val jksFile = file(releaseStoreFile)
+                    storeFile = if (jksFile.isAbsolute) jksFile else rootProject.file(releaseStoreFile)
+
+                    storePassword = releaseStorePassword
+                    keyAlias = releaseKeyAlias
+                    keyPassword = releaseKeyPassword
+
+                    enableV2Signing = true
+                    enableV3Signing = true
+                    enableV4Signing = true
+                } else {
+                    logger.warn("⚠️  RELEASE_STORE_FILE not found in local.properties. Release signing will fail.")
+                }
             } else {
                 // Fallback: if no ADI fragment, will require manual signing
-                logger.warn("⚠️  ADI registration fragment not found in adi-registration.properties")
+                logger.warn("⚠️  ADI registration fragment not found or is placeholder in adi-registration.properties")
                 logger.warn("   Please follow the setup instructions in adi-registration.properties.example")
             }
         }

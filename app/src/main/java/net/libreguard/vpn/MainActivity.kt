@@ -893,18 +893,6 @@ fun AppNavigation(modifier: Modifier = Modifier) {
                     subscriptionViewModel.billingManager.connect()
                 }
 
-                // Navigate to main when purchase succeeds
-                val googlePlaySuccess by subscriptionViewModel.googlePlayPurchaseSuccess.collectAsState()
-                LaunchedEffect(googlePlaySuccess) {
-                    if (googlePlaySuccess) {
-                        vpnViewModel.updateSubscriptionStatus()
-                        Toast.makeText(context, "Pro upgrade successful!", Toast.LENGTH_LONG).show()
-                        navController.navigate("main") {
-                            popUpTo("upgrade") { inclusive = true }
-                            launchSingleTop = true
-                        }
-                    }
-                }
 
                 GooglePlayPaymentScreen(
                     billingManager = subscriptionViewModel.billingManager,

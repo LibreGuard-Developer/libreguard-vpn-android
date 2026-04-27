@@ -178,20 +178,20 @@ data class CanConnectResponse(
 
 // ===== GOOGLE PLAY BILLING =====
 data class VerifyGooglePlayRequest(
-    @SerializedName("SubscriptionId")
+    @SerializedName(value = "subscriptionId", alternate = ["SubscriptionId"])
     val subscriptionId: String,
-    @SerializedName("PurchaseToken")
+    @SerializedName(value = "purchaseToken", alternate = ["PurchaseToken"])
     val purchaseToken: String
 )
 
 data class VerifyGooglePlayResponse(
     @SerializedName("status")
-    val status: String,          // "success" | "error"
+    val status: String,          // "success" | "pending" | "error"
     @SerializedName("message")
     val message: String? = null,
     @SerializedName("isPro")
     val isPro: Boolean = false,
-    @SerializedName("expiryDate")
-    val expiryDate: String? = null
+    @SerializedName(value = "currentPeriodEnd", alternate = ["expiryDate"])
+    val currentPeriodEnd: String? = null
 )
 
