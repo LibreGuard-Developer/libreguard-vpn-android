@@ -45,8 +45,8 @@ class GooglePlayBillingManager(private val context: Context) {
     private val _billingState = MutableStateFlow<BillingState>(BillingState.Idle)
     val billingState: StateFlow<BillingState> = _billingState
 
-    private val _productDetails = MutableStateFlow<ProductDetails?>(null)
-    val productDetails: StateFlow<ProductDetails?> = _productDetails
+    private val _productDetailsList = MutableStateFlow<List<ProductDetails>>(emptyList())
+    val productDetailsList: StateFlow<List<ProductDetails>> = _productDetailsList
 
     // ── Internal ──────────────────────────────────────────────────────────────
 
@@ -134,25 +134,30 @@ class GooglePlayBillingManager(private val context: Context) {
     // ── Product details ───────────────────────────────────────────────────────
 
     private suspend fun loadProductDetails() {
-        val productId = BuildConfig.GOOGLE_PLAY_PRODUCT_ID
-        val productList = listOf(
+        val productIds = listOf(
+            BuildConfig.GOOGLE_PLAY_PRODUCT_ID, // usually libreguard_vpn_monthly
+            "libreguard_vpn_yearly",
+            "libreguard-vpn-yearly"
+        ).distinct()
+
+        val productList = productIds.map { productId ->
             QueryProductDetailsParams.Product.newBuilder()
                 .setProductId(productId)
                 .setProductType(BillingClient.ProductType.SUBS)
                 .build()
-        )
+        }
         val params = QueryProductDetailsParams.newBuilder()
             .setProductList(productList)
             .build()
 
         val result = billingClient.queryProductDetails(params)
         if (result.billingResult.responseCode == BillingClient.BillingResponseCode.OK) {
-            val details = result.productDetailsList?.firstOrNull()
-            _productDetails.value = details
-            if (details == null) {
-                Log.w(TAG, "No ProductDetails returned for $productId — ensure it is active in Play Console")
+            val detailsList = result.productDetailsList ?: emptyList()
+            _productDetailsList.value = detailsList
+            if (detailsList.isEmpty()) {
+                Log.w(TAG, "No ProductDetails returned for products $productIds — ensure they are active in Play Console")
             } else {
-                Log.d(TAG, "ProductDetails loaded: ${details.title}")
+                Log.d(TAG, "Loaded ${detailsList.size} ProductDetails: ${detailsList.map { it.productId }}")
             }
         } else {
             Log.e(TAG, "queryProductDetails failed: ${result.billingResult.responseCode}")
@@ -162,26 +167,21 @@ class GooglePlayBillingManager(private val context: Context) {
     // ── Purchase flow ─────────────────────────────────────────────────────────
 
     /**
-     * Opens the Google Play subscription purchase sheet.
+     * Opens the Google Play subscription purchase sheet for a specific product and offer.
      * Must be called from the UI thread with a valid [Activity].
      */
-    fun launchPurchaseFlow(activity: Activity) {
-        val details = _productDetails.value
-        if (details == null) {
-            _billingState.value = BillingState.Error("Product details not yet loaded. Please try again.")
-            return
-        }
-
-        val offerToken = details.subscriptionOfferDetails?.firstOrNull()?.offerToken
-        if (offerToken == null) {
-            _billingState.value = BillingState.Error("No subscription offer available.")
+    fun launchPurchaseFlow(activity: Activity, productDetails: ProductDetails, offerToken: String? = null) {
+        val selectedOfferToken = offerToken ?: productDetails.subscriptionOfferDetails?.firstOrNull()?.offerToken
+        
+        if (selectedOfferToken == null) {
+            _billingState.value = BillingState.Error("No valid offer found for this product.")
             return
         }
 
         val productDetailsParamsList = listOf(
             BillingFlowParams.ProductDetailsParams.newBuilder()
-                .setProductDetails(details)
-                .setOfferToken(offerToken)
+                .setProductDetails(productDetails)
+                .setOfferToken(selectedOfferToken)
                 .build()
         )
 
@@ -195,6 +195,18 @@ class GooglePlayBillingManager(private val context: Context) {
             Log.e(TAG, msg)
             _billingState.value = BillingState.Error(msg)
         }
+    }
+
+    /**
+     * Legacy method for backward compatibility if needed, though we should update callers.
+     */
+    fun launchPurchaseFlow(activity: Activity) {
+        val details = _productDetailsList.value.firstOrNull()
+        if (details == null) {
+            _billingState.value = BillingState.Error("Product details not yet loaded. Please try again.")
+            return
+        }
+        launchPurchaseFlow(activity, details)
     }
 
     // ── Handle purchase ───────────────────────────────────────────────────────

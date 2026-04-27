@@ -17,6 +17,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import com.android.billingclient.api.ProductDetails
 import net.libreguard.vpn.core.GooglePlayBillingManager
 import net.libreguard.vpn.ui.components.LogoWithGradient
@@ -31,8 +33,12 @@ fun GooglePlayPaymentScreen(
 ) {
     val context = LocalContext.current
     val billingState by billingManager.billingState.collectAsState()
-    val productDetails by billingManager.productDetails.collectAsState(initial = null)
+    val productDetailsList by billingManager.productDetailsList.collectAsState()
     val scrollState = rememberScrollState()
+
+    var selectedProduct by remember(productDetailsList) {
+        mutableStateOf(productDetailsList.firstOrNull())
+    }
 
     // Navigate away as soon as purchase is verified by backend
     LaunchedEffect(billingState) {
@@ -88,42 +94,69 @@ fun GooglePlayPaymentScreen(
 
             Spacer(modifier = Modifier.height(32.dp))
 
-            // Product info card
+            // Subscription Options List
+            productDetailsList.forEach { product ->
+                val offer = product.subscriptionOfferDetails?.firstOrNull()
+                val price = offer?.pricingPhases?.pricingPhaseList?.firstOrNull()?.formattedPrice ?: ""
+                val isSelected = selectedProduct?.productId == product.productId
+
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 12.dp)
+                        .clickable { selectedProduct = product }
+                        .border(
+                            width = if (isSelected) 2.dp else 1.dp,
+                            color = if (isSelected) Primary else MutedForeground.copy(alpha = 0.2f),
+                            shape = RoundedCornerShape(12.dp)
+                        ),
+                    shape = RoundedCornerShape(12.dp),
+                    color = if (isSelected) Primary.copy(alpha = 0.1f) else CardBackground
+                ) {
+                    Row(
+                        modifier = Modifier.padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column {
+                            Text(
+                                text = if (product.productId.contains("yearly")) "Yearly Pro" else "Monthly Pro",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = Foreground
+                            )
+                            Text(
+                                text = price,
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = Primary
+                            )
+                        }
+                        if (isSelected) {
+                            Icon(
+                                imageVector = Icons.Default.CheckCircle,
+                                contentDescription = "Selected",
+                                tint = Primary
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Feature list
             Surface(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp),
-                color = Primary.copy(alpha = 0.07f),
-                border = ButtonDefaults.outlinedButtonBorder(enabled = true).copy(
-                    brush = androidx.compose.ui.graphics.SolidColor(Primary)
-                )
+                color = CardBackground
             ) {
-                Column(modifier = Modifier.padding(20.dp)) {
+                Column(modifier = Modifier.padding(16.dp)) {
                     Text(
-                        text = "Pro Plan",
+                        text = "Features:",
                         style = MaterialTheme.typography.titleMedium,
-                        color = Primary
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-
-                    // Show price from Play Console if available, otherwise fall back to display price
-                    val priceText: String = remember(productDetails) {
-                        productDetails
-                            ?.subscriptionOfferDetails
-                            ?.firstOrNull()
-                            ?.pricingPhases
-                            ?.pricingPhaseList
-                            ?.firstOrNull()
-                            ?.formattedPrice
-                            ?: "$4.00"
-                    }
-
-                    Text(
-                        text = "$priceText / month",
-                        style = MaterialTheme.typography.headlineSmall,
                         color = Foreground
                     )
 
-                    Spacer(modifier = Modifier.height(16.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
 
                     listOf(
                         "Access on unlimited devices",
@@ -193,7 +226,7 @@ fun GooglePlayPaymentScreen(
             }
 
             // Loading state for product details
-            if (productDetails == null &&
+            if (productDetailsList.isEmpty() &&
                 billingState !is GooglePlayBillingManager.BillingState.Error
             ) {
                 Row(
@@ -223,8 +256,9 @@ fun GooglePlayPaymentScreen(
             Button(
                 onClick = {
                     val activity = context as? Activity
-                    if (activity != null) {
-                        billingManager.launchPurchaseFlow(activity)
+                    val product = selectedProduct
+                    if (activity != null && product != null) {
+                        billingManager.launchPurchaseFlow(activity, product)
                     }
                 },
                 modifier = Modifier
@@ -232,7 +266,7 @@ fun GooglePlayPaymentScreen(
                     .height(52.dp),
                 shape = RoundedCornerShape(12.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = Primary),
-                enabled = !isProcessing && productDetails != null
+                enabled = !isProcessing && selectedProduct != null
             ) {
                 if (isProcessing) {
                     CircularProgressIndicator(
@@ -280,7 +314,3 @@ fun GooglePlayPaymentScreen(
         }
     }
 }
-
-
-
-
