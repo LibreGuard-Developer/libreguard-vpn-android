@@ -63,12 +63,14 @@ data class GoogleLoginRequest(
 
 // Response from POST /api/login/google { token, email, userId, provider }
 data class GoogleLoginResponse(
-    @SerializedName("token") val token: String,
-    @SerializedName("refreshToken") val refreshToken: String,
-    @SerializedName("email") val email: String,
-    @SerializedName("userId") val userId: String,
-    @SerializedName("provider") val provider: String,
+    @SerializedName("requiresTwoFactor") val requiresTwoFactor: Boolean = false,
+    @SerializedName("token") val token: String? = null,
+    @SerializedName("refreshToken") val refreshToken: String? = null,
+    @SerializedName("email") val email: String? = null,
+    @SerializedName("userId") val userId: String? = null,
+    @SerializedName("provider") val provider: String? = null,
     @SerializedName("deviceId") val deviceId: String? = null,
+    @SerializedName("message") val message: String? = null,
     @SerializedName("activeDevices") val activeDevices: Int? = null,
     @SerializedName("maxDevices") val maxDevices: Int? = null,
     @SerializedName("planType") val planType: String? = null // "Free", "Pro"

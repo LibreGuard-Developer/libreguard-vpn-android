@@ -551,7 +551,10 @@ fun LoginScreen(
                 val errorBody = resp.errorBody()?.string()
                 if (resp.isSuccessful) {
                     val body: GoogleLoginResponse? = resp.body()
-                    if (body != null && persistAuthResponse(
+                    if (body != null) {
+                        if (body.requiresTwoFactor && body.email != null) {
+                            onRequires2FA(body.email)
+                        } else if (body.token != null && persistAuthResponse(
                             AuthResponse(
                                 token = body.token,
                                 refreshToken = body.refreshToken,
@@ -565,10 +568,13 @@ fun LoginScreen(
                                 planType = body.planType
                             )
                         )) {
-                        deviceLimitError = null
-                        onLoginSuccess(body.token)
+                            deviceLimitError = null
+                            onLoginSuccess(body.token)
+                        } else {
+                            errorMessage = context.getString(R.string.google_sign_in_error, "No token returned")
+                        }
                     } else {
-                        errorMessage = context.getString(R.string.google_sign_in_error, "No token returned")
+                        errorMessage = context.getString(R.string.google_sign_in_error, "Empty response from server")
                     }
                 } else {
                     when (resp.code()) {
