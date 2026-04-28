@@ -1015,7 +1015,10 @@ fun LoginScreen(
                                 setOnClickListener {
                                     errorMessage = null
                                     googleLoading = true
-                                    googleLauncher.launch(googleSignInClient.signInIntent)
+                                    googleSignInClient.signOut()
+                                        .addOnCompleteListener {
+                                            googleLauncher.launch(googleSignInClient.signInIntent)
+                                        }
                                 }
                             }
                         },
