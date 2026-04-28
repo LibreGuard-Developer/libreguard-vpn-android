@@ -37,13 +37,22 @@ import com.google.android.gms.auth.api.signin.GoogleSignInStatusCodes
 import com.google.android.gms.common.SignInButton
 import com.google.android.gms.common.api.ApiException
 import com.google.gson.Gson
+import kotlinx.coroutines.delay
+import net.libreguard.vpn.util.DeviceKeyManager
+import net.libreguard.vpn.network.AuthRequest
+import net.libreguard.vpn.network.GoogleLoginRequest
+import net.libreguard.vpn.network.PreAuthDeviceRemovalRequest
+import net.libreguard.vpn.network.ResendConfirmationRequest
+import net.libreguard.vpn.network.Verify2faRequest
+import net.libreguard.vpn.network.VerifyRecoveryRequest
+import org.json.JSONObject
+import net.libreguard.vpn.network.*
+import net.libreguard.vpn.util.DeviceIdManager
+import net.libreguard.vpn.ui.theme.*
+import net.libreguard.vpn.ui.components.LogoWithGradient
 import kotlinx.coroutines.launch
 import net.libreguard.vpn.R
-import net.libreguard.vpn.network.*
-import net.libreguard.vpn.ui.components.LogoWithGradient
-import net.libreguard.vpn.ui.theme.*
-import net.libreguard.vpn.util.DeviceIdManager
-import org.json.JSONObject
+import kotlin.reflect.KClass
 
 /**
  * Login Screen - User authentication
@@ -208,6 +217,7 @@ fun LoginScreen(
         if (token.isNullOrBlank()) return false
         tokenManager.saveTokens(token, refreshToken ?: "")
         auth.deviceId?.let { tokenManager.saveDeviceId(it) }
+        tokenManager.saveCurrentDeviceKeyId()
         if (auth.activeDevices != null && auth.maxDevices != null) {
             tokenManager.saveDeviceMetadata(auth.activeDevices, auth.maxDevices)
         }
@@ -234,7 +244,9 @@ fun LoginScreen(
             android.util.Log.d("LoginScreen", "  - Max Devices: ${parsed.maxDevices}")
             android.util.Log.d("LoginScreen", "  - Plan Type: ${parsed.planType}")
             android.util.Log.d("LoginScreen", "  - Email from response: ${parsed.email}")
-            android.util.Log.d("LoginScreen", "  - Devices array: ${if (parsed.devices.isNullOrEmpty()) "NULL/EMPTY" else "EXISTS (${parsed.devices.size} devices)"}")
+            val devSize = parsed.devices?.size ?: 0
+            val devicesMsg = if (devSize == 0) "NULL/EMPTY" else "EXISTS ($devSize devices)"
+            android.util.Log.d("LoginScreen", "  - Devices array: $devicesMsg")
 
             if (!parsed.devices.isNullOrEmpty()) {
                 parsed.devices.forEachIndexed { index, device ->
@@ -306,7 +318,10 @@ fun LoginScreen(
                             email = attemptEmail,
                             password = attemptPassword,
                             deviceId = deviceId,
-                            appVersion = appVersion
+                            appVersion = appVersion,
+                            devicePublicKey = DeviceKeyManager.exportPublicKeyBase64(),
+                            devicePublicKeyId = DeviceKeyManager.publicKeyId(),
+                            devicePublicKeyAlgorithm = DeviceKeyManager.algorithm()
                         )
                     )
 
@@ -397,7 +412,10 @@ fun LoginScreen(
                         email = emailToUse,
                         password = password,
                         deviceId = probeDeviceId,
-                        appVersion = appVersion
+                        appVersion = appVersion,
+                        devicePublicKey = DeviceKeyManager.exportPublicKeyBase64(),
+                        devicePublicKeyId = DeviceKeyManager.publicKeyId(),
+                        devicePublicKeyAlgorithm = DeviceKeyManager.algorithm()
                     )
                 )
                 val errorBody = resp.errorBody()?.string()
@@ -524,7 +542,10 @@ fun LoginScreen(
                     GoogleLoginRequest(
                         idToken = idToken,
                         deviceId = deviceId,
-                        appVersion = appVersion
+                        appVersion = appVersion,
+                        devicePublicKey = DeviceKeyManager.exportPublicKeyBase64(),
+                        devicePublicKeyId = DeviceKeyManager.publicKeyId(),
+                        devicePublicKeyAlgorithm = DeviceKeyManager.algorithm()
                     )
                 )
                 val errorBody = resp.errorBody()?.string()
@@ -735,7 +756,10 @@ fun LoginScreen(
                                 email = email,
                                 password = password,
                                 deviceId = deviceId,
-                                appVersion = appVersion
+                                appVersion = appVersion,
+                                devicePublicKey = DeviceKeyManager.exportPublicKeyBase64(),
+                                devicePublicKeyId = DeviceKeyManager.publicKeyId(),
+                                devicePublicKeyAlgorithm = DeviceKeyManager.algorithm()
                             )
                             android.util.Log.d("LoginScreen", "Request JSON: ${Gson().toJson(authRequest)}")
 
@@ -770,7 +794,10 @@ fun LoginScreen(
                                                 email = email,
                                                 password = password,
                                                 deviceId = "temp_device_for_list",
-                                                appVersion = appVersion
+                                                appVersion = appVersion,
+                                                devicePublicKey = DeviceKeyManager.exportPublicKeyBase64(),
+                                                devicePublicKeyId = DeviceKeyManager.publicKeyId(),
+                                                devicePublicKeyAlgorithm = DeviceKeyManager.algorithm()
                                             )
                                         )
                                         val tempErrorBody = tempLoginResp.errorBody()?.string()
@@ -827,6 +854,7 @@ fun LoginScreen(
                                                 android.util.Log.w("LoginScreen", "Temp login also returned 200 - proceeding with original token")
                                                 if (persistAuthResponse(authResponse)) {
                                                     deviceLimitError = null
+                                                    lastKnownEmail = email
                                                     onLoginSuccess(authResponse!!.token!!)
                                                 } else {
                                                     errorMessage = "Failed to save login state"
@@ -1676,7 +1704,10 @@ fun LoginScreen(
                                                                 email = capturedEmail,
                                                                 password = capturedPassword,
                                                                 deviceId = deviceId,
-                                                                appVersion = appVersion
+                                                                appVersion = appVersion,
+                                                                devicePublicKey = DeviceKeyManager.exportPublicKeyBase64(),
+                                                                devicePublicKeyId = DeviceKeyManager.publicKeyId(),
+                                                                devicePublicKeyAlgorithm = DeviceKeyManager.algorithm()
                                                             )
                                                         )
 
@@ -1822,7 +1853,10 @@ fun LoginScreen(
                                                     email = emailToUse,
                                                     password = passwordForDeviceManagement,
                                                     deviceId = probeDeviceId,
-                                                    appVersion = appVersion
+                                                    appVersion = appVersion,
+                                                    devicePublicKey = DeviceKeyManager.exportPublicKeyBase64(),
+                                                    devicePublicKeyId = DeviceKeyManager.publicKeyId(),
+                                                    devicePublicKeyAlgorithm = DeviceKeyManager.algorithm()
                                                 )
                                             )
 
@@ -1840,7 +1874,10 @@ fun LoginScreen(
                                                             email = emailToUse,
                                                             password = passwordForDeviceManagement,
                                                             deviceId = deviceId,
-                                                            appVersion = appVersion
+                                                            appVersion = appVersion,
+                                                            devicePublicKey = DeviceKeyManager.exportPublicKeyBase64(),
+                                                            devicePublicKeyId = DeviceKeyManager.publicKeyId(),
+                                                            devicePublicKeyAlgorithm = DeviceKeyManager.algorithm()
                                                         )
                                                     )
                                                     if (realLoginResp.isSuccessful) {
@@ -1872,7 +1909,10 @@ fun LoginScreen(
                                                     email = emailToUse,
                                                     password = passwordForDeviceManagement,
                                                     deviceId = probeDeviceId,
-                                                    appVersion = appVersion
+                                                    appVersion = appVersion,
+                                                    devicePublicKey = DeviceKeyManager.exportPublicKeyBase64(),
+                                                    devicePublicKeyId = DeviceKeyManager.publicKeyId(),
+                                                    devicePublicKeyAlgorithm = DeviceKeyManager.algorithm()
                                                 )
                                             )
 
@@ -1895,7 +1935,10 @@ fun LoginScreen(
                                                         email = emailToUse,
                                                         password = passwordForDeviceManagement,
                                                         deviceId = deviceId,
-                                                        appVersion = appVersion
+                                                        appVersion = appVersion,
+                                                        devicePublicKey = DeviceKeyManager.exportPublicKeyBase64(),
+                                                        devicePublicKeyId = DeviceKeyManager.publicKeyId(),
+                                                        devicePublicKeyAlgorithm = DeviceKeyManager.algorithm()
                                                     )
                                                 )
                                                 if (realLoginResp.isSuccessful) {

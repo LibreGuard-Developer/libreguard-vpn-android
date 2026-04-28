@@ -5,6 +5,7 @@ import android.content.Intent
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import net.libreguard.vpn.util.DeviceKeyManager
 import net.libreguard.vpn.util.TokenManager
 import okhttp3.Authenticator
 import okhttp3.Request
@@ -98,26 +99,31 @@ class TokenAuthenticator(
                     return@withLock null
                 }
 
-                val deviceId = try {
-                    tokenManager.requireDeviceId()
-                } catch (e: Exception) {
-                    android.util.Log.w(TAG, "Failed to ensure deviceId for refresh: ${e.message}")
-                    return@withLock null
-                }
-                val appVersion = tokenManager.getAppVersion()
+                val deviceId = tokenManager.requireDeviceId()
+                val appVersion = tokenManager.getAppVersion() ?: "1.0.0"
 
                 try {
+                    val binding = DeviceKeyManager.ensureKeyBinding()
+                    val refreshRequest = RefreshTokenRequest(
+                        refreshToken = refreshToken,
+                        deviceId = deviceId,
+                        appVersion = appVersion,
+                        devicePublicKey = binding.publicKeyBase64,
+                        devicePublicKeyId = binding.keyId,
+                        devicePublicKeyAlgorithm = DeviceKeyManager.algorithm()
+                    )
+                    android.util.Log.d(TAG, "Requesting new token with refresh token and device ID: $deviceId, boundKeyId=${tokenManager.getBoundDeviceKeyId()}, requestKeyId=${binding.keyId}")
+
                     android.util.Log.d(TAG, "Attempting token refresh (attempt ${consecutiveRefreshFailures + 1}/$maxRefreshAttempts)")
 
-                    val refreshResponse = authApiService.refreshToken(
-                        RefreshTokenRequest(refreshToken = refreshToken, deviceId = deviceId, appVersion = appVersion)
-                    ).execute()
+                    val refreshResponse = authApiService.refreshToken(refreshRequest).execute()
 
                     if (refreshResponse.isSuccessful) {
                         val authResponse = refreshResponse.body()
                         if (authResponse?.token != null && authResponse.refreshToken != null) {
                             tokenManager.saveTokens(authResponse.token, authResponse.refreshToken)
                             tokenManager.saveDeviceId(authResponse.deviceId ?: deviceId)
+                            tokenManager.saveCurrentDeviceKeyId(binding.keyId)
                             if (authResponse.activeDevices != null && authResponse.maxDevices != null) {
                                 tokenManager.saveDeviceMetadata(authResponse.activeDevices, authResponse.maxDevices)
                             }

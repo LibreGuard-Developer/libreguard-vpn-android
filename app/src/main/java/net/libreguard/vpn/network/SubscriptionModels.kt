@@ -35,7 +35,13 @@ data class RegisterDeviceRequest(
     @SerializedName("osVersion")
     val osVersion: String,
     @SerializedName("appVersion")
-    val appVersion: String
+    val appVersion: String,
+    @SerializedName("devicePublicKey")
+    val devicePublicKey: String? = null,
+    @SerializedName("devicePublicKeyId")
+    val devicePublicKeyId: String? = null,
+    @SerializedName("devicePublicKeyAlgorithm")
+    val devicePublicKeyAlgorithm: String = "RSA-OAEP-256"
 )
 
 data class DeviceResponse(
@@ -194,4 +200,3 @@ data class VerifyGooglePlayResponse(
     @SerializedName(value = "currentPeriodEnd", alternate = ["expiryDate"])
     val currentPeriodEnd: String? = null
 )
-

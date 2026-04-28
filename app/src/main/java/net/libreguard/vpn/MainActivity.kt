@@ -658,6 +658,7 @@ fun AppNavigation(modifier: Modifier = Modifier) {
                             if (authResponse.token != null) {
                                 tokenManager.saveTokens(authResponse.token, authResponse.refreshToken ?: "")
                                 authResponse.deviceId?.let { tokenManager.saveDeviceId(it) }
+                                tokenManager.saveCurrentDeviceKeyId()
                                 if (authResponse.activeDevices != null && authResponse.maxDevices != null) {
                                     tokenManager.saveDeviceMetadata(authResponse.activeDevices, authResponse.maxDevices)
                                 }

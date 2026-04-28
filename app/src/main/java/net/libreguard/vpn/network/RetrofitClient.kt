@@ -63,7 +63,8 @@ object RetrofitClient {
 
         // Add HTTP logging interceptor for debugging
         val loggingInterceptor = okhttp3.logging.HttpLoggingInterceptor().apply {
-            level = okhttp3.logging.HttpLoggingInterceptor.Level.BODY
+            level = okhttp3.logging.HttpLoggingInterceptor.Level.BASIC
+            redactHeader("Authorization")
         }
         clientBuilder.addInterceptor(loggingInterceptor)
 

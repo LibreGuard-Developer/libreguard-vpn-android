@@ -6,6 +6,15 @@ import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import org.json.JSONObject
+
+sealed class TokenRefreshResult {
+    data object Skipped : TokenRefreshResult()
+    data class Success(val accessToken: String) : TokenRefreshResult()
+    data class RateLimited(val retryAfterSeconds: Int?) : TokenRefreshResult()
+    data class Failure(val statusCode: Int, val errorCode: String? = null, val message: String? = null) : TokenRefreshResult()
+    data class ExceptionFailure(val throwable: Throwable) : TokenRefreshResult()
+}
 
 class TokenManager(context: Context) {
     private val appContext = context.applicationContext
@@ -44,10 +53,7 @@ class TokenManager(context: Context) {
         android.util.Log.d("TokenManager", "========== GET ACCESS TOKEN ==========")
         android.util.Log.d("TokenManager", "Token exists: ${token != null}")
         android.util.Log.d("TokenManager", "Token is blank: ${token.isNullOrBlank()}")
-        if (token != null) {
-            android.util.Log.d("TokenManager", "Token length: ${token.length}")
-            android.util.Log.d("TokenManager", "Token prefix: ${token.take(20)}...")
-        } else {
+        if (token == null) {
             android.util.Log.e("TokenManager", "TOKEN IS NULL - User may need to login")
         }
         android.util.Log.d("TokenManager", "======================================")
@@ -286,6 +292,16 @@ class TokenManager(context: Context) {
         _deviceMetadataFlow.value = Pair(activeDevices, maxDevices)
     }
 
+    fun saveCurrentDeviceKeyId(deviceKeyId: String = DeviceKeyManager.publicKeyId()) {
+        sharedPreferences.edit()
+            .putString(KEY_DEVICE_KEY_ID, deviceKeyId)
+            .apply()
+    }
+
+    fun getBoundDeviceKeyId(): String? {
+        return sharedPreferences.getString(KEY_DEVICE_KEY_ID, null)
+    }
+
     /**
      * Retrieves cached device metadata as Pair<activeDevices, maxDevices>.
      * Returns Pair(0, 0) if not set.
@@ -302,11 +318,102 @@ class TokenManager(context: Context) {
     fun clearDeviceData() {
         sharedPreferences.edit()
             .remove(KEY_DEVICE_ID)
+            .remove(KEY_DEVICE_KEY_ID)
             .remove(KEY_ACTIVE_DEVICES)
             .remove(KEY_MAX_DEVICES)
             .apply()
 
         _deviceMetadataFlow.value = Pair(0, 0)
+    }
+
+    private fun buildRefreshRequest(refreshToken: String, deviceId: String, appVersion: String?): net.libreguard.vpn.network.RefreshTokenRequest {
+        return net.libreguard.vpn.network.RefreshTokenRequest(
+            refreshToken = refreshToken,
+            deviceId = deviceId,
+            appVersion = appVersion,
+            devicePublicKey = DeviceKeyManager.exportPublicKeyBase64(),
+            devicePublicKeyId = DeviceKeyManager.publicKeyId(),
+            devicePublicKeyAlgorithm = DeviceKeyManager.algorithm()
+        )
+    }
+
+    private fun parseRefreshFailure(response: retrofit2.Response<net.libreguard.vpn.network.AuthResponse>): TokenRefreshResult.Failure {
+        val errorBody = runCatching { response.errorBody()?.string() }.getOrNull()
+        val json = runCatching { errorBody?.let(::JSONObject) }.getOrNull()
+        return TokenRefreshResult.Failure(
+            statusCode = response.code(),
+            errorCode = json?.optString("errorCode")?.takeIf { it.isNotBlank() },
+            message = json?.optString("message")?.takeIf { it.isNotBlank() } ?: errorBody
+        )
+    }
+
+    suspend fun refreshTokenWithResult(
+        authApiService: net.libreguard.vpn.network.ApiService,
+        forceRefresh: Boolean = false
+    ): TokenRefreshResult = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        try {
+            val needsRefresh = forceRefresh || isTokenExpired() || isTokenExpiringWithin(300)
+
+            if (!needsRefresh) {
+                android.util.Log.d("TokenManager", "Token is still valid, no refresh needed")
+                return@withContext TokenRefreshResult.Skipped
+            }
+
+            android.util.Log.d("TokenManager", if (forceRefresh) {
+                "Forcing token refresh to update device-bound session state"
+            } else {
+                "Token expired or expiring soon, attempting refresh"
+            })
+
+            val refreshToken = getRefreshToken()
+            if (refreshToken.isNullOrBlank()) {
+                android.util.Log.w("TokenManager", "No refresh token available for refresh")
+                return@withContext TokenRefreshResult.Failure(statusCode = 401, message = "Missing refresh token")
+            }
+
+            if (isRefreshTokenExpired()) {
+                android.util.Log.w("TokenManager", "Refresh token is expired - cannot refresh, user must re-login")
+                return@withContext TokenRefreshResult.Failure(statusCode = 401, message = "Refresh token expired")
+            }
+
+            val deviceId = requireDeviceId()
+            val appVersion = getAppVersion()
+            val refreshRequest = buildRefreshRequest(refreshToken, deviceId, appVersion)
+
+            val response = authApiService.refreshToken(refreshRequest).execute()
+
+            if (response.isSuccessful) {
+                val authResponse = response.body()
+                if (authResponse?.token != null && authResponse.refreshToken != null) {
+                    saveTokens(authResponse.token, authResponse.refreshToken)
+                    saveDeviceId(authResponse.deviceId ?: deviceId)
+                    saveCurrentDeviceKeyId()
+
+                    if (authResponse.activeDevices != null && authResponse.maxDevices != null) {
+                        saveDeviceMetadata(authResponse.activeDevices, authResponse.maxDevices)
+                    }
+
+                    android.util.Log.d("TokenManager", "Token refreshed successfully")
+                    return@withContext TokenRefreshResult.Success(authResponse.token)
+                }
+
+                android.util.Log.w("TokenManager", "Refresh response missing tokens")
+                return@withContext TokenRefreshResult.Failure(statusCode = response.code(), message = "Refresh response missing tokens")
+            }
+
+            if (response.code() == 429) {
+                val retryAfter = response.headers()["Retry-After"]?.toIntOrNull()
+                android.util.Log.w("TokenManager", "Token refresh rate limited. Retry-After=$retryAfter")
+                return@withContext TokenRefreshResult.RateLimited(retryAfter)
+            }
+
+            val failure = parseRefreshFailure(response)
+            android.util.Log.w("TokenManager", "Token refresh failed: code=${failure.statusCode}, errorCode=${failure.errorCode}, message=${failure.message}")
+            return@withContext failure
+        } catch (e: Exception) {
+            android.util.Log.e("TokenManager", "Error during token refresh", e)
+            return@withContext TokenRefreshResult.ExceptionFailure(e)
+        }
     }
 
     /**
@@ -315,65 +422,9 @@ class TokenManager(context: Context) {
     suspend fun refreshTokenIfNeeded(
         authApiService: net.libreguard.vpn.network.ApiService
     ): Boolean = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-        try {
-            // Check if token is expired or expiring within 5 minutes
-            val needsRefresh = isTokenExpired() || isTokenExpiringWithin(300)
-
-            if (!needsRefresh) {
-                android.util.Log.d("TokenManager", "Token is still valid, no refresh needed")
-                return@withContext true
-            }
-
-            android.util.Log.d("TokenManager", "Token expired or expiring soon, attempting refresh")
-
-            val refreshToken = getRefreshToken()
-            if (refreshToken.isNullOrBlank()) {
-                android.util.Log.w("TokenManager", "No refresh token available for refresh")
-                return@withContext false
-            }
-
-            // Best-effort local check
-            if (isRefreshTokenExpired()) {
-                android.util.Log.w("TokenManager", "Refresh token is expired - cannot refresh, user must re-login")
-                return@withContext false
-            }
-
-            val deviceId = requireDeviceId()
-            val appVersion = getAppVersion()
-
-            val refreshRequest = net.libreguard.vpn.network.RefreshTokenRequest(
-                refreshToken = refreshToken,
-                deviceId = deviceId,
-                appVersion = appVersion
-            )
-
-            val response = authApiService.refreshToken(refreshRequest).execute()
-
-            if (response.isSuccessful) {
-                val authResponse = response.body()
-                if (authResponse?.token != null && authResponse.refreshToken != null) {
-                    saveTokens(authResponse.token, authResponse.refreshToken)
-
-                    // Persist device id binding returned by server (or keep our stable one)
-                    saveDeviceId(authResponse.deviceId ?: deviceId)
-
-                    if (authResponse.activeDevices != null && authResponse.maxDevices != null) {
-                        saveDeviceMetadata(authResponse.activeDevices, authResponse.maxDevices)
-                    }
-
-                    android.util.Log.d("TokenManager", "Token refreshed successfully")
-                    return@withContext true
-                }
-
-                android.util.Log.w("TokenManager", "Refresh response missing tokens")
-                return@withContext false
-            }
-
-            android.util.Log.w("TokenManager", "Token refresh failed: ${response.code()}")
-            return@withContext false
-        } catch (e: Exception) {
-            android.util.Log.e("TokenManager", "Error during token refresh", e)
-            return@withContext false
+        when (refreshTokenWithResult(authApiService)) {
+            is TokenRefreshResult.Skipped, is TokenRefreshResult.Success -> true
+            else -> false
         }
     }
 
@@ -383,6 +434,7 @@ class TokenManager(context: Context) {
         private const val KEY_LAST_TOKEN_CHECK = "last_token_check"
         private const val TOKEN_CHECK_INTERVAL_MS = 5 * 60 * 1000L // 5 minutes
         private const val KEY_DEVICE_ID = "device_id"
+        private const val KEY_DEVICE_KEY_ID = "device_key_id"
         private const val KEY_ACTIVE_DEVICES = "active_devices"
         private const val KEY_MAX_DEVICES = "max_devices"
     }

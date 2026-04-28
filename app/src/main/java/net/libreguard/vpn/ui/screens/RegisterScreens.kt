@@ -36,6 +36,7 @@ import net.libreguard.vpn.network.*
 import net.libreguard.vpn.ui.components.LogoWithGradient
 import net.libreguard.vpn.ui.theme.*
 import net.libreguard.vpn.util.DeviceIdManager
+import net.libreguard.vpn.util.DeviceKeyManager
 import org.json.JSONObject
 
 private fun isValidEmail(email: String): Boolean =
@@ -358,7 +359,19 @@ fun RegisterScreen(
                                     }
                                     "exists" -> {
                                         val loginResponse = runCatching {
-                                            RetrofitClient.instance.login(AuthRequest(email = errEmail, password = password))
+                                            RetrofitClient.instance.login(
+                                                AuthRequest(
+                                                    email = errEmail,
+                                                    password = password,
+                                                    deviceId = DeviceIdManager(context).getDeviceId(),
+                                                    appVersion = runCatching {
+                                                        context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "1.0"
+                                                    }.getOrDefault("1.0"),
+                                                    devicePublicKey = DeviceKeyManager.exportPublicKeyBase64(),
+                                                    devicePublicKeyId = DeviceKeyManager.publicKeyId(),
+                                                    devicePublicKeyAlgorithm = DeviceKeyManager.algorithm()
+                                                )
+                                            )
                                         }.getOrNull()
                                         if (loginResponse?.isSuccessful == true) {
                                             val auth = loginResponse.body()
@@ -498,6 +511,7 @@ fun ConfirmEmailScreen(
         if (token.isNullOrBlank()) return false
         tokenManager.saveTokens(token, refreshToken ?: "")
         auth.deviceId?.let { tokenManager.saveDeviceId(it) }
+        tokenManager.saveCurrentDeviceKeyId()
         if (auth.activeDevices != null && auth.maxDevices != null) {
             tokenManager.saveDeviceMetadata(auth.activeDevices, auth.maxDevices)
         }
@@ -537,7 +551,10 @@ fun ConfirmEmailScreen(
                         email = email,
                         password = password,
                         deviceId = deviceId,
-                        appVersion = appVersion
+                        appVersion = appVersion,
+                        devicePublicKey = DeviceKeyManager.exportPublicKeyBase64(),
+                        devicePublicKeyId = DeviceKeyManager.publicKeyId(),
+                        devicePublicKeyAlgorithm = DeviceKeyManager.algorithm()
                     )
                     val loginResp = runCatching { RetrofitClient.instance.login(loginReq) }.getOrNull()
 
@@ -781,7 +798,10 @@ fun ConfirmEmailScreen(
                                 email = email,
                                 password = password,
                                 deviceId = deviceId,
-                                appVersion = appVersion
+                                appVersion = appVersion,
+                                devicePublicKey = DeviceKeyManager.exportPublicKeyBase64(),
+                                devicePublicKeyId = DeviceKeyManager.publicKeyId(),
+                                devicePublicKeyAlgorithm = DeviceKeyManager.algorithm()
                             )
                             val loginResp = runCatching { RetrofitClient.instance.login(loginReq) }.getOrNull()
                             if (loginResp?.isSuccessful == true) {

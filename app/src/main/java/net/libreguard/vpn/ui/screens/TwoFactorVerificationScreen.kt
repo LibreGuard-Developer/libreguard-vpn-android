@@ -20,6 +20,7 @@ import net.libreguard.vpn.network.Verify2faRequest
 import net.libreguard.vpn.network.VerifyRecoveryRequest
 import net.libreguard.vpn.ui.components.LogoWithGradient
 import net.libreguard.vpn.ui.theme.*
+import net.libreguard.vpn.util.DeviceKeyManager
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -158,18 +159,27 @@ fun TwoFactorVerificationScreen(
                         try {
                             val tokenManager = RetrofitClient.getTokenManager()
                             val deviceId = tokenManager.requireDeviceId()
+                            val appVersion = tokenManager.getAppVersion()
 
                             if (showRecoveryCodeInput) {
                                 val response = RetrofitClient.instance.verifyRecoveryCode(
                                     VerifyRecoveryRequest(
                                         email = email,
                                         recoveryCode = recoveryCode,
-                                        deviceId = deviceId
+                                        deviceId = deviceId,
+                                        appVersion = appVersion,
+                                        devicePublicKey = DeviceKeyManager.exportPublicKeyBase64(),
+                                        devicePublicKeyId = DeviceKeyManager.publicKeyId(),
+                                        devicePublicKeyAlgorithm = DeviceKeyManager.algorithm()
                                     )
                                 )
                                 if (response.isSuccessful) {
                                     val tokenResponse = response.body()
                                     if (tokenResponse != null) {
+                                        tokenManager.saveTokens(tokenResponse.token, tokenResponse.refreshToken ?: "")
+                                        tokenResponse.deviceId?.let { tokenManager.saveDeviceId(it) }
+                                        tokenManager.saveCurrentDeviceKeyId()
+
                                         if (tokenResponse.warningRecoveryCodes == true) {
                                             showRecoveryWarning = true
                                         }
@@ -185,12 +195,20 @@ fun TwoFactorVerificationScreen(
                                     Verify2faRequest(
                                         email = email,
                                         twoFactorCode = code,
-                                        deviceId = deviceId
+                                        deviceId = deviceId,
+                                        appVersion = appVersion,
+                                        devicePublicKey = DeviceKeyManager.exportPublicKeyBase64(),
+                                        devicePublicKeyId = DeviceKeyManager.publicKeyId(),
+                                        devicePublicKeyAlgorithm = DeviceKeyManager.algorithm()
                                     )
                                 )
                                 if (response.isSuccessful) {
                                     val tokenResponse = response.body()
                                     if (tokenResponse != null) {
+                                        tokenManager.saveTokens(tokenResponse.token, tokenResponse.refreshToken ?: "")
+                                        tokenResponse.deviceId?.let { tokenManager.saveDeviceId(it) }
+                                        tokenManager.saveCurrentDeviceKeyId()
+
                                         onVerificationSuccess(tokenResponse.token)
                                     } else {
                                         errorMessage = "Invalid response from server"

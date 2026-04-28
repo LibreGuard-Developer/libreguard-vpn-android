@@ -11,7 +11,13 @@ data class AuthRequest(
     @SerializedName("DeviceId") // Device ID for enforcing device limits - use PascalCase to match backend
     val deviceId: String? = null,
     @SerializedName("AppVersion")
-    val appVersion: String? = null
+    val appVersion: String? = null,
+    @SerializedName("devicePublicKey")
+    val devicePublicKey: String? = null,
+    @SerializedName("devicePublicKeyId")
+    val devicePublicKeyId: String? = null,
+    @SerializedName("devicePublicKeyAlgorithm")
+    val devicePublicKeyAlgorithm: String = "RSA-OAEP-256"
 )
 
 
@@ -46,7 +52,13 @@ data class GoogleLoginRequest(
     @SerializedName("DeviceId")
     val deviceId: String? = null,
     @SerializedName("AppVersion")
-    val appVersion: String? = null
+    val appVersion: String? = null,
+    @SerializedName("devicePublicKey")
+    val devicePublicKey: String? = null,
+    @SerializedName("devicePublicKeyId")
+    val devicePublicKeyId: String? = null,
+    @SerializedName("devicePublicKeyAlgorithm")
+    val devicePublicKeyAlgorithm: String = "RSA-OAEP-256"
 )
 
 // Response from POST /api/login/google { token, email, userId, provider }
@@ -69,7 +81,13 @@ data class RefreshTokenRequest(
     @SerializedName("DeviceId")
     val deviceId: String,
     @SerializedName("AppVersion")
-    val appVersion: String? = null
+    val appVersion: String? = null,
+    @SerializedName("devicePublicKey")
+    val devicePublicKey: String? = null,
+    @SerializedName("devicePublicKeyId")
+    val devicePublicKeyId: String? = null,
+    @SerializedName("devicePublicKeyAlgorithm")
+    val devicePublicKeyAlgorithm: String = "RSA-OAEP-256"
 )
 
 // 2FA Verification Request (device-bound)
@@ -81,7 +99,13 @@ data class Verify2faRequest(
     @SerializedName("DeviceId")
     val deviceId: String,
     @SerializedName("AppVersion")
-    val appVersion: String? = null
+    val appVersion: String? = null,
+    @SerializedName("devicePublicKey")
+    val devicePublicKey: String? = null,
+    @SerializedName("devicePublicKeyId")
+    val devicePublicKeyId: String? = null,
+    @SerializedName("devicePublicKeyAlgorithm")
+    val devicePublicKeyAlgorithm: String = "RSA-OAEP-256"
 )
 
 // Structured API Error Response
@@ -105,12 +129,19 @@ data class VerifyRecoveryRequest(
     @SerializedName("DeviceId")
     val deviceId: String,
     @SerializedName("AppVersion")
-    val appVersion: String? = null
+    val appVersion: String? = null,
+    @SerializedName("devicePublicKey")
+    val devicePublicKey: String? = null,
+    @SerializedName("devicePublicKeyId")
+    val devicePublicKeyId: String? = null,
+    @SerializedName("devicePublicKeyAlgorithm")
+    val devicePublicKeyAlgorithm: String = "RSA-OAEP-256"
 )
 
 // Token Response for 2FA verification
 data class TokenResponse(
     val token: String,
+    val refreshToken: String? = null,
     val email: String,
     val userId: String,
     val message: String,

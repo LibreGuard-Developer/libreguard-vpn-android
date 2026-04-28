@@ -19,6 +19,12 @@ data class OpenVpnDownloadRequest(
     val serverId: Int
 )
 
+data class EncryptedPassphrasePayload(
+    val algorithm: String,
+    val keyId: String,
+    val ciphertext: String
+)
+
 data class VpnConfigResponse(
     val success: Boolean,
     val protocol: String?,
@@ -26,10 +32,11 @@ data class VpnConfigResponse(
     val serverIp: String?,
     val certificateName: String?,
     val configContent: String?, // Changed from configData to configContent
-    val passphrase: String?,
+    val encryptedPassphrase: EncryptedPassphrasePayload?,
     val issueDate: String?,
     val expirationDate: String?,
     val clientIp: String?,
+    val deviceId: String?,
     val message: String? // Keep this for error cases
 )
 

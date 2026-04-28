@@ -24,6 +24,7 @@ import net.libreguard.vpn.data.ConnectionHistoryManager
 import net.libreguard.vpn.data.ConnectionRecord
 import net.libreguard.vpn.network.RemoteVpnServer
 import net.libreguard.vpn.network.RetrofitClient
+import net.libreguard.vpn.network.EncryptedPassphrasePayload
 import net.libreguard.vpn.network.VpnConfigRequest
 import net.libreguard.vpn.service.LibreGuardVpnService
 import net.libreguard.vpn.service.VpnNotificationManager
@@ -54,6 +55,7 @@ import okhttp3.ResponseBody
 import kotlinx.coroutines.isActive
 import net.libreguard.vpn.network.CertificateRequest
 import net.libreguard.vpn.util.VpnConfigManager
+import net.libreguard.vpn.util.TokenRefreshResult
 
 private val _connectionState = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected)
 val connectionState: StateFlow<ConnectionState> = _connectionState
@@ -1421,9 +1423,20 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
                 Log.d(TAG, "Token is valid or successfully refreshed")
 
+                // Re-validate actual VPN status
+                val actuallyConnected = checkVpnStatusImproved()
+
+                // If VPN is already connected, just update the state and return
+                if (actuallyConnected) {
+                    Log.d(TAG, "VPN is already connected (revalidated), skipping connect")
+                    _isConnected.value = true
+                    _isConnecting.value = false
+                    return@launch
+                }
+
                 // Re-read token AFTER refresh.
-                val token = tokenManager.getAccessToken()
-                if (token.isNullOrBlank()) {
+                var token: String = tokenManager.getAccessToken() ?: ""
+                if (token.isBlank()) {
                     Log.w(TAG, "Access token missing after refresh")
                     _errorMessage.value = "Authentication token missing"
                     _isConnecting.value = false
@@ -1492,17 +1505,21 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 )
 
                 // IMPORTANT: use fresh token for config request
-                var response = RetrofitClient.instance.getVpnConfig("Bearer $token", request)
+                var response = fetchVpnConfigWithRecovery(request, tokenManager)
+                tokenManager.getAccessToken()?.takeIf { it.isNotBlank() }?.let { token = it }
 
                 if (response.isSuccessful && response.body()?.success == true) {
-                    val configContent = response.body()?.configContent
-                    val certificateName = response.body()?.certificateName
-                    val passphrase = response.body()?.passphrase
+                    val preparedConfig = prepareVpnConfigForConnection(
+                        protocol = selected,
+                        request = request,
+                        tokenManager = tokenManager,
+                        body = response.body() ?: throw IllegalStateException("VPN config response body missing")
+                    )
 
-                    if (configContent != null) {
+                    if (preparedConfig.configContent.isNotBlank()) {
                         Log.d(TAG, "Config received for ${selected.displayName}")
-                        _errorMessage.value = "Config received: ${certificateName ?: "VPN config"}"
-                        connectWithConfig(configContent, server, selected, certificateName, passphrase)
+                        _errorMessage.value = "Config received: ${preparedConfig.certificateName ?: "VPN config"}"
+                        connectWithConfig(preparedConfig.configContent, server, selected, preparedConfig.certificateName, preparedConfig.passphrase)
                     } else {
                         _errorMessage.value = "No config content received"
                         // Since we couldn't even start, allow retry
@@ -1513,14 +1530,16 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                     val issued = ensureCertificateIssued(selected, remoteServer.id, token)
                     if (issued) {
                         _errorMessage.value = "Certificate issued. Fetching configuration…"
-                        response = RetrofitClient.instance.getVpnConfig("Bearer $token", request)
+                        response = fetchVpnConfigWithRecovery(request, tokenManager)
                         if (response.isSuccessful && response.body()?.success == true) {
-                            val body = response.body()!!
-                            val configContent = body.configContent
-                            val certificateName = body.certificateName
-                            val passphrase = body.passphrase
-                            if (!configContent.isNullOrBlank()) {
-                                connectWithConfig(configContent, server, selected, certificateName, passphrase)
+                            val preparedConfig = prepareVpnConfigForConnection(
+                                protocol = selected,
+                                request = request,
+                                tokenManager = tokenManager,
+                                body = response.body() ?: throw IllegalStateException("VPN config response body missing")
+                            )
+                            if (preparedConfig.configContent.isNotBlank()) {
+                                connectWithConfig(preparedConfig.configContent, server, selected, preparedConfig.certificateName, preparedConfig.passphrase)
                             } else {
                                 _errorMessage.value = "Configuration still empty after certificate issuance"
                                 _isConnecting.value = false
@@ -1534,8 +1553,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                         _isConnecting.value = false
                     }
                 } else {
-                    val errorBody = response.body()
-                    _errorMessage.value = errorBody?.message ?: "Failed to get VPN config: ${response.code()}"
+                    _errorMessage.value = extractApiMessage(response) ?: "Failed to get VPN config: ${response.code()}"
                     _isConnecting.value = false
                 }
             } catch (e: Exception) {
@@ -1548,6 +1566,271 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 // For OpenVPN we handled it in the early return above
             }
         }
+    }
+
+    private fun extractApiMessage(response: retrofit2.Response<*>): String? {
+        return runCatching {
+            val raw = response.errorBody()?.string().orEmpty()
+            if (raw.isBlank()) null else JSONObject(raw).optString("message").takeIf { it.isNotBlank() } ?: raw
+        }.getOrNull()
+    }
+
+    private fun buildRetryAfterMessage(retryAfterSeconds: Int?): String {
+        return if (retryAfterSeconds != null && retryAfterSeconds > 0) {
+            "Too many requests. Please wait ${retryAfterSeconds}s and try again."
+        } else {
+            "Too many requests. Please try again shortly."
+        }
+    }
+
+    private data class PreparedVpnConfig(
+        val configContent: String,
+        val certificateName: String?,
+        val passphrase: String?
+    )
+
+    private suspend fun prepareVpnConfigForConnection(
+        protocol: VpnProtocol,
+        request: VpnConfigRequest,
+        tokenManager: TokenManager,
+        body: net.libreguard.vpn.network.VpnConfigResponse,
+        allowKeyRecovery: Boolean = true
+    ): PreparedVpnConfig {
+        val rawConfigContent = body.configContent ?: throw IllegalStateException("VPN config is missing config content")
+        if (protocol != VpnProtocol.IKEV2_IPSEC) {
+            return PreparedVpnConfig(rawConfigContent, body.certificateName, null)
+        }
+
+        val payload = body.encryptedPassphrase ?: throw IllegalStateException("VPN config is missing encrypted passphrase")
+        val boundKeyId = tokenManager.getBoundDeviceKeyId()
+        val currentKeyId = withContext(Dispatchers.IO) { net.libreguard.vpn.util.DeviceKeyManager.currentPublicKeyId() }
+        Log.d(
+            TAG,
+            "IKEV2 key state before decrypt: boundKeyId=$boundKeyId currentKeyId=$currentKeyId payloadKeyId=${payload.keyId} serverDeviceId=${body.deviceId} aliasState=${net.libreguard.vpn.util.DeviceKeyManager.describeCurrentBinding()}"
+        )
+
+        val decryptedPassphrase = try {
+            withContext(Dispatchers.IO) { net.libreguard.vpn.util.PassphraseDecryptor.decrypt(payload) }
+        } catch (e: IllegalArgumentException) {
+            if (allowKeyRecovery && isRecoverableKeyMismatch(e)) {
+                Log.w(TAG, "IKEV2 encrypted passphrase key mismatch detected. Rebinding current device key and retrying config once.", e)
+                val refreshedToken = forceRefreshWithDeviceKeyRebind(tokenManager, rotateLocalKey = false)
+                val retryResponse = RetrofitClient.instance.getVpnConfig("Bearer $refreshedToken", request)
+                if (!retryResponse.isSuccessful || retryResponse.body()?.success != true) {
+                    throw IllegalStateException(extractApiMessage(retryResponse) ?: "Failed to refresh VPN config after key mismatch")
+                }
+
+                return prepareVpnConfigForConnection(
+                    protocol = protocol,
+                    request = request,
+                    tokenManager = tokenManager,
+                    body = retryResponse.body() ?: throw IllegalStateException("VPN config response body missing after key mismatch retry"),
+                    allowKeyRecovery = false
+                )
+            }
+            throw IllegalStateException(e.message ?: "Invalid encrypted passphrase payload", e)
+        } catch (e: Exception) {
+            if (!allowKeyRecovery || !isRecoverablePassphraseFailure(e)) {
+                throw IllegalStateException("Failed to decrypt VPN passphrase", e)
+            }
+
+            Log.w(TAG, "IKEv2 passphrase decrypt failed, rotating device key and retrying config fetch once", e)
+            val refreshedToken = forceRefreshWithDeviceKeyRebind(tokenManager, rotateLocalKey = true)
+            val retryResponse = RetrofitClient.instance.getVpnConfig("Bearer $refreshedToken", request)
+            if (!retryResponse.isSuccessful || retryResponse.body()?.success != true) {
+                throw IllegalStateException(extractApiMessage(retryResponse) ?: "Failed to refresh VPN config after rotating device keys")
+            }
+
+            return prepareVpnConfigForConnection(
+                protocol = protocol,
+                request = request,
+                tokenManager = tokenManager,
+                body = retryResponse.body() ?: throw IllegalStateException("VPN config response body missing after key rotation"),
+                allowKeyRecovery = false
+            )
+        }
+
+        Log.d(
+            TAG,
+            "IKEV2 passphrase decrypted successfully for certificate=${body.certificateName} payloadKeyId=${payload.keyId}; injecting decrypted password into configContent.local.password"
+        )
+
+        return PreparedVpnConfig(
+            configContent = injectIkev2Passphrase(rawConfigContent, decryptedPassphrase),
+            certificateName = body.certificateName,
+            passphrase = decryptedPassphrase
+        )
+    }
+
+    private fun injectIkev2Passphrase(configContent: String, passphrase: String): String {
+        val json = JSONObject(configContent)
+        val local = json.optJSONObject("local") ?: JSONObject().also { json.put("local", it) }
+        local.put("password", passphrase)
+        return json.toString()
+    }
+
+    private fun isRecoverablePassphraseFailure(error: Throwable): Boolean {
+        var current: Throwable? = error
+        while (current != null) {
+            when (current) {
+                is javax.crypto.IllegalBlockSizeException,
+                is javax.crypto.BadPaddingException,
+                is java.security.InvalidAlgorithmParameterException,
+                is java.security.InvalidKeyException,
+                is java.security.UnrecoverableKeyException -> return true
+            }
+            if (current.javaClass.name == "android.security.KeyStoreException") {
+                return true
+            }
+            current = current.cause
+        }
+        return false
+    }
+
+    private fun isRecoverableKeyMismatch(error: Throwable): Boolean {
+        var current: Throwable? = error
+        while (current != null) {
+            if (current is IllegalArgumentException && current.message?.contains("key mismatch", ignoreCase = true) == true) {
+                return true
+            }
+            current = current.cause
+        }
+        return false
+    }
+
+    private suspend fun forceRefreshWithDeviceKeyRebind(
+        tokenManager: TokenManager,
+        rotateLocalKey: Boolean
+    ): String {
+        _errorMessage.value = "Refreshing device encryption keys..."
+        if (rotateLocalKey) {
+            runCatching { net.libreguard.vpn.util.DeviceKeyManager.rotateKeyPair() }
+                .getOrElse { throw IllegalStateException("Failed to rotate device encryption key", it) }
+            Log.d(TAG, "Rotated device encryption key alias=${net.libreguard.vpn.util.DeviceKeyManager.currentAlias()} keyId=${net.libreguard.vpn.util.DeviceKeyManager.publicKeyId()}")
+        } else {
+            Log.d(TAG, "Rebinding current device encryption key alias=${net.libreguard.vpn.util.DeviceKeyManager.currentAlias()} keyId=${net.libreguard.vpn.util.DeviceKeyManager.publicKeyId()}")
+        }
+
+        return when (val refreshResult = tokenManager.refreshTokenWithResult(RetrofitClient.authApiService, forceRefresh = true)) {
+            is TokenRefreshResult.Success -> refreshResult.accessToken
+            is TokenRefreshResult.RateLimited -> throw IllegalStateException(buildRetryAfterMessage(refreshResult.retryAfterSeconds))
+            is TokenRefreshResult.Failure -> {
+                if (refreshResult.statusCode == 403 && refreshResult.errorCode.equals("DEVICE_NOT_REGISTERED", ignoreCase = true)) {
+                    forceLogoutForDeviceRegistration("This device key changed and the session must be re-authenticated. Please sign in again.")
+                }
+                throw IllegalStateException(refreshResult.message ?: "Failed to rebind rotated device key", null)
+            }
+            is TokenRefreshResult.ExceptionFailure -> throw IllegalStateException(
+                refreshResult.throwable.localizedMessage ?: "Failed to rebind rotated device key",
+                refreshResult.throwable
+            )
+            TokenRefreshResult.Skipped -> tokenManager.getAccessToken()
+                ?: throw IllegalStateException("Authentication token missing after device key rotation")
+        }
+    }
+
+    private suspend fun forceLogoutForDeviceRegistration(message: String): Nothing {
+        _errorMessage.value = message
+        _isConnecting.value = false
+
+        try {
+            net.libreguard.vpn.util.LogoutManager.logout()
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to perform logout after DEVICE_NOT_REGISTERED", e)
+        }
+
+        val logoutIntent = Intent("net.libreguard.vpn.ACTION_LOGOUT")
+        logoutIntent.setPackage(getApplication<Application>().packageName)
+        getApplication<Application>().sendBroadcast(logoutIntent)
+        throw IllegalStateException(message)
+    }
+
+    private suspend fun fetchVpnConfigWithRecovery(
+        request: VpnConfigRequest,
+        tokenManager: TokenManager
+    ): retrofit2.Response<net.libreguard.vpn.network.VpnConfigResponse> {
+        var token = tokenManager.getAccessToken()
+            ?: throw IllegalStateException("Authentication token missing")
+
+        val boundKeyId = tokenManager.getBoundDeviceKeyId()
+        val currentKeyId = withContext(Dispatchers.IO) { runCatching { net.libreguard.vpn.util.DeviceKeyManager.publicKeyId() }.getOrNull() }
+        Log.d(
+            TAG,
+            "Fetching VPN config for protocol=${request.protocol} serverId=${request.serverId} with boundKeyId=$boundKeyId currentKeyId=$currentKeyId aliasState=${net.libreguard.vpn.util.DeviceKeyManager.describeCurrentBinding()}"
+        )
+        if (!boundKeyId.isNullOrBlank() && !currentKeyId.isNullOrBlank() && boundKeyId != currentKeyId) {
+            Log.w(TAG, "Bound device key id differs from local keystore key; forcing refresh before VPN config fetch")
+            token = forceRefreshWithDeviceKeyRebind(tokenManager, rotateLocalKey = false)
+        }
+
+        var response = RetrofitClient.instance.getVpnConfig("Bearer $token", request)
+
+        if (response.code() == 409) {
+            val errorStr = response.errorBody()?.string().orEmpty()
+            val errorJson = runCatching { JSONObject(errorStr) }.getOrNull()
+            val errorCode = errorJson?.optString("errorCode")
+
+            if (errorCode.equals("DEVICE_KEY_REQUIRED", ignoreCase = true)) {
+                Log.d(TAG, "Device key required by server, forcing device-bound token refresh before retrying config request")
+                _errorMessage.value = "Updating secure device session..."
+
+                when (val refreshResult = tokenManager.refreshTokenWithResult(RetrofitClient.authApiService, forceRefresh = true)) {
+                    is TokenRefreshResult.Success -> {
+                        token = refreshResult.accessToken
+                        response = RetrofitClient.instance.getVpnConfig("Bearer $token", request)
+                    }
+                    is TokenRefreshResult.RateLimited -> {
+                        throw IllegalStateException(buildRetryAfterMessage(refreshResult.retryAfterSeconds))
+                    }
+                    is TokenRefreshResult.Failure -> {
+                        if (refreshResult.statusCode == 403 && refreshResult.errorCode.equals("DEVICE_NOT_REGISTERED", ignoreCase = true)) {
+                            forceLogoutForDeviceRegistration("This device is no longer registered. Please sign in again.")
+                        }
+
+                        throw IllegalStateException(
+                            refreshResult.message ?: "Failed to refresh secure device session. Please sign in again."
+                        )
+                    }
+                    is TokenRefreshResult.ExceptionFailure -> {
+                        throw IllegalStateException(
+                            refreshResult.throwable.localizedMessage ?: "Failed to refresh secure device session",
+                            refreshResult.throwable
+                        )
+                    }
+                    TokenRefreshResult.Skipped -> {
+                        token = tokenManager.getAccessToken()
+                            ?: throw IllegalStateException("Authentication token missing")
+                        response = RetrofitClient.instance.getVpnConfig("Bearer $token", request)
+                    }
+                }
+            }
+        }
+
+        if (response.code() == 403) {
+            val errorStr = response.errorBody()?.string().orEmpty()
+            val errorJson = runCatching { JSONObject(errorStr) }.getOrNull()
+            if (errorJson?.optString("errorCode").equals("DEVICE_NOT_REGISTERED", ignoreCase = true)) {
+                forceLogoutForDeviceRegistration("This device is not registered anymore. Please sign in again.")
+            }
+            if (errorJson?.optString("message")?.isNotBlank() == true) {
+                throw IllegalStateException(errorJson.optString("message"))
+            }
+        }
+
+        if (response.code() == 429) {
+            val retryAfter = response.headers()["Retry-After"]?.toIntOrNull()
+            throw IllegalStateException(buildRetryAfterMessage(retryAfter))
+        }
+
+        if (response.isSuccessful && response.body()?.success == true) {
+            val body = response.body()
+            Log.d(
+                TAG,
+                "VPN config fetch succeeded for protocol=${request.protocol} serverId=${request.serverId} responseDeviceId=${body?.deviceId} payloadKeyId=${body?.encryptedPassphrase?.keyId} certificate=${body?.certificateName}"
+            )
+        }
+
+        return response
     }
 
     // Request issuance and wait for completion. Returns true when certificate is ready.
@@ -2080,7 +2363,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 val initialized = activeVpnHandler?.initialize(context) ?: false
                 if (!initialized) throw Exception("Failed to initialize OpenVPN handler")
 
-                // Start observing handler state to keep UI in sync, including revocation cases
+                // Start observing state before connect
                 observeActiveHandlerState()
 
                 // Try cached config first - but validate it first
@@ -3256,3 +3539,4 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun getHistoryManager(): ConnectionHistoryManager = connectionHistoryManager
 }
+
