@@ -1421,33 +1421,26 @@ fun LoginScreen(
 
         android.util.Log.d("LoginScreen", "Device picker dialog opened: capturedEmail=$capturedEmail, password.length=${capturedPassword.length}")
 
-        // Filter out the current device - users can only remove OTHER devices
-        // Removing the current device is useless as it will be re-registered on login
-        val otherDevices = deviceLimitError?.devices?.filter { it.remoteId() != deviceId }
+        // Show all devices - even if they match current device ID, user might need to remove them
+        val otherDevices = deviceLimitError?.devices
         val hasOnlyCurrentDevice = otherDevices.isNullOrEmpty()
 
         android.util.Log.d("LoginScreen", "Current deviceId=$deviceId, total devices=${deviceLimitError?.devices?.size}, other devices=${otherDevices?.size}")
 
         AlertDialog(
             onDismissRequest = { showDevicePickerDialog = false },
-            title = { Text(if (hasOnlyCurrentDevice) "No Other Devices" else "Select Device to Remove") },
+            title = { Text(if (hasOnlyCurrentDevice) "No Devices Found" else "Select Device to Remove") },
             text = {
                 Column {
                     if (hasOnlyCurrentDevice) {
-                        // All devices in the list are the current device (duplicates from multiple logins)
+                        // There are no devices in the list
                         Text(
-                            text = "All registered devices belong to this phone. This can happen if the device was registered multiple times.",
+                            text = "The server did not return any devices.",
                             style = MaterialTheme.typography.bodyMedium,
                             modifier = Modifier.padding(bottom = 12.dp)
                         )
                         Text(
-                            text = "The server shows ${deviceLimitError?.currentDevices ?: 0} device(s) registered, but they all have the same device ID as your current phone.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MutedForeground,
-                            modifier = Modifier.padding(bottom = 12.dp)
-                        )
-                        Text(
-                            text = "Please contact support or try logging in again - this issue may resolve itself.",
+                            text = "Please contact support or log in to the web dashboard to manage your devices.",
                             style = MaterialTheme.typography.bodySmall,
                             color = Primary
                         )
@@ -1459,7 +1452,7 @@ fun LoginScreen(
                         )
 
                         Text(
-                            text = "Note: Your current device is not shown (removing it wouldn't help).",
+                            text = "Note: If your current device is listed, removing it will let you log in.",
                             style = MaterialTheme.typography.labelSmall,
                             color = MutedForeground,
                             modifier = Modifier.padding(bottom = 8.dp)
@@ -1604,8 +1597,8 @@ fun LoginScreen(
         // Show devices only if we have them AND password is validated (or we got them from API)
         val showDevices = devicesFromPasswordLogin != null && (passwordValidated || passwordForDeviceManagement.length >= 8)
 
-        // Filter out the current device - users can only remove OTHER devices
-        val otherDevicesFromPasswordLogin = devicesFromPasswordLogin?.filter { it.remoteId() != deviceId }
+        // Show all devices - users might need to remove their current device if limit exceeded
+        val otherDevicesFromPasswordLogin = devicesFromPasswordLogin
         val hasOnlyCurrentDeviceInPasswordDialog = showDevices && otherDevicesFromPasswordLogin.isNullOrEmpty()
 
         AlertDialog(
@@ -1619,7 +1612,7 @@ fun LoginScreen(
             },
             title = {
                 Text(
-                    if (hasOnlyCurrentDeviceInPasswordDialog) "No Other Devices"
+                    if (hasOnlyCurrentDeviceInPasswordDialog) "No Devices Found"
                     else if (showDevices) "Select Device to Remove"
                     else "Enter Password"
                 )
@@ -1627,14 +1620,14 @@ fun LoginScreen(
             text = {
                 Column {
                     if (hasOnlyCurrentDeviceInPasswordDialog) {
-                        // All devices in the list are the current device
+                        // The server returned no devices
                         Text(
-                            text = "All registered devices belong to this phone. This can happen if the device was registered multiple times.",
+                            text = "The server did not return any devices.",
                             style = MaterialTheme.typography.bodyMedium,
                             modifier = Modifier.padding(bottom = 12.dp)
                         )
                         Text(
-                            text = "Please contact support or try logging in again - this issue may resolve itself.",
+                            text = "Please contact support or log in to the web dashboard to manage your devices.",
                             style = MaterialTheme.typography.bodySmall,
                             color = Primary
                         )
@@ -1647,7 +1640,7 @@ fun LoginScreen(
                         )
 
                         Text(
-                            text = "Note: Your current device is not shown.",
+                            text = "Note: If your current device is listed, removing it will let you log in.",
                             style = MaterialTheme.typography.labelSmall,
                             color = MutedForeground,
                             modifier = Modifier.padding(bottom = 8.dp)
