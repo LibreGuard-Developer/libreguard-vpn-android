@@ -35,7 +35,6 @@ import net.libreguard.vpn.ui.screens.TwoFactorSettingsScreen
 import net.libreguard.vpn.ui.screens.TwoFactorVerificationScreen
 import net.libreguard.vpn.ui.screens.RegisterScreen
 import net.libreguard.vpn.ui.screens.ConfirmEmailScreen
-import net.libreguard.vpn.ui.screens.UpgradeScreen
 import net.libreguard.vpn.ui.screens.PrivacyPolicyScreen
 import net.libreguard.vpn.ui.screens.TermsOfServiceScreen
 import net.libreguard.vpn.ui.screens.CardPaymentScreen
@@ -798,7 +797,7 @@ fun AppNavigation(modifier: Modifier = Modifier) {
                         navController.navigate("settings")
                     },
                     onNavigateToUpgrade = {
-                        navController.navigate("upgrade")
+                        navController.navigate("payment/googleplay")
                     },
                     onNavigateToTwoFactor = {
                         navController.navigate("twoFactorSettings")
@@ -813,11 +812,11 @@ fun AppNavigation(modifier: Modifier = Modifier) {
         }
 
         composable("settings") {
-            authToken?.let { token ->
+            authToken?.let { _ ->
                 SettingsScreen(
                     onNavigateBack = { navController.popBackStack() },
                     onNavigateToTwoFactor = { navController.navigate("twoFactorSettings") },
-                    onNavigateToUpgrade = { navController.navigate("upgrade") },
+                    onNavigateToUpgrade = { navController.navigate("payment/googleplay") },
                     onNavigateToPrivacy = { navController.navigate("privacyPolicy") },
                     onNavigateToTerms = { navController.navigate("termsOfService") },
                     onLogout = {
@@ -854,13 +853,6 @@ fun AppNavigation(modifier: Modifier = Modifier) {
             }
         }
 
-        composable("upgrade") {
-            UpgradeScreen(
-                onNavigateBack = { navController.popBackStack() },
-                onChooseGooglePlay = { navController.navigate("payment/googleplay") }
-            )
-        }
-
         composable("deviceManagement") {
             if (authToken == null) {
                 LaunchedEffect(Unit) {
@@ -881,9 +873,7 @@ fun AppNavigation(modifier: Modifier = Modifier) {
         composable("payment/googleplay") {
             authToken?.let { token ->
                 BackHandler(enabled = true) {
-                    navController.navigate("upgrade") {
-                        popUpTo("payment/googleplay") { inclusive = true }
-                    }
+                    navController.popBackStack()
                 }
 
                 val subscriptionViewModel: SubscriptionViewModel = viewModel()
@@ -902,7 +892,7 @@ fun AppNavigation(modifier: Modifier = Modifier) {
                         vpnViewModel.updateSubscriptionStatus()
                         Toast.makeText(context, "Pro upgrade successful!", Toast.LENGTH_LONG).show()
                         navController.navigate("main") {
-                            popUpTo("upgrade") { inclusive = true }
+                            popUpTo("main") { inclusive = true }
                             launchSingleTop = true
                         }
                     }
