@@ -263,12 +263,12 @@ fun HelpSupportScreen(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
-                    text = "LibreGuard v1.0.0",
+                    text = "LibreGuard v${net.libreguard.vpn.BuildConfig.VERSION_NAME}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MutedForeground
                 )
                 Text(
-                    text = "Build 2026.01.29",
+                    text = "Build ${net.libreguard.vpn.BuildConfig.VERSION_CODE}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MutedForeground
                 )

@@ -498,7 +498,7 @@ fun SettingsScreen(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
-                    text = "LibreGuard v1.0.0",
+                    text = "LibreGuard v${net.libreguard.vpn.BuildConfig.VERSION_NAME}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MutedForeground
                 )
