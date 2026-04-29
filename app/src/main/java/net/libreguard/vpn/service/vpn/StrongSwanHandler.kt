@@ -275,8 +275,10 @@ class StrongSwanHandler(
 
             // Check for explicit server certificate errors (NOT user fault)
             // These indicate the server key is expired or invalid, not that the user is over quota
-            val hasServerCertInvalid = logs.contains("subject certificate invalid", ignoreCase = true)
-            val hasUntrustedKey = logs.contains("no trusted RSA public key found", ignoreCase = true)
+            val hasServerCertInvalid = logs.contains("subject certificate invalid", ignoreCase = true) ||
+                                       logs.contains("no issuer certificate found", ignoreCase = true)
+            val hasUntrustedKey = logs.contains("no trusted RSA public key found", ignoreCase = true) ||
+                                  logs.contains("no trusted ECDSA public key found", ignoreCase = true)
             val isServerCertError = hasServerCertInvalid || hasUntrustedKey
 
             // Only treat as fatal if we're giving up, not if MOBIKE is working
@@ -333,7 +335,7 @@ class StrongSwanHandler(
 
                     withContext(Dispatchers.Main) {
                         if (isServerCertError) {
-                            handleAuthenticationFailure("Connection failed: Server certificate invalid", false)
+                            handleAuthenticationFailure("Server authentication error, please try with a different VPN server or contact Support", false)
                         } else {
                             handleAuthenticationFailure("Authentication failed: Traffic limit exceeded or certificate invalid", true)
                         }

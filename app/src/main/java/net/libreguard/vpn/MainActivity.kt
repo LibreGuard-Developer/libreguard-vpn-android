@@ -251,7 +251,7 @@ fun AppNavigation(modifier: Modifier = Modifier) {
                 if (intent?.action == "net.libreguard.vpn.ACTION_SHOW_UPGRADE") {
                     android.util.Log.d("MainActivity", "Received ACTION_SHOW_UPGRADE broadcast - navigating to upgrade screen")
                     // navigate to upgrade screen on main thread
-                    navController.navigate("upgrade")
+                    navController.navigate("payment/googleplay")
                 }
             }
         }
