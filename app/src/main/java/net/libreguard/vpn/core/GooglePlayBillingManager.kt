@@ -352,6 +352,8 @@ class GooglePlayBillingManager(private val context: Context) {
                         body?.message
                             ?: "Invalid purchase token or failed to verify with Google Play."
                     )
+                } else if (response.code() == 409) {
+                    BackendVerificationResult.Error("Your Google Play subscription is linked to another LibreGuard account. Please log in with that account to access your Pro benefits.")
                 } else {
                     val message = body?.message
                         ?: "Purchase verification failed (${response.code()}). Please try again."
@@ -371,7 +373,7 @@ class GooglePlayBillingManager(private val context: Context) {
 
     /**
      * Checks for purchases the user already owns (e.g. app re-install, ITEM_ALREADY_OWNED).
-     * Re-verifies any unacknowledged purchases.
+     * Automatically verifies ONLY unacknowledged purchases to recover from crashes.
      */
     private suspend fun queryExistingPurchases() {
         val result = billingClient.queryPurchasesAsync(
@@ -383,16 +385,46 @@ class GooglePlayBillingManager(private val context: Context) {
             val activePurchases = result.purchasesList.filter { p ->
                 p.purchaseState == Purchase.PurchaseState.PURCHASED
             }
-            if (activePurchases.isEmpty()) {
-                Log.d(TAG, "No active Google Play subscriptions found")
+            val unacknowledgedPurchases = activePurchases.filter { !it.isAcknowledged }
+            if (unacknowledgedPurchases.isEmpty()) {
+                Log.d(TAG, "No unacknowledged Google Play subscriptions found for auto-verify")
                 return
             }
-            Log.d(TAG, "Found ${activePurchases.size} active purchase(s) — verifying…")
-            activePurchases.forEach { purchase ->
+            Log.d(TAG, "Found ${unacknowledgedPurchases.size} unacknowledged purchase(s) — verifying…")
+            unacknowledgedPurchases.forEach { purchase ->
                 scope.launch { handlePurchase(purchase) }
             }
         } else {
             Log.w(TAG, "queryPurchasesAsync failed: ${result.billingResult.responseCode}")
+        }
+    }
+
+    /**
+     * Explicitly checks for all active purchases and attempts to restore them.
+     */
+    fun restorePurchases() {
+        _billingState.value = BillingState.Connecting
+        scope.launch {
+            val result = billingClient.queryPurchasesAsync(
+                QueryPurchasesParams.newBuilder()
+                    .setProductType(BillingClient.ProductType.SUBS)
+                    .build()
+            )
+            if (result.billingResult.responseCode == BillingClient.BillingResponseCode.OK) {
+                val activePurchases = result.purchasesList.filter { p ->
+                    p.purchaseState == Purchase.PurchaseState.PURCHASED
+                }
+                if (activePurchases.isEmpty()) {
+                    _billingState.value = BillingState.Error("No active subscriptions found on this Google Play account.")
+                    return@launch
+                }
+                Log.d(TAG, "Found ${activePurchases.size} active purchase(s) to restore")
+                activePurchases.forEach { purchase ->
+                    handlePurchase(purchase)
+                }
+            } else {
+                _billingState.value = BillingState.Error("Failed to query purchases: ${result.billingResult.responseCode}")
+            }
         }
     }
 }

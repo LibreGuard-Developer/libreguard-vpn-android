@@ -290,6 +290,24 @@ fun GooglePlayPaymentScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
+            // Restore Purchases Button
+            OutlinedButton(
+                onClick = { billingManager.restorePurchases() },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp),
+                shape = RoundedCornerShape(12.dp),
+                enabled = !isProcessing
+            ) {
+                Text(
+                    text = "Restore Purchases",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = Foreground
+                )
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
             // Policy notice
             Surface(
                 modifier = Modifier.fillMaxWidth(),
