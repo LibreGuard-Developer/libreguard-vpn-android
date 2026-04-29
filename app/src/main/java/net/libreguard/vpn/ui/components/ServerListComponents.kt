@@ -43,8 +43,8 @@ data class ServerItemData(
  */
 private fun getPingColor(ping: Int): Color {
     return when {
-        ping < 50 -> StatusConnected
-        ping < 100 -> StatusConnecting
+        ping <= 100 -> StatusConnected
+        ping <= 200 -> Primary
         else -> MutedForeground
     }
 }
