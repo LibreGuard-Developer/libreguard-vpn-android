@@ -306,6 +306,16 @@ fun GooglePlayPaymentScreen(
                 )
             }
 
+            Text(
+                text = "Restoring purchases will transfer any existing subscription to this account.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MutedForeground,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp)
+            )
+
             Spacer(modifier = Modifier.height(16.dp))
 
             // Policy notice
@@ -327,6 +337,32 @@ fun GooglePlayPaymentScreen(
             }
 
             Spacer(modifier = Modifier.height(32.dp))
+        }
+
+        // Transfer Confirmation Dialog
+        if (billingState is GooglePlayBillingManager.BillingState.RequiresTransfer) {
+            val transferState = billingState as GooglePlayBillingManager.BillingState.RequiresTransfer
+            AlertDialog(
+                onDismissRequest = { /* Require explicit action */ },
+                title = { Text(text = "Subscription Found") },
+                text = {
+                    Text(text = "Your Google Play Pro subscription is currently linked to another LibreGuard account. Would you like to transfer it to this account?")
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        billingManager.transferSubscription(transferState.subscriptionId, transferState.purchaseToken)
+                    }) {
+                        Text("Transfer", color = Primary)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = {
+                        billingManager.cancelTransfer()
+                    }) {
+                        Text("Cancel", color = MutedForeground)
+                    }
+                }
+            )
         }
     }
 }

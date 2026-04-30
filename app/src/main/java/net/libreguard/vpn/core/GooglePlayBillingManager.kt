@@ -28,6 +28,7 @@ class GooglePlayBillingManager(private val context: Context) {
         data class Success(val currentPeriodEnd: String?) : BackendVerificationResult()
         data class Pending(val message: String) : BackendVerificationResult()
         data class Error(val message: String) : BackendVerificationResult()
+        object RequiresTransfer : BackendVerificationResult()
     }
 
     data class SubscriptionOption(
@@ -49,6 +50,7 @@ class GooglePlayBillingManager(private val context: Context) {
         /** Purchase acknowledged and verified by backend — user is now Pro. */
         object PurchaseSuccess : BillingState()
         data class Error(val message: String) : BillingState()
+        data class RequiresTransfer(val subscriptionId: String, val purchaseToken: String) : BillingState()
     }
 
     private val _billingState = MutableStateFlow<BillingState>(BillingState.Idle)
@@ -282,7 +284,8 @@ class GooglePlayBillingManager(private val context: Context) {
         val actualSubscriptionId = purchase.products.firstOrNull() ?: BuildConfig.GOOGLE_PLAY_BACKEND_SUBSCRIPTION_ID
         when (val verificationResult = verifyWithBackend(
             actualSubscriptionId,
-            purchase.purchaseToken
+            purchase.purchaseToken,
+            transferSubscription = false
         )) {
             is BackendVerificationResult.Success -> {
                 Log.d(TAG, "Purchase verified by backend; currentPeriodEnd=${verificationResult.currentPeriodEnd}")
@@ -303,6 +306,13 @@ class GooglePlayBillingManager(private val context: Context) {
 
                 _billingState.value = BillingState.PurchaseSuccess
             }
+            is BackendVerificationResult.RequiresTransfer -> {
+                Log.i(TAG, "Purchase verification requires transfer")
+                _billingState.value = BillingState.RequiresTransfer(
+                    subscriptionId = actualSubscriptionId,
+                    purchaseToken = purchase.purchaseToken
+                )
+            }
             is BackendVerificationResult.Pending -> {
                 Log.i(TAG, "Purchase verification pending: ${verificationResult.message}")
                 _billingState.value = BillingState.PurchasePending(verificationResult.message)
@@ -315,12 +325,48 @@ class GooglePlayBillingManager(private val context: Context) {
     }
 
     /**
+     * Explicitly transfer a subscription after user confirmation.
+     */
+    fun transferSubscription(subscriptionId: String, purchaseToken: String) {
+        _billingState.value = BillingState.Connecting
+        scope.launch {
+            when (val verificationResult = verifyWithBackend(
+                subscriptionId,
+                purchaseToken,
+                transferSubscription = true
+            )) {
+                is BackendVerificationResult.Success -> {
+                    Log.d(TAG, "Subscription transferred successfully")
+                    _billingState.value = BillingState.PurchaseSuccess
+                }
+                is BackendVerificationResult.Pending -> {
+                    _billingState.value = BillingState.PurchasePending(verificationResult.message)
+                }
+                is BackendVerificationResult.Error -> {
+                    _billingState.value = BillingState.Error(verificationResult.message)
+                }
+                is BackendVerificationResult.RequiresTransfer -> {
+                    _billingState.value = BillingState.Error("Failed to transfer subscription.")
+                }
+            }
+        }
+    }
+
+    /**
+     * Cancel an active transfer request.
+     */
+    fun cancelTransfer() {
+        _billingState.value = BillingState.Idle
+    }
+
+    /**
      * Sends the purchase token to the LibreGuard backend for server-side validation.
      * Returns true if the backend confirms the purchase as valid.
      */
     private suspend fun verifyWithBackend(
         subscriptionId: String,
-        purchaseToken: String
+        purchaseToken: String,
+        transferSubscription: Boolean
     ): BackendVerificationResult {
         return withContext(Dispatchers.IO) {
             try {
@@ -333,7 +379,8 @@ class GooglePlayBillingManager(private val context: Context) {
                     authorization = "Bearer $token",
                     request = VerifyGooglePlayRequest(
                         subscriptionId = subscriptionId,
-                        purchaseToken = purchaseToken
+                        purchaseToken = purchaseToken,
+                        transferSubscription = transferSubscription
                     )
                 )
 
@@ -348,12 +395,24 @@ class GooglePlayBillingManager(private val context: Context) {
                         body.message ?: "Payment is pending. Please check back later."
                     )
                 } else if (response.code() == 400) {
-                    BackendVerificationResult.Error(
-                        body?.message
-                            ?: "Invalid purchase token or failed to verify with Google Play."
-                    )
+                    val errorBody = response.errorBody()?.string()
+                    Log.e(TAG, "Backend verification 400 errorBody: $errorBody")
+                    BackendVerificationResult.Error("Invalid purchase token or failed to verify with Google Play.")
                 } else if (response.code() == 409) {
-                    BackendVerificationResult.Error("Your Google Play subscription is linked to another LibreGuard account. Please log in with that account to access your Pro benefits.")
+                    val errorBody = response.errorBody()?.string()
+                    val requiresTransfer = try {
+                        if (errorBody != null) {
+                            org.json.JSONObject(errorBody).optBoolean("requiresTransfer", false)
+                        } else {
+                            false
+                        }
+                    } catch (e: Exception) { false }
+
+                    if (requiresTransfer) {
+                        BackendVerificationResult.RequiresTransfer
+                    } else {
+                        BackendVerificationResult.Error("Your Google Play subscription is linked to another LibreGuard account. Please log in with that account to access your Pro benefits.")
+                    }
                 } else {
                     val message = body?.message
                         ?: "Purchase verification failed (${response.code()}). Please try again."
