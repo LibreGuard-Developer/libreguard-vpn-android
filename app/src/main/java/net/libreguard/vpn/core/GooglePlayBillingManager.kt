@@ -149,7 +149,8 @@ class GooglePlayBillingManager(private val context: Context) {
 
     private suspend fun loadProductDetails() {
         val productIds = listOf(
-            BuildConfig.GOOGLE_PLAY_PRODUCT_ID
+            "libreguard_vpn_monthly",
+            "libreguard_vpn_yearly"
         ).distinct()
 
         val productList = productIds.map { productId ->
@@ -179,17 +180,22 @@ class GooglePlayBillingManager(private val context: Context) {
                         else -> if (isTrial) "Monthly Pro (Trial)" else "Monthly Pro"
                     }
 
-                    // Avoid duplicate base plans without offers if an offer exists for the same duration
-                    options.add(
-                        SubscriptionOption(
-                            productDetails = product,
-                            offerToken = offer.offerToken,
-                            basePlanId = offer.basePlanId,
-                            offerId = offer.offerId,
-                            formattedPrice = price,
-                            title = title
+                    // Explicitly filter for the correct base plans as instructed by backend
+                    val isMonthlyPlan = offer.basePlanId == "libreguard-vpn-monthly-v2"
+                    val isYearlyPlan = offer.basePlanId == "libreguard-vpn-yearly"
+
+                    if (isMonthlyPlan || isYearlyPlan) {
+                        options.add(
+                            SubscriptionOption(
+                                productDetails = product,
+                                offerToken = offer.offerToken,
+                                basePlanId = offer.basePlanId,
+                                offerId = offer.offerId,
+                                formattedPrice = price,
+                                title = title
+                            )
                         )
-                    )
+                    }
                 }
             }
 
