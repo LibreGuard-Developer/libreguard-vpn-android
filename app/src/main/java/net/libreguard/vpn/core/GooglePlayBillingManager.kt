@@ -37,7 +37,8 @@ class GooglePlayBillingManager(private val context: Context) {
         val basePlanId: String,
         val offerId: String?,
         val formattedPrice: String,
-        val title: String
+        val title: String,
+        val discountPercentage: String? = null
     )
 
     // ── Public state ─────────────────────────────────────────────────────────
@@ -167,6 +168,17 @@ class GooglePlayBillingManager(private val context: Context) {
             _productDetailsList.value = detailsList
 
             val options = mutableListOf<SubscriptionOption>()
+
+            // Find monthly price for discount calculation
+            var monthlyPriceMicros: Long? = null
+            detailsList.forEach { product ->
+                product.subscriptionOfferDetails?.forEach { offer ->
+                    if (offer.basePlanId == "libreguard-vpn-monthly") {
+                        monthlyPriceMicros = offer.pricingPhases.pricingPhaseList.lastOrNull()?.priceAmountMicros
+                    }
+                }
+            }
+
             detailsList.forEach { product ->
                 product.subscriptionOfferDetails?.forEach { offer ->
                     val isTrial = offer.pricingPhases.pricingPhaseList.any { it.priceAmountMicros == 0L }
@@ -183,6 +195,19 @@ class GooglePlayBillingManager(private val context: Context) {
                     val isYearlyPlan = offer.basePlanId == "libreguard-vpn-yearly"
 
                     if (isMonthlyPlan || isYearlyPlan) {
+                        var discountPercentage: String? = null
+                        if (isYearlyPlan && monthlyPriceMicros != null && monthlyPriceMicros!! > 0) {
+                            val yearlyPriceMicros = recurringPhase?.priceAmountMicros ?: 0L
+                            if (yearlyPriceMicros > 0) {
+                                val fullYearMonthlyPrice = monthlyPriceMicros!! * 12
+                                val discount = ((fullYearMonthlyPrice - yearlyPriceMicros).toDouble() / fullYearMonthlyPrice.toDouble()) * 100
+                                if (discount > 0) {
+                                    // Use DecimalFormat or String.format for precise precision without rounding to Int
+                                    discountPercentage = String.format("%.1f", discount)
+                                }
+                            }
+                        }
+
                         options.add(
                             SubscriptionOption(
                                 productDetails = product,
@@ -190,7 +215,8 @@ class GooglePlayBillingManager(private val context: Context) {
                                 basePlanId = offer.basePlanId,
                                 offerId = offer.offerId,
                                 formattedPrice = price,
-                                title = title
+                                title = title,
+                                discountPercentage = discountPercentage
                             )
                         )
                     }

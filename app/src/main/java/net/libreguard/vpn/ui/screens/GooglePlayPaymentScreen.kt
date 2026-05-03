@@ -117,11 +117,29 @@ fun GooglePlayPaymentScreen(
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Column {
-                            Text(
-                                text = option.title,
-                                style = MaterialTheme.typography.titleMedium,
-                                color = Foreground
-                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text(
+                                    text = option.title,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = Foreground
+                                )
+                                if (option.discountPercentage != null) {
+                                    Surface(
+                                        color = StatusConnected.copy(alpha = 0.15f),
+                                        shape = RoundedCornerShape(4.dp)
+                                    ) {
+                                        Text(
+                                            text = "-${option.discountPercentage}%",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = StatusConnected,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                }
+                            }
                             Text(
                                 text = option.formattedPrice,
                                 style = MaterialTheme.typography.bodyLarge,
