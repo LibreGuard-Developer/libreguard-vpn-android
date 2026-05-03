@@ -62,6 +62,8 @@ class GooglePlayBillingManager(private val context: Context) {
     private val _subscriptionOptions = MutableStateFlow<List<SubscriptionOption>>(emptyList())
     val subscriptionOptions: StateFlow<List<SubscriptionOption>> = _subscriptionOptions
 
+    private var _activePurchaseToken: String? = null
+
     // ── Internal ──────────────────────────────────────────────────────────────
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -149,8 +151,7 @@ class GooglePlayBillingManager(private val context: Context) {
 
     private suspend fun loadProductDetails() {
         val productIds = listOf(
-            "libreguard_vpn_monthly",
-            "libreguard_vpn_yearly"
+            "libreguard_vpn"
         ).distinct()
 
         val productList = productIds.map { productId ->
@@ -181,7 +182,7 @@ class GooglePlayBillingManager(private val context: Context) {
                     }
 
                     // Explicitly filter for the correct base plans as instructed by backend
-                    val isMonthlyPlan = offer.basePlanId == "libreguard-vpn-monthly-v2"
+                    val isMonthlyPlan = offer.basePlanId == "libreguard-vpn-monthly"
                     val isYearlyPlan = offer.basePlanId == "libreguard-vpn-yearly"
 
                     if (isMonthlyPlan || isYearlyPlan) {
@@ -240,11 +241,20 @@ class GooglePlayBillingManager(private val context: Context) {
                 .build()
         )
 
-        val billingFlowParams = BillingFlowParams.newBuilder()
+        val billingFlowParamsBuilder = BillingFlowParams.newBuilder()
             .setProductDetailsParamsList(productDetailsParamsList)
-            .build()
 
-        val result = billingClient.launchBillingFlow(activity, billingFlowParams)
+        // Upgrade/Downgrade: if user already has an active subscription token, we MUST pass it to Google
+        if (_activePurchaseToken != null) {
+            billingFlowParamsBuilder.setSubscriptionUpdateParams(
+                BillingFlowParams.SubscriptionUpdateParams.newBuilder()
+                    .setOldPurchaseToken(_activePurchaseToken!!)
+                    .setSubscriptionReplacementMode(BillingFlowParams.SubscriptionUpdateParams.ReplacementMode.CHARGE_PRORATED_PRICE)
+                    .build()
+            )
+        }
+
+        val result = billingClient.launchBillingFlow(activity, billingFlowParamsBuilder.build())
         if (result.responseCode != BillingClient.BillingResponseCode.OK) {
             val msg = "launchBillingFlow failed: ${result.responseCode} — ${result.debugMessage}"
             Log.e(TAG, msg)
@@ -282,6 +292,8 @@ class GooglePlayBillingManager(private val context: Context) {
             )
             return
         }
+
+        _activePurchaseToken = purchase.purchaseToken
 
         Log.d(TAG, "Processing purchase: token=${purchase.purchaseToken.take(30)}…")
         Log.d(TAG, "Backend verification payload: subscriptionId=${purchase.products.firstOrNull() ?: BuildConfig.GOOGLE_PLAY_BACKEND_SUBSCRIPTION_ID}, purchaseToken=${purchase.purchaseToken}, products=${purchase.products}")
@@ -450,6 +462,8 @@ class GooglePlayBillingManager(private val context: Context) {
             val activePurchases = result.purchasesList.filter { p ->
                 p.purchaseState == Purchase.PurchaseState.PURCHASED
             }
+            _activePurchaseToken = activePurchases.firstOrNull()?.purchaseToken
+
             val unacknowledgedPurchases = activePurchases.filter { !it.isAcknowledged }
             if (unacknowledgedPurchases.isEmpty()) {
                 Log.d(TAG, "No unacknowledged Google Play subscriptions found for auto-verify")
@@ -479,6 +493,7 @@ class GooglePlayBillingManager(private val context: Context) {
                 val activePurchases = result.purchasesList.filter { p ->
                     p.purchaseState == Purchase.PurchaseState.PURCHASED
                 }
+                _activePurchaseToken = activePurchases.firstOrNull()?.purchaseToken
                 if (activePurchases.isEmpty()) {
                     _billingState.value = BillingState.Error("No active subscriptions found on this Google Play account.")
                     return@launch
