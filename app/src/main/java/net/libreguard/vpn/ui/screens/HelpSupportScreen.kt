@@ -184,7 +184,7 @@ fun HelpSupportScreen(
 
                 FAQItem(
                     question = "What's the difference between Free and Pro?",
-                    answer = "Free plan includes 10GB monthly data with basic features. Pro plan offers unlimited bandwidth, faster servers, OpenVPN protocol, and priority support for \$4/month."
+                    answer = "Free plan includes 5GB monthly data with basic features. Pro plan offers unlimited bandwidth, faster servers, OpenVPN protocol, VPN usage outside this app, and much more!"
                 )
 
                 FAQItem(
