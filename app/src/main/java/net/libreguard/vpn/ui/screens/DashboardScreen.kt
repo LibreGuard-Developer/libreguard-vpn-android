@@ -106,8 +106,8 @@ fun DashboardScreen(
     // Animation transition
     val infiniteTransition = rememberInfiniteTransition(label = "pulse")
 
-    // Calculate usage percentages
-    val totalDataUsed = monthlyData + sessionData
+    // Calculate usage percentages - don't add sessionData as totalBytesUsed (from server) already includes it
+    val totalDataUsed = monthlyData
     val monthlyPercentage = if (monthlyLimit > 0) (monthlyData / monthlyLimit * 100).toFloat() else 0f
     val totalPercentage = if (monthlyLimit > 0) (totalDataUsed / monthlyLimit * 100).toFloat() else 0f
 
