@@ -5,8 +5,10 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -791,6 +793,37 @@ private fun SettingsToggleRow(
 }
 
 @Composable
+private fun FeatureItem(text: String) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .widthIn(min = 160.dp)
+            .padding(4.dp)
+    ) {
+        Surface(
+            modifier = Modifier.size(24.dp),
+            shape = CircleShape,
+            color = Primary
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    imageVector = Icons.Default.Check,
+                    contentDescription = null,
+                    tint = PrimaryForeground,
+                    modifier = Modifier.size(14.dp)
+                )
+            }
+        }
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(
+            text = text,
+            style = MaterialTheme.typography.bodySmall,
+            color = MutedForeground
+        )
+    }
+}
+
+@Composable
 private fun UpgradeCard(
     onUpgradeClick: () -> Unit,
     modifier: Modifier = Modifier
@@ -839,17 +872,33 @@ private fun UpgradeCard(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                Text(
-                    text = "✓ Unlimited bandwidth",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MutedForeground
-                )
-                Text(
-                    text = "✓ Priority servers",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MutedForeground
-                )
+            // Responsive feature list: adapt between 1 and 2 columns depending on screen width
+            val features = listOf(
+                "Unlimited bandwidth",
+                "Priority servers",
+                "OpenVPN support",
+                "Manual VPN configuration export",
+                "Email support",
+                "Auto-connect",
+                "Kill switch",
+                "Use on up to 3 devices simultaneously"
+            )
+            val columns = if (LocalConfiguration.current.screenWidthDp < 420) 1 else 2
+            val rows = features.chunked(columns)
+            Column {
+                rows.forEachIndexed { idx, row ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+                        row.forEach { feature ->
+                            Box(modifier = Modifier.weight(1f)) {
+                                FeatureItem(feature)
+                            }
+                        }
+                        if (row.size < columns) {
+                            Spacer(modifier = Modifier.weight(1f))
+                        }
+                    }
+                    if (idx < rows.size - 1) Spacer(modifier = Modifier.height(8.dp))
+                }
             }
 
             Spacer(modifier = Modifier.height(16.dp))

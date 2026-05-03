@@ -54,6 +54,10 @@ fun TwoFactorSettingsScreen(
         return "Bearer $t"
     }
 
+    fun sanitizeRecoveryCodes(codes: List<String>?): List<String> {
+        return codes.orEmpty().map { it.trim() }.filter { it.isNotEmpty() }
+    }
+
     var is2faEnabled by remember { mutableStateOf(false) }
     var hasAuthenticator by remember { mutableStateOf(false) }
     var recoveryCodesLeft by remember { mutableStateOf(0) }
@@ -283,9 +287,14 @@ fun TwoFactorSettingsScreen(
                                     val response = RetrofitClient.instance.generateRecoveryCodes(latestBearer())
                                     if (response.isSuccessful) {
                                         response.body()?.let { codes ->
-                                            recoveryCodes = codes.recoveryCodes
-                                            recoveryCodesLeft = codes.recoveryCodes.size
-                                            showRecoveryCodes = true
+                                            val sanitized = sanitizeRecoveryCodes(codes.recoveryCodes)
+                                            if (sanitized.isNotEmpty()) {
+                                                recoveryCodes = sanitized
+                                                recoveryCodesLeft = sanitized.size
+                                                showRecoveryCodes = true
+                                            } else {
+                                                errorMessage = "No recovery codes returned from server"
+                                            }
                                         }
                                     } else {
                                         errorMessage = "Failed to generate recovery codes"
@@ -464,14 +473,28 @@ fun TwoFactorSettingsScreen(
                             )
                             if (response.isSuccessful) {
                                 response.body()?.let { result ->
+                                    val sanitized = sanitizeRecoveryCodes(result.recoveryCodes)
                                     is2faEnabled = true
                                     hasAuthenticator = true
-                                    result.recoveryCodes?.let { codes ->
-                                        recoveryCodes = codes
-                                        recoveryCodesLeft = codes.size
+
+                                    if (sanitized.isNotEmpty()) {
+                                        recoveryCodes = sanitized
+                                        recoveryCodesLeft = sanitized.size
+                                        showRecoveryCodes = true
+                                    } else {
+                                        // Fallback: Refresh status to sync the remaining count if codes weren't in enable payload
+                                        try {
+                                            val statusRes = RetrofitClient.instance.get2faStatus(latestBearer())
+                                            if (statusRes.isSuccessful) {
+                                                recoveryCodesLeft = statusRes.body()?.recoveryCodesLeft ?: 0
+                                            }
+                                        } catch (e: Exception) {
+                                            // Ignore status refresh error
+                                        }
+                                        errorMessage = "2FA enabled, but recovery codes were not provided. You can generate them below."
                                     }
+
                                     showSetupDialog = false
-                                    showRecoveryCodes = true
                                     verificationCode = ""
                                 }
                             } else {
