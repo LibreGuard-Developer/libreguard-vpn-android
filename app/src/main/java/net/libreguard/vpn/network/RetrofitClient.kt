@@ -61,12 +61,8 @@ object RetrofitClient {
 
         val clientBuilder = getUnsafeOkHttpClient()
 
-        // Add HTTP logging interceptor for debugging
-        val loggingInterceptor = okhttp3.logging.HttpLoggingInterceptor().apply {
-            level = okhttp3.logging.HttpLoggingInterceptor.Level.BASIC
-            redactHeader("Authorization")
-        }
-        clientBuilder.addInterceptor(loggingInterceptor)
+        // REMOVED: BASIC console logging of all API calls
+        // clientBuilder.addInterceptor(loggingInterceptor)
 
         // Add Authenticator and Interceptor
         clientBuilder.authenticator(TokenAuthenticator(appContext!!, tokenManager!!, authApiService))

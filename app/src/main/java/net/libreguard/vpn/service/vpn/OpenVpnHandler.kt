@@ -186,15 +186,14 @@ class OpenVpnHandler(
             val parser = ConfigParser()
             parser.parseConfig(StringReader(cfg))
             val profile = parser.convertProfile() ?: run {
-                Log.e(tag, "Failed to convert .ovpn to VpnProfile")
+                Log.e(tag, "Failed to convert config to VpnProfile")
                 _state.value = ConnectionState.Error("Invalid OpenVPN profile")
                 _state.value = ConnectionState.Disconnected
                 return@withContext false
             }
 
             // Give profile a readable name
-            profile.mName = profile.mName ?: "LibreGuard OpenVPN"
-            if (profile.mName.isBlank()) profile.mName = "LibreGuard OpenVPN"
+            profile.mName = "LibreGuard OpenVPN"
 
             // Save as temporary profile to avoid polluting profile list
             ProfileManager.setTemporaryProfile(context, profile)
@@ -210,14 +209,14 @@ class OpenVpnHandler(
             if (needsPermission) {
                 val launch = Intent(context, LaunchVPN::class.java).apply {
                     putExtra(LaunchVPN.EXTRA_KEY, profile.getUUIDString())
-                    putExtra(OpenVPNService.EXTRA_START_REASON, "LibreGuard start")
+                    putExtra(OpenVPNService.EXTRA_START_REASON, "VPN start")
                     putExtra(LaunchVPN.EXTRA_HIDELOG, true)
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     action = Intent.ACTION_MAIN
                 }
                 context.startActivity(launch)
             } else {
-                VPNLaunchHelper.startOpenVpn(profile, context.applicationContext, "LibreGuard start", true)
+                VPNLaunchHelper.startOpenVpn(profile, context.applicationContext, "VPN start", true)
             }
 
             // Wait until connected (or error) to report success
@@ -452,10 +451,10 @@ class OpenVpnHandler(
                 val hasAuthError = logmessage.contains("AUTH_FAILED", ignoreCase = true)
 
                 if (!hadConnected && (hasTlsError || hasAuthError)) {
-                    Log.w(tag, "Fast-fail: detected critical error on first attempt: tls=$hasTlsError auth=$hasAuthError msg=$logmessage")
+                    Log.w(tag, "Fast-fail: detected critical error")
                     connectingActive = false
                     connectingSinceMs = 0L
-                    _state.value = ConnectionState.Error("Connection failed: ${if (hasTlsError) "TLS error" else "Authentication error"}. Will retry with fresh config.")
+                    _state.value = ConnectionState.Error("Connection failed: ${if (hasTlsError) "TLS error" else "Authentication error"}. Will retry.")
                     return
                 }
 
@@ -496,7 +495,7 @@ class OpenVpnHandler(
                 }
             }
         }
-        Log.d(tag, "[AIDL] state=$state level=$level msg=$logmessage")
+        Log.d(tag, "[AIDL] state=$state level=$level")
     }
 
     private suspend fun waitUntilConnectedOrFail(timeoutMs: Long = 20000L): Boolean {

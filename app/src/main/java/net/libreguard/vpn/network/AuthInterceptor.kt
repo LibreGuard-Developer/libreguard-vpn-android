@@ -42,7 +42,7 @@ class AuthInterceptor(
             // CRITICAL: Do NOT trigger logout for token-related endpoints
             // Let TokenAuthenticator handle refresh naturally without cascade
             if (url.contains("/api/login/refresh") || url.contains("/api/token/check")) {
-                Log.d(TAG, "Received 401 for token endpoint ${newRequest.url} - letting authenticator handle refresh")
+                Log.d(TAG, "Received 401 for token endpoint - letting authenticator handle refresh")
                 return response
             }
 
@@ -54,10 +54,9 @@ class AuthInterceptor(
             try {
                 val peekBody = response.peekBody(4096)
                 responseBodyString = try { peekBody.string() } catch (_: Exception) { "" }
-                val hasAuthHeader = newRequest.header("Authorization") != null
-                Log.w(TAG, "Received 401 for request ${newRequest.method} ${newRequest.url}. HasAuthHeader=$hasAuthHeader. AuthRetry=$authRetry. ResponseBody=${responseBodyString.take(1000)}")
+                Log.w(TAG, "Received 401 for request. AuthRetry=$authRetry")
             } catch (ex: Exception) {
-                Log.w(TAG, "Received 401 - failed to read response body: ${ex.message}")
+                Log.w(TAG, "Received 401 - failed to read response body")
             }
 
             // If backend explicitly tells us to login again, honor it.
@@ -69,10 +68,10 @@ class AuthInterceptor(
             }
 
             if (requiresLogin || authRetry > 0) {
-                Log.w(TAG, "Received 401 response - requiresLogin=$requiresLogin, authRetry=$authRetry. Triggering logout.")
+                Log.w(TAG, "Received 401 - logout required (authRetry=$authRetry)")
                 handleTokenRevocation()
             } else {
-                Log.w(TAG, "Received 401 response - not forcing logout yet (authRetry=$authRetry). Letting TokenAuthenticator attempt refresh.")
+                Log.w(TAG, "Received 401 - attempting refresh (authRetry=$authRetry)")
             }
 
             return response
@@ -113,13 +112,13 @@ class AuthInterceptor(
                     val jo = JSONObject(responseBodyString)
                     val errorCode = jo.optString("errorCode", "")
                     if (errorCode.equals("DEVICE_LIMIT_EXCEEDED", ignoreCase = true)) {
-                        Log.w(TAG, "Received 403 with DEVICE_LIMIT_EXCEEDED - broadcasting device limit event (NOT logging out). Request=${newRequest.method} ${newRequest.url}")
+                        Log.w(TAG, "Received 403 with DEVICE_LIMIT_EXCEEDED")
                         broadcastDeviceLimitExceeded(responseBodyString, token)
                         return response
                     }
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "Failed to check for device limit error: ${e.message}")
+                Log.w(TAG, "Failed to check for device limit error")
             }
 
             // Keyword fallback detection
@@ -131,16 +130,16 @@ class AuthInterceptor(
 
                 // If reason not set from JSON, use the response text
                 if (reason == "Access requires higher subscription" && !responseBodyString.isNullOrBlank()) {
-                    reason = responseBodyString.take(200)
+                    reason = "Subscription upgrade required"
                 }
 
-                Log.w(TAG, "Received 403 response - subscription/tier access issue. Broadcasting upgrade required. Request=${newRequest.method} ${newRequest.url} ResponseBody=${responseBodyString.take(1000)}")
+                Log.w(TAG, "Received 403 response - subscription upgrade required")
                 broadcastUpgradeRequired(reason, resourceType, resourceId, requiredTier)
                 return response
             }
 
             // Otherwise, treat as token revocation
-            Log.w(TAG, "Received 403 response - token likely revoked. Triggering logout. Request=${newRequest.method} ${newRequest.url} ResponseBody=${responseBodyString.take(1000)}")
+            Log.w(TAG, "Received 403 response - revocation likely")
             handleTokenRevocation()
             return response
         }
@@ -172,9 +171,9 @@ class AuthInterceptor(
             logoutIntent.setPackage(context.packageName)
             context.sendBroadcast(logoutIntent)
 
-            Log.d(TAG, "Token revocation handled - logout broadcast sent")
+            Log.d(TAG, "Token revocation handled")
         } catch (e: Exception) {
-            Log.e(TAG, "Error handling token revocation", e)
+            Log.e(TAG, "Error handling token revocation")
         }
     }
 
@@ -200,14 +199,14 @@ class AuthInterceptor(
                 val prefs = context.getSharedPreferences("vpn_state_prefs", Context.MODE_PRIVATE)
                 prefs.edit().putString("pending_upgrade_payload", payload.toString()).apply()
             } catch (e: Exception) {
-                Log.w(TAG, "Failed to persist pending upgrade payload: ${e.message}")
+                Log.w(TAG, "Failed to persist upgrade payload")
             }
 
             context.sendBroadcast(upgradeIntent)
 
-            Log.d(TAG, "Upgrade required broadcast sent")
+            Log.d(TAG, "Upgrade broadcast sent")
         } catch (e: Exception) {
-            Log.e(TAG, "Error broadcasting upgrade required", e)
+            Log.e(TAG, "Error broadcasting upgrade")
         }
     }
 
@@ -238,14 +237,10 @@ class AuthInterceptor(
                     payload.put("devices", jo.getJSONArray("devices"))
                 }
 
-                // Extract email from JWT token
-                var emailToStore = jo.optString("email", "")
-                if (emailToStore.isBlank() && token != null) {
-                    emailToStore = extractEmailFromJwt(token)
-                }
-                payload.put("email", emailToStore)
+                // Redacted email extraction from JWT
+                payload.put("email", "redacted")
             } catch (e: Exception) {
-                Log.w(TAG, "Failed to parse device limit response: ${e.message}")
+                Log.w(TAG, "Failed to parse device limit response")
             }
 
             // Store the payload for LoginScreen or MainActivity to pick up
@@ -257,9 +252,9 @@ class AuthInterceptor(
             deviceLimitIntent.putExtra("payload", payload.toString())
             context.sendBroadcast(deviceLimitIntent)
 
-            Log.d(TAG, "Device limit exceeded broadcast sent (user NOT logged out)")
+            Log.d(TAG, "Device limit broadcast sent")
         } catch (e: Exception) {
-            Log.e(TAG, "Error broadcasting device limit exceeded", e)
+            Log.e(TAG, "Error broadcasting device limit")
         }
     }
 

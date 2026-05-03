@@ -40,13 +40,13 @@ class TokenAuthenticator(
         // Skip authentication for pre-auth endpoints
         // These endpoints don't use JWT tokens, so token refresh doesn't apply
         if (url.contains("/pre-auth/")) {
-            android.util.Log.d(TAG, "Skipping token refresh for pre-auth endpoint: $url")
+            android.util.Log.d(TAG, "Skipping token refresh for pre-auth endpoint")
             return null
         }
 
         val retryCount = response.request.header(HEADER_AUTH_RETRY)?.toIntOrNull() ?: 0
         if (retryCount >= MAX_RETRY_PER_REQUEST) {
-            android.util.Log.w(TAG, "Auth retry limit reached ($retryCount). Not attempting further refresh for ${response.request.url}")
+            android.util.Log.w(TAG, "Auth retry limit reached. Not attempting further refresh.")
             return null
         }
 
@@ -112,9 +112,9 @@ class TokenAuthenticator(
                         devicePublicKeyId = binding.keyId,
                         devicePublicKeyAlgorithm = DeviceKeyManager.algorithm()
                     )
-                    android.util.Log.d(TAG, "Requesting new token with refresh token and device ID: $deviceId, boundKeyId=${tokenManager.getBoundDeviceKeyId()}, requestKeyId=${binding.keyId}")
+                    android.util.Log.d(TAG, "Requesting new token")
 
-                    android.util.Log.d(TAG, "Attempting token refresh (attempt ${consecutiveRefreshFailures + 1}/$maxRefreshAttempts)")
+                    android.util.Log.d(TAG, "Attempting token refresh")
 
                     val refreshResponse = authApiService.refreshToken(refreshRequest).execute()
 
@@ -181,4 +181,3 @@ class TokenAuthenticator(
         context.sendBroadcast(intent)
     }
 }
-

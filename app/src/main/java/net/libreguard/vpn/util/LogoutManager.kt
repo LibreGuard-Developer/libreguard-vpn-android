@@ -33,17 +33,17 @@ object LogoutManager {
             // Step 1: Call backend logout API (best-effort)
             callLogoutApi()
         } catch (e: Exception) {
-            Log.e(TAG, "Logout API call failed (will proceed with local logout): ${e.message}", e)
+            Log.e(TAG, "Logout API call failed")
             // Continue to local cleanup even if API fails
         }
 
         try {
             // Step 2: Clear all local authentication data
             clearLocalData()
-            Log.i(TAG, "Local logout completed successfully")
+            Log.i(TAG, "Local logout completed")
             true
         } catch (e: Exception) {
-            Log.e(TAG, "Local logout cleanup failed: ${e.message}", e)
+            Log.e(TAG, "Local logout cleanup failed")
             false // Very unlikely scenario
         }
     }
@@ -67,39 +67,33 @@ object LogoutManager {
         }
 
         // Log request details for debugging
-        Log.d(TAG, "Logout API Request:")
-        Log.d(TAG, "  Authorization: Bearer ${accessToken.take(20)}...")
-        Log.d(TAG, "  RefreshToken: ${refreshToken?.take(20) ?: "null"}...")
-        Log.d(TAG, "  DeviceId: $deviceId")
-        Log.d(TAG, "  Endpoint: POST /api/logout")
+        Log.d(TAG, "Logout API Request")
 
         try {
             val request = LogoutRequest(
                 refreshToken = refreshToken ?: "",
                 deviceId = deviceId
             )
-            Log.d(TAG, "  Request body: refreshToken=${request.refreshToken.take(20)}..., deviceId=$deviceId")
 
             val response = RetrofitClient.instance.logout(
                 authorization = "Bearer $accessToken",
                 request = request
             )
 
-            Log.i(TAG, "Logout API Response: HTTP ${response.code()}")
+            Log.i(TAG, "Logout API Response status: ${response.code()}")
 
             if (response.isSuccessful) {
-                Log.i(TAG, "✅ Logout API call successful: ${response.body()?.message}")
+                Log.i(TAG, "Logout API call successful")
             } else {
-                val errorBody = response.errorBody()?.string() ?: "empty"
-                Log.w(TAG, "❌ Logout API returned error: ${response.code()} - $errorBody")
+                Log.w(TAG, "Logout API returned error state")
             }
         } catch (e: MalformedJsonException) {
             Log.w(
                 TAG,
-                "⚠️ Logout API response was malformed JSON (device IS marked inactive on backend): ${e.message}"
+                "Logout API response format exception"
             )
         } catch (e: Exception) {
-            Log.e(TAG, "❌ Logout API call failed: ${e.message}", e)
+            Log.e(TAG, "Logout API call failed")
         }
     }
 

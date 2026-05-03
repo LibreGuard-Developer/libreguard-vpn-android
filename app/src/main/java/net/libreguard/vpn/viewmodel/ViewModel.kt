@@ -297,10 +297,10 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                                 Log.d(TAG, "VPN State Monitor: Ghost connection state cleared automatically")
                             }
                         } else {
-                            Log.d(TAG, "VPN State Monitor: Connection verified active")
+                            // Redacted connection verification log
                         }
                     } catch (e: Exception) {
-                        Log.e(TAG, "VPN State Monitor: Error checking status: ${e.message}")
+                        Log.e(TAG, "VPN State Monitor: Error checking status")
                     }
                 }
             }
@@ -326,9 +326,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             val gson = Gson()
             val json = gson.toJson(servers)
             sharedPrefs.edit().putString("vpn_servers_cache", json).apply()
-            Log.d(TAG, "Cached ${servers.size} VPN servers")
+            Log.d(TAG, "Cached VPN servers list")
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to cache servers: ${e.message}")
+            Log.w(TAG, "Failed to cache servers")
         }
     }
 
@@ -342,13 +342,13 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 val gson = Gson()
                 val serverListType = object : TypeToken<List<RemoteVpnServer>>() {}.type
                 val servers: List<RemoteVpnServer> = gson.fromJson(json, serverListType)
-                Log.d(TAG, "Loaded ${servers.size} VPN servers from cache")
+                Log.d(TAG, "Loaded VPN servers from cache")
                 servers
             } else {
                 emptyList()
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to load cached servers: ${e.message}")
+            Log.w(TAG, "Failed to load cached servers")
             emptyList()
         }
     }
@@ -371,7 +371,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                     val refreshToken = tokenManager.getRefreshToken()
                     if (refreshToken.isNullOrBlank() || tokenManager.isRefreshTokenExpired()) {
                         // Both tokens expired - must re-login
-                        Log.w(TAG, "Persisted auth token and refresh token are both expired/missing, clearing")
+                        Log.w(TAG, "Persisted auth tokens expired or missing, clearing")
                         sharedPrefs.edit().remove("auth_token").apply()
                         tokenManager.clearTokens()
                         return
@@ -384,10 +384,10 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 authToken = savedAuthToken
                 // Restore stable user id for scoping caches
                 currentUserId = sharedPrefs.getString("current_user_id", null)
-                Log.d(TAG, "Restored auth token from persistent storage on init (expired=${tokenManager.isTokenExpired()})")
+                Log.d(TAG, "Restored auth token from persistent storage (expired=${tokenManager.isTokenExpired()})")
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to load persisted auth token on init", e)
+            Log.e(TAG, "Failed to load persisted auth token on init")
         }
     }
 
@@ -418,14 +418,14 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                     val cachedServers = loadCachedServers()
                     if (cachedServers.isNotEmpty()) {
                         _servers.value = cachedServers
-                        Log.d(TAG, "Loaded cached servers during state restore: ${cachedServers.size}")
+                        Log.d(TAG, "Loaded cached servers during state restore")
                     }
                 }
 
-                Log.d(TAG, "Loading persisted state: wasConnected=$wasConnected, server=$serverName, protocol=$protocolName, hasToken=${authToken != null}, connectedAt=$connectedAt, ip=$persistedServerIp")
+                Log.d(TAG, "Loading persisted state (connectedAt=$connectedAt)")
 
                 if (wasConnected && serverName != null && protocolName != null) {
-                    Log.d(TAG, "Restoring connection state: server=$serverName, protocol=$protocolName")
+                    Log.d(TAG, "Restoring connection state: $protocolName")
 
                     // Check if VPN is actually still active using improved method
                     val isVpnActive = checkVpnStatusImproved()
@@ -443,7 +443,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                         val server = _servers.value.find { it.serverName == serverName }
                         if (server != null) {
                             _selectedServer.value = server
-                            Log.d(TAG, "Restored server: ${server.serverName}")
+                            Log.d(TAG, "Restored server: ${server.serverName.take(8)}...")
                         }
 
                         // Restore connection state
@@ -492,11 +492,11 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                                             // Use the new setCurrentProfile method instead of reflection
                                             (activeVpnHandler as? StrongSwanHandler)?.let { handler ->
                                                 handler.setCurrentProfile(restoredProfile)
-                                                Log.d(TAG, "Successfully restored VPN profile in handler using setCurrentProfile: UUID=$profileUuid")
+                                                Log.d(TAG, "Successfully restored VPN profile in handler")
                                             }
                                         }
                                     } catch (e: Exception) {
-                                        Log.w(TAG, "Failed to restore VPN profile in handler: ${e.message}")
+                                        Log.w(TAG, "Failed to restore VPN profile in handler")
                                     }
                                 }
                             } else {
@@ -635,9 +635,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 putString("connected_server_ip", server?.serverIp)
                 apply()
             }
-            Log.d(TAG, "Saved connection state: connected=$connected, server=${server?.serverName}, hasToken=${authToken != null}, connectedAt=$startTime, ip=${server?.serverIp}")
+            Log.d(TAG, "Saved connection state: connected=$connected, protocol=${protocol.displayName}")
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to save connection state", e)
+            Log.e(TAG, "Failed to save connection state")
         }
     }
 
@@ -673,9 +673,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             currentConnectionStartTime = null
             currentConnectionDataStart = 0.0
 
-            Log.d(TAG, "Cleared persisted connection state, profile data, and tracking info (auth token preserved)")
+            Log.d(TAG, "Cleared persisted connection state and profile data")
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to clear persisted state", e)
+            Log.e(TAG, "Failed to clear persisted state")
         }
     }
 
@@ -686,9 +686,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         try {
             sharedPrefs.edit().clear().apply()
             authToken = null
-            Log.d(TAG, "Cleared ALL persisted state including auth token")
+            Log.d(TAG, "Cleared ALL persisted state")
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to clear all persisted state", e)
+            Log.e(TAG, "Failed to clear all persisted state")
         }
     }
 
@@ -730,7 +730,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 clearUserScopedVpnCaches()
             } catch (e: Exception) {
-                Log.w(TAG, "Failed clearing user-scoped caches on logout: ${e.message}")
+                Log.w(TAG, "Failed clearing user-scoped caches on logout")
             }
 
             // Reset protocol to default (IKEv2) on logout to prevent free users inheriting Pro protocol
@@ -792,9 +792,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                     val result = withContext(Dispatchers.IO) {
                         handler.disconnect(context)
                     }
-                    Log.d(TAG, "Handler disconnect result: $result")
+                    Log.d(TAG, "Handler disconnect triggered")
                 } catch (e: Exception) {
-                    Log.w(TAG, "Handler disconnect failed: ${e.message}")
+                    Log.w(TAG, "Handler disconnect failed")
                 }
             } else {
                 Log.d(TAG, "No active handler - trying fallback methods")
@@ -806,9 +806,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                     action = net.libreguard.vpn.service.LibreGuardVpnService.ACTION_DISCONNECT
                 }
                 context.startService(serviceIntent)
-                Log.d(TAG, "Sent ACTION_DISCONNECT to LibreGuardVpnService")
+                Log.d(TAG, "Sent ACTION_DISCONNECT to service")
             } catch (e: Exception) {
-                Log.w(TAG, "Failed to send ACTION_DISCONNECT to service: ${e.message}")
+                Log.w(TAG, "Failed to send ACTION_DISCONNECT to service")
             }
 
             // 5. Try fallback disconnect methods (force-stop apps)
@@ -849,7 +849,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             context.sendBroadcast(openVpnIntent)
             Log.d(TAG, "Sent disconnect broadcast to OpenVPN")
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to send OpenVPN disconnect broadcast: ${e.message}")
+            Log.w(TAG, "Failed to send OpenVPN disconnect broadcast")
         }
 
         // Try to stop StrongSwan
@@ -862,7 +862,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             context.startService(strongSwanIntent)
             Log.d(TAG, "Sent disconnect intent to StrongSwan")
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to send StrongSwan disconnect intent: ${e.message}")
+            Log.w(TAG, "Failed to send StrongSwan disconnect intent")
         }
 
         // Try alternative: Use package manager to force-stop (requires system permission or root)
@@ -873,7 +873,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 Log.d(TAG, "Force-stopped OpenVPN app")
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to force-stop OpenVPN: ${e.message}")
+            Log.w(TAG, "Failed to force-stop OpenVPN")
         }
 
         try {
@@ -882,7 +882,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 Log.d(TAG, "Force-stopped StrongSwan app")
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to force-stop StrongSwan: ${e.message}")
+            Log.w(TAG, "Failed to force-stop StrongSwan")
         }
 
         // Give processes time to stop
@@ -960,21 +960,21 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                             Log.d(TAG, "Skipping latency measurement while connected to VPN")
                         }
                     } else {
-                        Log.w(TAG, "No servers received from API, but token is still valid")
+                        Log.w(TAG, "No servers received from API")
                         if (cachedServers.isEmpty()) {
                             _errorMessage.value = "No servers received from API"
                         }
                     }
                 } else {
-                    Log.w(TAG, "Failed to load servers: ${response.code()} - ${response.message()}, but preserving auth token")
+                    Log.w(TAG, "Failed to load servers: ${response.code()}")
                     if (cachedServers.isEmpty()) {
-                        _errorMessage.value = "Failed to load servers (network issue), but you're still logged in"
+                        _errorMessage.value = "Failed to load servers (network issue)"
                     }
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "Error loading remote servers: ${e.message}, but preserving auth token")
+                Log.w(TAG, "Error loading remote servers")
                 if (_servers.value.isEmpty()) {
-                    _errorMessage.value = "Network error loading servers, but you're still logged in"
+                    _errorMessage.value = "Network error loading servers"
                 }
             } finally {
                 _isLoadingServers.value = false
@@ -999,7 +999,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                     Log.v(TAG, "No latency measurements succeeded")
                 }
             } catch (e: Exception) {
-                Log.v(TAG, "Error measuring server latencies: ${e.message}")
+                Log.v(TAG, "Error measuring server latencies")
             }
         }
     }
@@ -1011,7 +1011,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         authToken = token
         // Save token immediately for persistence
         sharedPrefs.edit().putString("auth_token", token).apply()
-        Log.d(TAG, "Auth token set and persisted (isNewLogin=$isNewLogin)")
+        Log.d(TAG, "Auth token updated and persisted")
 
         // CRITICAL FIX: Create stable user ID that persists across login sessions
         // Instead of using token hash (which changes), extract user info from token or create persistent ID
@@ -1026,13 +1026,13 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         // CRITICAL: Only reset to Quick Connect mode on FRESH login, not on screen navigation
         if (isNewLogin) {
             _isQuickConnectMode.value = true
-            Log.d(TAG, "Reset to Quick Connect mode for NEW user: $userId")
+            Log.d(TAG, "Reset to Quick Connect mode for new user")
         }
 
         // Pass auth token to DataUsageManager for server quota sync
         dataUsageManager.setAuthToken(token)
 
-        Log.d(TAG, "Set stable user ID: $userId")
+        Log.d(TAG, "Set stable user ID (masked)")
 
         // CRITICAL FIX: Set auth token in SubscriptionViewModel with user ID for cache scoping
         subscriptionViewModel.setAuthToken(token, userId)
@@ -1047,7 +1047,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         try {
             cleanupLegacyOpenVpnCache()
         } catch (e: Exception) {
-            Log.w(TAG, "Legacy OpenVPN cache cleanup failed: ${e.message}")
+            Log.w(TAG, "Legacy OpenVPN cache cleanup failed")
         }
 
         // Initialize and start background token validation to detect early revocation
@@ -1078,7 +1078,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 subscriptionViewModel.fetchSubscriptionStatus()
                 Log.d(TAG, "Subscription status fetch triggered after login")
             } catch (e: Exception) {
-                Log.w(TAG, "Failed to fetch subscription status: ${e.message}")
+                Log.w(TAG, "Failed to fetch subscription status")
             }
 
             // CRITICAL: Reload user-specific settings AFTER subscription status is known
@@ -1086,7 +1086,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             loadDefaultProtocol()
             loadAutoConnectPreference()
             loadKillSwitchPreference()
-            Log.d(TAG, "Reloaded user-specific settings for user: $userId")
+            Log.d(TAG, "Reloaded user-specific settings")
 
             // Wait before loading quota to stagger requests
             delay(1500L)
@@ -1132,7 +1132,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             // Method 1: Try to extract user ID from JWT token
             val userIdFromToken = extractUserIdFromJWT(token)
             if (userIdFromToken != null) {
-                Log.d(TAG, "Extracted user ID from JWT: $userIdFromToken")
+                Log.d(TAG, "Extracted user ID from JWT")
                 return userIdFromToken
             }
 
@@ -1148,19 +1148,19 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             val existingUserId = sharedPrefs.getString(stableKey, null)
 
             if (existingUserId != null) {
-                Log.d(TAG, "Found existing stable user ID: $existingUserId")
+                Log.d(TAG, "Found existing stable user ID")
                 return existingUserId
             }
 
             // Method 3: Create new persistent user ID
             val newUserId = "user_${System.currentTimeMillis()}_${(0..999999).random()}"
             sharedPrefs.edit().putString(stableKey, newUserId).apply()
-            Log.d(TAG, "Created new stable user ID: $newUserId")
+            Log.d(TAG, "Created new stable user ID")
 
             return newUserId
 
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to get stable user ID, falling back to simple hash", e)
+            Log.e(TAG, "Failed to get stable user ID, falling back to simple hash")
             // Fallback to token hash (original broken behavior)
             return token.hashCode().toString()
         }
@@ -1188,14 +1188,14 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             for (field in possibleUserFields) {
                 val userId = jsonObj.optString(field)
                 if (userId.isNotEmpty()) {
-                    Log.d(TAG, "Found user ID in JWT field '$field': $userId")
+                    Log.d(TAG, "Found user ID in JWT field '$field'")
                     return userId
                 }
             }
 
             return null
         } catch (e: Exception) {
-            Log.v(TAG, "Could not extract user ID from JWT: ${e.message}")
+            Log.v(TAG, "Could not extract user ID from JWT")
             return null
         }
     }
@@ -1288,7 +1288,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         // Auto-select the best server
-        Log.d(TAG, "Quick Connect: Auto-selected ${bestServer.serverName} (${bestServer.country})")
+        Log.d(TAG, "Quick Connect: Auto-selected ${bestServer.serverName.take(8)}...")
         _selectedServer.value = bestServer
         _isQuickConnectMode.value = true // Ensure Quick Connect mode is active
         _errorMessage.value = "Connecting to ${bestServer.serverName}..."
@@ -1345,7 +1345,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to validate local subscription cache: ${e.message}")
+            Log.w(TAG, "Failed to validate local subscription cache")
         }
 
         // Guard: ignore requests while connecting or already connected
@@ -1384,18 +1384,18 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 return
             }
         } catch (e: Exception) {
-            Log.w(TAG, "VpnService.prepare failed: ${e.message}")
+            Log.w(TAG, "VpnService.prepare failed")
             // Continue; handler/connect will surface errors if permission truly missing.
         }
 
         viewModelScope.launch {
             try {
                 val tokenManager = RetrofitClient.getTokenManager()
-                Log.d(TAG, "Checking if token refresh is needed before VPN connection")
+                Log.d(TAG, "Checking token refresh before connection")
                 val refreshSuccess = tokenManager.refreshTokenIfNeeded(RetrofitClient.authApiService)
 
                 if (!refreshSuccess) {
-                    Log.w(TAG, "Token refresh failed - session expired, logging out")
+                    Log.w(TAG, "Token refresh failed - session expired")
                     _errorMessage.value = "Your session has expired. Please login again."
                     _isConnecting.value = false
 
@@ -1410,7 +1410,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                             // Use LogoutManager for proper logout (API call + clear tokens)
                             net.libreguard.vpn.util.LogoutManager.logout()
                         } catch (e: Exception) {
-                            Log.w(TAG, "Error during logout sequence after token refresh failure", e)
+                            Log.w(TAG, "Error during logout sequence")
                         }
 
                         // Broadcast logout event to redirect to login screen
@@ -1428,7 +1428,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
                 // If VPN is already connected, just update the state and return
                 if (actuallyConnected) {
-                    Log.d(TAG, "VPN is already connected (revalidated), skipping connect")
+                    Log.d(TAG, "VPN already connected, skipping connect")
                     _isConnected.value = true
                     _isConnecting.value = false
                     return@launch
@@ -1459,7 +1459,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 Log.d(TAG, "Checking data usage quota before VPN connection")
                 val canConnectResult = dataUsageManager.checkCanConnect()
                 if (canConnectResult != null && !canConnectResult.allowed) {
-                    Log.w(TAG, "Data usage quota exceeded: ${canConnectResult.reason}")
+                    Log.w(TAG, "Data usage quota exceeded")
                     _errorMessage.value = canConnectResult.message ?: "Data limit exceeded. Upgrade to Pro for unlimited data."
                     _isConnecting.value = false
 
@@ -1468,7 +1468,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
                     // Emit upgrade event for data limit exceeded
                     _upgradeEvents.emit(mapOf(
-                        "reason" to "Data limit exceeded",
+                        "reason" to "Data limit exceeded while connected",
                         "resource_type" to "data_quota",
                         "resource_id" to null,
                         "required_tier" to "Pro",
@@ -1477,13 +1477,12 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                     ))
                     return@launch
                 }
-                Log.d(TAG, "Data usage check passed, proceeding with connection")
+                Log.d(TAG, "Data usage check passed")
 
                 // DEFENSIVE CHECK: Warn if refresh token is missing (indicates OAuth persistence issue)
                 val refreshToken = RetrofitClient.getTokenManager().getRefreshToken()
                 if (refreshToken.isNullOrBlank()) {
-                    Log.w(TAG, "WARNING: Refresh token is missing! OAuth tokens may not have been persisted correctly. " +
-                               "Token validation will fail if access token expires.")
+                    Log.w(TAG, "WARNING: Refresh token missing! session may expire prematurely.")
                 }
 
                 val selected = _selectedProtocol.value
@@ -1558,7 +1557,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error connecting to VPN", e)
-                _errorMessage.value = "Connection error: ${e.localizedMessage}"
+                _errorMessage.value = "Connection error"
                 _isConnecting.value = false
             } finally {
                 // IMPORTANT: Do not set _isConnecting=false here for IKEv2/WireGuard when we handed off to handler
@@ -1606,14 +1605,14 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         val currentKeyId = withContext(Dispatchers.IO) { net.libreguard.vpn.util.DeviceKeyManager.currentPublicKeyId() }
         Log.d(
             TAG,
-            "IKEV2 key state before decrypt: boundKeyId=$boundKeyId currentKeyId=$currentKeyId payloadKeyId=${payload.keyId} serverDeviceId=${body.deviceId} aliasState=${net.libreguard.vpn.util.DeviceKeyManager.describeCurrentBinding()}"
+            "IKEV2 key state before decrypt: boundKeyId=${boundKeyId?.take(8)}... currentKeyId=${currentKeyId?.take(8)}... payloadKeyId=${payload.keyId?.take(8)}..."
         )
 
         val decryptedPassphrase = try {
             withContext(Dispatchers.IO) { net.libreguard.vpn.util.PassphraseDecryptor.decrypt(payload) }
         } catch (e: IllegalArgumentException) {
             if (allowKeyRecovery && isRecoverableKeyMismatch(e)) {
-                Log.w(TAG, "IKEV2 encrypted passphrase key mismatch detected. Rebinding current device key and retrying config once.", e)
+                Log.w(TAG, "IKEV2 encrypted passphrase key mismatch. Retrying config fetch.")
                 val refreshedToken = forceRefreshWithDeviceKeyRebind(tokenManager, rotateLocalKey = false)
                 val retryResponse = RetrofitClient.instance.getVpnConfig("Bearer $refreshedToken", request)
                 if (!retryResponse.isSuccessful || retryResponse.body()?.success != true) {
@@ -1631,10 +1630,10 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             throw IllegalStateException(e.message ?: "Invalid encrypted passphrase payload", e)
         } catch (e: Exception) {
             if (!allowKeyRecovery || !isRecoverablePassphraseFailure(e)) {
-                throw IllegalStateException("Failed to decrypt VPN passphrase", e)
+                throw IllegalStateException("Failed to decrypt VPN passphrase")
             }
 
-            Log.w(TAG, "IKEv2 passphrase decrypt failed, rotating device key and retrying config fetch once", e)
+            Log.w(TAG, "IKEv2 passphrase decrypt failed, retrying with device key rotation", e)
             val refreshedToken = forceRefreshWithDeviceKeyRebind(tokenManager, rotateLocalKey = true)
             val retryResponse = RetrofitClient.instance.getVpnConfig("Bearer $refreshedToken", request)
             if (!retryResponse.isSuccessful || retryResponse.body()?.success != true) {
@@ -1652,7 +1651,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
         Log.d(
             TAG,
-            "IKEV2 passphrase decrypted successfully for certificate=${body.certificateName} payloadKeyId=${payload.keyId}; injecting decrypted password into configContent.local.password"
+            "IKEV2 passphrase decrypted successfully; injecting into config"
         )
 
         return PreparedVpnConfig(
@@ -1705,10 +1704,10 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         _errorMessage.value = "Refreshing device encryption keys..."
         if (rotateLocalKey) {
             runCatching { net.libreguard.vpn.util.DeviceKeyManager.rotateKeyPair() }
-                .getOrElse { throw IllegalStateException("Failed to rotate device encryption key", it) }
-            Log.d(TAG, "Rotated device encryption key alias=${net.libreguard.vpn.util.DeviceKeyManager.currentAlias()} keyId=${net.libreguard.vpn.util.DeviceKeyManager.publicKeyId()}")
+                .getOrElse { throw IllegalStateException("Failed to rotate device encryption key") }
+            Log.d(TAG, "Rotated device encryption key")
         } else {
-            Log.d(TAG, "Rebinding current device encryption key alias=${net.libreguard.vpn.util.DeviceKeyManager.currentAlias()} keyId=${net.libreguard.vpn.util.DeviceKeyManager.publicKeyId()}")
+            Log.d(TAG, "Rebinding current device encryption key")
         }
 
         return when (val refreshResult = tokenManager.refreshTokenWithResult(RetrofitClient.authApiService, forceRefresh = true)) {
@@ -1736,7 +1735,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         try {
             net.libreguard.vpn.util.LogoutManager.logout()
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to perform logout after DEVICE_NOT_REGISTERED", e)
+            Log.w(TAG, "Failed to perform logout after device registration error")
         }
 
         val logoutIntent = Intent("net.libreguard.vpn.ACTION_LOGOUT")
@@ -1756,10 +1755,10 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         val currentKeyId = withContext(Dispatchers.IO) { runCatching { net.libreguard.vpn.util.DeviceKeyManager.publicKeyId() }.getOrNull() }
         Log.d(
             TAG,
-            "Fetching VPN config for protocol=${request.protocol} serverId=${request.serverId} with boundKeyId=$boundKeyId currentKeyId=$currentKeyId aliasState=${net.libreguard.vpn.util.DeviceKeyManager.describeCurrentBinding()}"
+            "Fetching VPN config: boundKeyId=${boundKeyId?.take(8)}... currentKeyId=${currentKeyId?.take(8)}..."
         )
         if (!boundKeyId.isNullOrBlank() && !currentKeyId.isNullOrBlank() && boundKeyId != currentKeyId) {
-            Log.w(TAG, "Bound device key id differs from local keystore key; forcing refresh before VPN config fetch")
+            Log.w(TAG, "Bound device key id differs from local; forcing refresh")
             token = forceRefreshWithDeviceKeyRebind(tokenManager, rotateLocalKey = false)
         }
 
@@ -1771,7 +1770,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             val errorCode = errorJson?.optString("errorCode")
 
             if (errorCode.equals("DEVICE_KEY_REQUIRED", ignoreCase = true)) {
-                Log.d(TAG, "Device key required by server, forcing device-bound token refresh before retrying config request")
+                Log.d(TAG, "Device key required, forcing refresh")
                 _errorMessage.value = "Updating secure device session..."
 
                 when (val refreshResult = tokenManager.refreshTokenWithResult(RetrofitClient.authApiService, forceRefresh = true)) {
@@ -1826,7 +1825,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             val body = response.body()
             Log.d(
                 TAG,
-                "VPN config fetch succeeded for protocol=${request.protocol} serverId=${request.serverId} responseDeviceId=${body?.deviceId} payloadKeyId=${body?.encryptedPassphrase?.keyId} certificate=${body?.certificateName}"
+                "VPN config fetch succeeded for protocol=${request.protocol}"
             )
         }
 
@@ -1855,13 +1854,13 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
                 if (reqResp.code() == 409) {
                     // A certificate already exists per backend rules. Proceed to retry config.
-                    Log.w(TAG, "Certificate request rejected due to existing active certificate (409). Will retry fetching config.")
+                    Log.w(TAG, "Certificate already exists (409)")
                     return@withContext true
                 }
 
                 if (!reqResp.isSuccessful) {
                     _errorMessage.value = reqResp.body()?.message
-                        ?: "Failed to request certificate: ${reqResp.code()}"
+                        ?: "Failed to request certificate"
                     return@withContext false
                 }
 
@@ -1912,8 +1911,8 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 _errorMessage.value = "Timed out waiting for certificate issuance"
                 false
             } catch (t: Throwable) {
-                Log.e(TAG, "ensureCertificateIssued error", t)
-                _errorMessage.value = "Certificate request error: ${t.localizedMessage}"
+                Log.e(TAG, "ensureCertificateIssued error")
+                _errorMessage.value = "Certificate request error"
                 false
             }
         }
@@ -1955,7 +1954,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             } catch (e: Exception) {
                 Log.e(TAG, "Error in connectWithConfig", e)
                 _isConnected.value = false
-                _errorMessage.value = "Connection error: ${e.localizedMessage}"
+                _errorMessage.value = "Connection error"
                 activeVpnHandler = null
             }
         }
@@ -1966,7 +1965,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         try {
             configManager.logUserCertDiagnostics(TAG, alias)
         } catch (e: Exception) {
-            Log.w(TAG, "Cert diagnostics failed: ${e.message}")
+            Log.w(TAG, "Cert diagnostics failed")
         }
     }
 
@@ -1981,7 +1980,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 profile.password = passphrase
                 Log.d(TAG, "[CertFlow] Applied external passphrase to profile")
             }
-            Log.d(TAG, "[CertFlow] Parsed profile name=${profile.name} gateway=${profile.gateway} vpnType=${profile.vpnType} userCertAlias=${profile.userCertificateAlias}")
+            Log.d(TAG, "[CertFlow] Parsed profile gateway=${profile.gateway} vpnType=${profile.vpnType}")
             withContext(Dispatchers.IO) { logUserCert(profile.userCertificateAlias) }
 
             // Start with the alias provided by the server/profile (if any). We do NOT override a provided alias with an old mapping.
@@ -1996,7 +1995,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 if (!mapped.isNullOrBlank()) {
                     val mappedDiag = withContext(Dispatchers.IO) { configManager.diagnoseUserCertificate(mapped) }
                     if (mappedDiag.state == VpnConfigManager.UserCertState.INSTALLED_OK) {
-                        Log.d(TAG, "[CertFlow] Using mapped installed alias for this user: $mapped")
+                        Log.d(TAG, "[CertFlow] Using mapped installed alias for this user")
                         profile.userCertificateAlias = mapped
                         alias = mapped
                       } else {
@@ -3224,7 +3223,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             _autoConnectEnabled.value = enabled
             Log.d(TAG, "Loaded Auto-Connect preference: $enabled (user: ${currentUserId ?: "global"})")
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to load auto-connect preference: ${e.message}")
+            Log.w(TAG, "Failed to load auto-connect preference")
             _autoConnectEnabled.value = false
         }
     }
@@ -3284,7 +3283,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 return false
             } else {
                 // Ghost connection state detected - clear it and proceed with auto-connect
-                Log.w(TAG, "⚠️ Auto-Connect: Ghost connection state detected (UI shows connected but VPN inactive)")
+                Log.w(TAG, "⚠️ Auto-Connect: Ghost connection detected (UI shows connected but VPN inactive)")
                 _isConnected.value = false
                 _connectionState.value = ConnectionState.Disconnected
                 _isConnecting.value = false
@@ -3400,7 +3399,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             killSwitchManager.setEnabled(enabled)
             Log.d(TAG, "Loaded Kill Switch preference: $enabled (user: ${currentUserId ?: "global"})")
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to load kill switch preference: ${e.message}")
+            Log.w(TAG, "Failed to load kill switch preference")
             _killSwitchEnabled.value = false
             killSwitchManager.setEnabled(false)
         }
@@ -3479,7 +3478,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             _selectedProtocol.value = protocol
             Log.d(TAG, "Loaded Default Protocol preference: ${protocol.displayName} (user: ${currentUserId ?: "global"})")
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to load default protocol preference: ${e.message}")
+            Log.w(TAG, "Failed to load default protocol preference")
             _selectedProtocol.value = VpnProtocol.IKEV2_IPSEC
         }
     }

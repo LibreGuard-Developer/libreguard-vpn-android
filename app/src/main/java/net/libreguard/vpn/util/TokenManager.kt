@@ -51,10 +51,9 @@ class TokenManager(context: Context) {
     fun getAccessToken(): String? {
         val token = sharedPreferences.getString(KEY_ACCESS_TOKEN, null)
         android.util.Log.d("TokenManager", "========== GET ACCESS TOKEN ==========")
-        android.util.Log.d("TokenManager", "Token exists: ${token != null}")
-        android.util.Log.d("TokenManager", "Token is blank: ${token.isNullOrBlank()}")
+        android.util.Log.d("TokenManager", "Token presence checked")
         if (token == null) {
-            android.util.Log.e("TokenManager", "TOKEN IS NULL - User may need to login")
+            android.util.Log.e("TokenManager", "TOKEN IS NULL - Authentication required")
         }
         android.util.Log.d("TokenManager", "======================================")
         return token
@@ -124,7 +123,7 @@ class TokenManager(context: Context) {
             val isExpired = currentTimeSec >= exp
 
             if (isExpired) {
-                android.util.Log.d("TokenManager", "Token is expired: exp=$exp, now=$currentTimeSec")
+                android.util.Log.d("TokenManager", "Token is expired")
             }
 
             isExpired
@@ -207,9 +206,9 @@ class TokenManager(context: Context) {
             val isExpired = currentTimeSec >= exp
 
             if (isExpired) {
-                android.util.Log.w("TokenManager", "Refresh token is expired: exp=$exp, now=$currentTimeSec")
+                android.util.Log.w("TokenManager", "Refresh token is expired")
             } else {
-                android.util.Log.d("TokenManager", "Refresh token is valid: exp=$exp, now=$currentTimeSec, remaining=${exp - currentTimeSec}s")
+                android.util.Log.d("TokenManager", "Refresh token is valid")
             }
 
             isExpired

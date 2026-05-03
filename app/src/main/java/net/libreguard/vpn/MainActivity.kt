@@ -98,6 +98,7 @@ fun AppNavigation(modifier: Modifier = Modifier) {
             if (!value.isNullOrBlank()) {
                 forcedLogoutReasonJson = value
                 prefs.edit().remove("pending_forced_logout_reason").apply()
+                android.util.Log.d("MainActivity", "Consumed forced logout reason")
             }
         } catch (_: Exception) {
             // best-effort
@@ -170,7 +171,7 @@ fun AppNavigation(modifier: Modifier = Modifier) {
             try {
                 vpnConsentLauncher.launch(intent)
             } catch (e: Exception) {
-                Log.e("MainActivity", "Failed to launch VPN consent: ${e.message}", e)
+                android.util.Log.e("MainActivity", "Failed to launch VPN consent")
                 vpnViewModel.onVpnPermissionResult(false)
             }
         }
@@ -182,12 +183,12 @@ fun AppNavigation(modifier: Modifier = Modifier) {
     // Helper: perform full logout (API + Google + local state)
     // This runs sequentially to guarantee API call occurs after VPN disconnect
     suspend fun performLogoutSequential() {
-        Log.d("MainActivity", "Starting logout via LogoutManager")
+        android.util.Log.d("MainActivity", "Starting logout process")
         try {
             LogoutManager.logout()
-            Log.i("MainActivity", "Logout completed successfully")
+            android.util.Log.i("MainActivity", "Logout completed")
         } catch (e: Exception) {
-            Log.e("MainActivity", "LogoutManager.logout() failed: ${e.message}", e)
+            android.util.Log.e("MainActivity", "Logout failed")
             // Continue anyway - user is already navigating to login
         }
 
@@ -206,7 +207,7 @@ fun AppNavigation(modifier: Modifier = Modifier) {
         try {
             vpnViewModel.forceDisconnectVpn(context)
         } catch (e: Exception) {
-            android.util.Log.e("MainActivity", "Error disconnecting VPN on logout: ${e.message}")
+            android.util.Log.e("MainActivity", "Error disconnecting VPN on logout")
         }
 
         performLogoutSequential()
@@ -218,6 +219,7 @@ fun AppNavigation(modifier: Modifier = Modifier) {
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(ctx: Context?, intent: Intent?) {
                 if (intent?.action == "net.libreguard.vpn.ACTION_LOGOUT") {
+                    android.util.Log.d("MainActivity", "Received ACTION_LOGOUT broadcast")
                     // Capture logout reason (if any) before we navigate back to login
                     consumeForcedLogoutReasonFromPrefs()
 
@@ -315,8 +317,7 @@ fun AppNavigation(modifier: Modifier = Modifier) {
             if (uri.scheme == "libreguardvpn" && uri.host == "email" && uri.path == "/confirmed") {
                 val uid = uri.getQueryParameter("userId")
                 val confirmToken = uri.getQueryParameter("token")
-                android.util.Log.d("MainActivity", "Deep link received: userId=$uid, hasToken=${!confirmToken.isNullOrBlank()}")
-                android.util.Log.d("MainActivity", "Current registration state: regEmail=${regEmail}, regPassword=${if (!regPassword.isNullOrBlank()) "[set]" else "[EMPTY]"}, regUserId=$regUserId, regToken=${regToken?.take(10)}")
+                android.util.Log.d("MainActivity", "Email confirmed deep link received")
 
                 // IMPORTANT: Do NOT use the token directly - it's a confirmation token, not an auth token
                 // The auth token needs to be obtained via /api/login with DeviceId to get device_id claim
@@ -329,10 +330,9 @@ fun AppNavigation(modifier: Modifier = Modifier) {
 
                     // Verify we have email and password for auto-login
                     if (regEmail.isNullOrBlank() || regPassword.isNullOrBlank()) {
-                        android.util.Log.e("MainActivity", "CRITICAL: Missing email or password for auto-login! email=${regEmail.isNullOrBlank()}, password=${regPassword.isNullOrBlank()}")
-                        android.util.Log.e("MainActivity", "User will need to login manually because credentials are not cached")
+                        android.util.Log.e("MainActivity", "Missing credentials for auto-login")
                     } else {
-                        android.util.Log.d("MainActivity", "Credentials available for auto-login: email=$regEmail")
+                        android.util.Log.d("MainActivity", "Credentials available for auto-login")
                     }
 
                     // CRITICAL FIX: Only navigate to confirmEmail if not already there
@@ -340,13 +340,13 @@ fun AppNavigation(modifier: Modifier = Modifier) {
                     // This prevents duplicate confirmEmail entries in back stack
                     val currentRoute = navController.currentBackStackEntry?.destination?.route
                     if (currentRoute != "confirmEmail") {
-                        android.util.Log.d("MainActivity", "Deep link: Navigating to confirmEmail from $currentRoute")
+                        android.util.Log.d("MainActivity", "Deep link: Navigating to confirmEmail")
                         navController.navigate("confirmEmail") {
                             popUpTo("login") { inclusive = false }
                             launchSingleTop = true
                         }
                     } else {
-                        android.util.Log.d("MainActivity", "Deep link: Already on confirmEmail, state updated for auto-login")
+                        android.util.Log.d("MainActivity", "Deep link: Already on confirmEmail")
                         // State is already updated above, ConfirmEmailScreen will handle auto-login
                     }
 
@@ -386,12 +386,12 @@ fun AppNavigation(modifier: Modifier = Modifier) {
             // CRITICAL FIX: Check if token is expired and attempt REFRESH first before clearing
             // This ensures users stay logged in even after app was closed for hours
             if (tokenManager.isTokenExpired() || tokenManager.isTokenExpiringWithin(300)) {
-                Log.d("MainActivity", "Token is expired or expiring soon - attempting proactive refresh...")
+                android.util.Log.d("MainActivity", "Token is expired or expiring soon - attempting refresh")
 
                 // Check if refresh token is available and not expired
                 val refreshToken = tokenManager.getRefreshToken()
                 if (refreshToken.isNullOrBlank()) {
-                    Log.w("MainActivity", "No refresh token available - must re-login")
+                    android.util.Log.w("MainActivity", "No refresh token available - must re-login")
                     tokenManager.clearTokens()
                     context.getSharedPreferences("vpn_state_prefs", Context.MODE_PRIVATE)
                         .edit()
@@ -405,7 +405,7 @@ fun AppNavigation(modifier: Modifier = Modifier) {
 
                 // Check if refresh token is expired (for JWT-format refresh tokens)
                 if (tokenManager.isRefreshTokenExpired()) {
-                    Log.w("MainActivity", "Refresh token is also expired - must re-login")
+                    android.util.Log.w("MainActivity", "Refresh token is expired - must re-login")
                     tokenManager.clearTokens()
                     context.getSharedPreferences("vpn_state_prefs", Context.MODE_PRIVATE)
                         .edit()
@@ -421,11 +421,11 @@ fun AppNavigation(modifier: Modifier = Modifier) {
                 try {
                     val refreshSuccess = tokenManager.refreshTokenIfNeeded(RetrofitClient.authApiService)
                     if (refreshSuccess) {
-                        Log.d("MainActivity", "Token refresh successful on startup")
+                        android.util.Log.d("MainActivity", "Token refresh successful on startup")
                         // Update savedToken with the new refreshed token
                         savedToken = tokenManager.getAccessToken()
                     } else {
-                        Log.w("MainActivity", "Token refresh failed on startup - must re-login")
+                        android.util.Log.w("MainActivity", "Token refresh failed on startup - must re-login")
                         tokenManager.clearTokens()
                         context.getSharedPreferences("vpn_state_prefs", Context.MODE_PRIVATE)
                             .edit()
@@ -437,7 +437,7 @@ fun AppNavigation(modifier: Modifier = Modifier) {
                         return@LaunchedEffect
                     }
                 } catch (e: Exception) {
-                    Log.e("MainActivity", "Token refresh exception on startup: ${e.message}")
+                    android.util.Log.e("MainActivity", "Token refresh exception on startup")
                     tokenManager.clearTokens()
                     context.getSharedPreferences("vpn_state_prefs", Context.MODE_PRIVATE)
                         .edit()
@@ -453,10 +453,10 @@ fun AppNavigation(modifier: Modifier = Modifier) {
             // Token is valid (either was already valid or we just refreshed it)
             // Now validate with server to ensure it's not revoked
             try {
-                Log.d("MainActivity", "Validating token with server before auto-login...")
+                android.util.Log.d("MainActivity", "Validating token with server")
                 val currentToken = savedToken ?: tokenManager.getAccessToken()
                 if (currentToken.isNullOrBlank()) {
-                    Log.w("MainActivity", "No token after refresh attempt")
+                    android.util.Log.w("MainActivity", "No token after refresh attempt")
                     isCheckingToken = false
                     return@LaunchedEffect
                 }
@@ -464,7 +464,7 @@ fun AppNavigation(modifier: Modifier = Modifier) {
                 val response = RetrofitClient.instance.checkTokenValidity("Bearer $currentToken")
 
                 if (!response.isSuccessful || response.body()?.isValid != true) {
-                    Log.w("MainActivity", "Token validation failed: ${response.code()} - clearing token")
+                    android.util.Log.w("MainActivity", "Token validation failed - clearing token")
                     tokenManager.clearTokens()
                     context.getSharedPreferences("vpn_state_prefs", Context.MODE_PRIVATE)
                         .edit()
@@ -476,10 +476,10 @@ fun AppNavigation(modifier: Modifier = Modifier) {
                     return@LaunchedEffect
                 }
 
-                Log.d("MainActivity", "Token validation successful - proceeding with auto-login")
+                android.util.Log.d("MainActivity", "Token validation successful - proceeding")
             } catch (e: Exception) {
                 // Network error during validation - allow proceeding but log warning
-                Log.w("MainActivity", "Token validation network error: ${e.message} - proceeding anyway")
+                android.util.Log.w("MainActivity", "Token validation network error - proceeding anyway")
             }
 
             authToken = savedToken ?: tokenManager.getAccessToken()
@@ -502,9 +502,9 @@ fun AppNavigation(modifier: Modifier = Modifier) {
                 // Attempt auto-connect
                 val autoConnected = vpnViewModel.attemptAutoConnect()
                 if (autoConnected) {
-                    Log.d("MainActivity", "Auto-Connect initiated successfully - UI should reflect connection status")
+                    android.util.Log.d("MainActivity", "Auto-Connect initiated")
                 } else {
-                    Log.d("MainActivity", "Auto-Connect skipped (disabled, already connected, or failed validation)")
+                    android.util.Log.d("MainActivity", "Auto-Connect skipped")
                 }
             }
         }

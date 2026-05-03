@@ -441,7 +441,7 @@ class StrongSwanHandler(
 
                 _state.value = ConnectionState.Connecting
                 dataLimitNotificationShown.set(false)
-                Log.d(tag, "Starting IKEv2 connection with VpnProfile object")
+                Log.d(tag, "Starting IKEv2 connection")
 
                 // Reset auth failure tracking
                 authFailureCount.set(0)
@@ -459,7 +459,7 @@ class StrongSwanHandler(
                 }
 
                 currentProfile = profile
-                Log.d(tag, "Using VpnProfile: ${profile.name}, Gateway: ${profile.gateway}, Type: ${profile.vpnType}")
+                Log.d(tag, "Configuring VPN tunnel")
 
                 // Start CharonVpnService with the profile; pass only present extras
                 val intent = Intent(appContext, CharonVpnService::class.java).apply {
@@ -480,21 +480,19 @@ class StrongSwanHandler(
                         // If we have a P12 certificate alias, add it
                         profile.userCertificateAlias?.let { alias ->
                             putString("certificate_alias", alias)
-                            Log.d(tag, "Added certificate alias (certificate_alias): $alias")
+                            Log.d(tag, "Certificate alias applied")
                         }
 
                         // Add username only for EAP variants
                         if (profile.vpnType == VpnType.IKEV2_EAP || profile.vpnType == VpnType.IKEV2_EAP_TLS || profile.vpnType == VpnType.IKEV2_CERT_EAP) {
                             profile.username?.takeIf { it.isNotBlank() }?.let {
                                 putString("username", it)
-                                Log.d(tag, "Set username for VPN connection: ${it}")
+                                Log.d(tag, "Username applied")
                             }
                         }
                     }
                     putExtras(bundle)
-                    Log.d(tag, "Starting CharonVpnService with profile UUID: ${profile.getUUID()}")
-                    Log.d(tag, "VPN Type: ${profile.vpnType}, Gateway: ${profile.gateway}")
-                    Log.d(tag, "Certificate alias: ${profile.userCertificateAlias}")
+                    Log.d(tag, "Starting CharonVpnService")
                 }
 
                 // The VpnProfile needs to be in the database for CharonVpnService to find it
@@ -519,7 +517,7 @@ class StrongSwanHandler(
                  if (profile.mtu == 0) profile.mtu = 1400
 
                  // Ensure password is preserved when saving to database
-                 Log.d(tag, "Profile fields ready; saving to database (alias=${profile.userCertificateAlias})")
+                 Log.d(tag, "Profile fields ready; saving to database")
 
                 val existingProfile = try {
                     dataSource.getVpnProfile(profile.getUUID().toString())
@@ -533,7 +531,7 @@ class StrongSwanHandler(
                     try {
                         dataSource.javaClass.getMethod("insertProfile", VpnProfile::class.java).invoke(dataSource, profile)
                     } catch (_: Throwable) {}
-                    Log.d(tag, "Inserted VPN profile ${profile.name}")
+                    Log.d(tag, "Inserted VPN profile")
                 } else {
                     // Merge critical fields
                     existingProfile.password = profile.password
@@ -550,7 +548,7 @@ class StrongSwanHandler(
                     try {
                         dataSource.javaClass.getMethod("updateVpnProfile", VpnProfile::class.java).invoke(dataSource, existingProfile)
                     } catch (_: Throwable) {}
-                    Log.d(tag, "Updated existing VPN profile ${existingProfile.name}")
+                    Log.d(tag, "Updated existing VPN profile")
                 }
 
                 // Verify key fields after database save
@@ -562,7 +560,7 @@ class StrongSwanHandler(
                         gm.invoke(dataSource, profile.getUUID()) as? VpnProfile
                     } catch (_: Throwable) { null }
                 }
-                Log.d(tag, "Saved profile alias=${savedProfile?.userCertificateAlias} gateway=${savedProfile?.gateway} remoteId=${savedProfile?.remoteId}")
+                Log.d(tag, "Saved profile verified")
 
                 try { dsObj.close() } catch (_: Throwable) {}
 
@@ -1073,7 +1071,7 @@ class StrongSwanHandler(
             Log.d(tag, "Set current profile but no active VPN detected - state remains Disconnected")
         }
 
-        Log.d(tag, "Current profile set: ${profile.name}, Gateway: ${profile.gateway}, State: ${_state.value}")
+        Log.d(tag, "Current profile set and state confirmed")
     }
 
     /**
@@ -1094,7 +1092,7 @@ class StrongSwanHandler(
                                     networkInterface.isUp
 
                 if (isVpnInterface) {
-                    Log.d(tag, "Found active VPN interface: ${networkInterface.name} (up=${networkInterface.isUp})")
+                    Log.d(tag, "Found active VPN interface: ${networkInterface.name}")
                     return true
                 }
             }

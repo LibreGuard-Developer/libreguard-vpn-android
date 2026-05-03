@@ -69,15 +69,12 @@ class GooglePlayBillingManager(private val context: Context) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     private val purchasesUpdatedListener = PurchasesUpdatedListener { billingResult, purchases ->
-        Log.d(TAG, "PurchasesUpdatedListener called: responseCode=${billingResult.responseCode}, debugMessage=${billingResult.debugMessage}")
+        Log.d(TAG, "PurchasesUpdatedListener: code=${billingResult.responseCode}")
         when (billingResult.responseCode) {
             BillingClient.BillingResponseCode.OK -> {
                 if (purchases != null) {
                     purchases.forEach { purchase ->
-                        Log.d(
-                            TAG,
-                            "Purchase callback: token=${purchase.purchaseToken}, products=${purchase.products}"
-                        )
+                        Log.d(TAG, "Purchase callback received")
                         scope.launch { handlePurchase(purchase) }
                     }
                 } else {
@@ -211,9 +208,9 @@ class GooglePlayBillingManager(private val context: Context) {
             _subscriptionOptions.value = filteredOptions
 
             if (detailsList.isEmpty()) {
-                Log.w(TAG, "No ProductDetails returned for products $productIds — ensure they are active in Play Console")
+                Log.w(TAG, "No ProductDetails returned - ensure active in Play Console")
             } else {
-                Log.d(TAG, "Loaded ${detailsList.size} ProductDetails, Extracted ${filteredOptions.size} Offers")
+                Log.d(TAG, "Loaded ProductDetails and Extracted Offers")
             }
         } else {
             Log.e(TAG, "queryProductDetails failed: ${result.billingResult.responseCode}")
@@ -256,9 +253,8 @@ class GooglePlayBillingManager(private val context: Context) {
 
         val result = billingClient.launchBillingFlow(activity, billingFlowParamsBuilder.build())
         if (result.responseCode != BillingClient.BillingResponseCode.OK) {
-            val msg = "launchBillingFlow failed: ${result.responseCode} — ${result.debugMessage}"
-            Log.e(TAG, msg)
-            _billingState.value = BillingState.Error(msg)
+            Log.e(TAG, "launchBillingFlow failed: ${result.responseCode}")
+            _billingState.value = BillingState.Error("Failed to launch purchase flow")
         }
     }
 
@@ -295,8 +291,7 @@ class GooglePlayBillingManager(private val context: Context) {
 
         _activePurchaseToken = purchase.purchaseToken
 
-        Log.d(TAG, "Processing purchase: token=${purchase.purchaseToken.take(30)}…")
-        Log.d(TAG, "Backend verification payload: subscriptionId=${purchase.products.firstOrNull() ?: BuildConfig.GOOGLE_PLAY_BACKEND_SUBSCRIPTION_ID}, purchaseToken=${purchase.purchaseToken}, products=${purchase.products}")
+        Log.d(TAG, "Processing purchase")
 
         // 1. Verify with backend
         val actualSubscriptionId = purchase.products.firstOrNull() ?: BuildConfig.GOOGLE_PLAY_BACKEND_SUBSCRIPTION_ID
@@ -306,7 +301,7 @@ class GooglePlayBillingManager(private val context: Context) {
             transferSubscription = false
         )) {
             is BackendVerificationResult.Success -> {
-                Log.d(TAG, "Purchase verified by backend; currentPeriodEnd=${verificationResult.currentPeriodEnd}")
+                Log.d(TAG, "Purchase verified by backend")
 
                 // 2. Acknowledge to Google (required within 3 days or purchase is refunded)
                 if (!purchase.isAcknowledged) {
@@ -317,7 +312,7 @@ class GooglePlayBillingManager(private val context: Context) {
                     if (ackResult.responseCode == BillingClient.BillingResponseCode.OK) {
                         Log.d(TAG, "Purchase acknowledged with Google Play")
                     } else {
-                        Log.e(TAG, "Acknowledgement failed: ${ackResult.responseCode} — ${ackResult.debugMessage}")
+                        Log.e(TAG, "Acknowledgement failed: ${ackResult.responseCode}")
                         // Backend is already updated; acknowledgement will be retried on next app open
                     }
                 }
@@ -332,11 +327,11 @@ class GooglePlayBillingManager(private val context: Context) {
                 )
             }
             is BackendVerificationResult.Pending -> {
-                Log.i(TAG, "Purchase verification pending: ${verificationResult.message}")
+                Log.i(TAG, "Purchase verification pending")
                 _billingState.value = BillingState.PurchasePending(verificationResult.message)
             }
             is BackendVerificationResult.Error -> {
-                Log.e(TAG, "Purchase verification failed: ${verificationResult.message}")
+                Log.e(TAG, "Purchase verification failed")
                 _billingState.value = BillingState.Error(verificationResult.message)
             }
         }
@@ -391,7 +386,7 @@ class GooglePlayBillingManager(private val context: Context) {
                 val token = RetrofitClient.getTokenManager().getAccessToken()
                 if (token.isNullOrBlank()) {
                     Log.e(TAG, "verifyWithBackend: no auth token available")
-                    return@withContext BackendVerificationResult.Error("Authentication required. Please sign in again.")
+                    return@withContext BackendVerificationResult.Error("Authentication required")
                 }
                 val response = RetrofitClient.instance.verifyGooglePlayPurchase(
                     authorization = "Bearer $token",
@@ -410,12 +405,11 @@ class GooglePlayBillingManager(private val context: Context) {
                     BackendVerificationResult.Success(body.currentPeriodEnd)
                 } else if (response.isSuccessful && status == "pending") {
                     BackendVerificationResult.Pending(
-                        body.message ?: "Payment is pending. Please check back later."
+                        body.message ?: "Payment is pending"
                     )
                 } else if (response.code() == 400) {
-                    val errorBody = response.errorBody()?.string()
-                    Log.e(TAG, "Backend verification 400 errorBody: $errorBody")
-                    BackendVerificationResult.Error("Invalid purchase token or failed to verify with Google Play.")
+                    Log.e(TAG, "Backend verification 400")
+                    BackendVerificationResult.Error("Invalid purchase token")
                 } else if (response.code() == 409) {
                     val errorBody = response.errorBody()?.string()
                     val requiresTransfer = try {
@@ -429,19 +423,16 @@ class GooglePlayBillingManager(private val context: Context) {
                     if (requiresTransfer) {
                         BackendVerificationResult.RequiresTransfer
                     } else {
-                        BackendVerificationResult.Error("Your Google Play subscription is linked to another LibreGuard account. Please log in with that account to access your Pro benefits.")
+                        BackendVerificationResult.Error("Subscription linked to another account")
                     }
                 } else {
-                    val message = body?.message
-                        ?: "Purchase verification failed (${response.code()}). Please try again."
-                    Log.e(TAG, "Backend verification failed: ${response.code()} $message")
+                    val message = body?.message ?: "Verification failed"
+                    Log.e(TAG, "Backend verification failed: ${response.code()}")
                     BackendVerificationResult.Error(message)
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Backend verification exception: ${e.message}", e)
-                BackendVerificationResult.Error(
-                    e.localizedMessage ?: "Unable to verify purchase right now. Please try again."
-                )
+                Log.e(TAG, "Backend verification exception")
+                BackendVerificationResult.Error("Unable to verify purchase")
             }
         }
     }
@@ -466,10 +457,10 @@ class GooglePlayBillingManager(private val context: Context) {
 
             val unacknowledgedPurchases = activePurchases.filter { !it.isAcknowledged }
             if (unacknowledgedPurchases.isEmpty()) {
-                Log.d(TAG, "No unacknowledged Google Play subscriptions found for auto-verify")
+                Log.d(TAG, "No unacknowledged subscriptions found")
                 return
             }
-            Log.d(TAG, "Found ${unacknowledgedPurchases.size} unacknowledged purchase(s) — verifying…")
+            Log.d(TAG, "Found unacknowledged purchase(s) — verifying…")
             unacknowledgedPurchases.forEach { purchase ->
                 scope.launch { handlePurchase(purchase) }
             }

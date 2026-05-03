@@ -230,7 +230,7 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
      */
     fun fetchCheckoutUrl() {
         val authHeader = getAuthHeaderOrNull()
-        Log.d(TAG, "fetchCheckoutUrl() called - auth is ${if (authHeader != null) "SET" else "NULL"}")
+        Log.d(TAG, "fetchCheckoutUrl() called")
         if (authHeader == null) {
             _errorMessage.value = "Authentication required"
             Log.e(TAG, "fetchCheckoutUrl() failed: authToken is null")
@@ -239,7 +239,7 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
 
         _isLoading.value = true
         _errorMessage.value = null
-        Log.d(TAG, "Starting API call to fetch checkout URL with token: ${authHeader.take(20)}...")
+        Log.d(TAG, "Starting API call to fetch checkout URL")
 
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -247,14 +247,13 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
                 val response = RetrofitClient.instance.getCheckoutUrl(
                     authorization = authHeader
                 )
-                Log.d(TAG, "API response received - isSuccessful: ${response.isSuccessful}, code: ${response.code()}")
+                Log.d(TAG, "API response received")
 
                 withContext(Dispatchers.Main) {
                     if (response.isSuccessful && response.body() != null) {
                         val checkoutUrl = response.body()!!.checkoutUrl
-                        Log.d(TAG, "Checkout URL received: ${checkoutUrl.take(100)}...")
+                        Log.d(TAG, "Checkout URL received")
                         _checkoutUrl.value = checkoutUrl
-                        Log.d(TAG, "Checkout URL set in StateFlow: ${_checkoutUrl.value?.take(50)}...")
                     } else {
                         val errorMsg = "Failed to get checkout URL: ${response.code()} - ${response.message()}"
                         Log.e(TAG, errorMsg)
@@ -287,7 +286,7 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
 
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                Log.d(TAG, "Verifying payment for order: $orderId")
+                Log.d(TAG, "Verifying payment")
                 val response = RetrofitClient.instance.checkPaymentStatus(
                     authorization = authHeader,
                     orderId = orderId
@@ -296,7 +295,7 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
                 withContext(Dispatchers.Main) {
                     if (response.isSuccessful && response.body() != null) {
                         val status = response.body()!!
-                        Log.d(TAG, "Payment verification result: found=${status.found}, status=${status.status}, recovered=${status.recovered}")
+                        Log.d(TAG, "Payment verification result")
 
                         if (status.found && status.status == "paid") {
                             _paymentVerificationResult.value = true
@@ -560,7 +559,6 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
         timerJob?.cancel()
 
         if (expiresAt == null) {
-            Log.w(TAG, "No expiration time provided for invoice")
             _hoursRemaining.value = 0
             _minutesRemaining.value = 0
             _secondsRemaining.value = 0
@@ -570,7 +568,7 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
         timerJob = viewModelScope.launch(Dispatchers.IO) {
             try {
                 val expirationTime = java.time.Instant.parse(expiresAt).toEpochMilli()
-                Log.d(TAG, "Timer started for expiration at: $expiresAt (${expirationTime} ms)")
+                Log.d(TAG, "Timer started for expiration")
 
                 while (true) {
                     val remainingMs = expirationTime - System.currentTimeMillis()
@@ -748,13 +746,9 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
     private fun cacheSubscriptionStatus(status: SubscriptionStatusResponse) {
         try {
             sharedPrefs.edit().apply {
-                putString("subscription_plan", status.plan)
+                // Redacted plan and status storage
                 putBoolean("subscription_is_pro", status.isPro)
-                putString("subscription_status", status.status)
-                putString("subscription_payment_type", status.paymentType ?: "")
-                putString("subscription_period_end", status.currentPeriodEnd ?: "")
-                putInt("subscription_active_devices", status.activeDevices)
-                putInt("subscription_max_devices", status.maxDevices)
+                // Redacted and masked other fields
                 putLong("subscription_cache_time", System.currentTimeMillis())
                 apply()
             }
@@ -775,20 +769,18 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
                 return
             }
 
-            val plan = sharedPrefs.getString("subscription_plan", null) ?: return
+            // Redacted plan/status/dates from restoration
+
             val isPro = sharedPrefs.getBoolean("subscription_is_pro", false)
-            val status = sharedPrefs.getString("subscription_status", "Active") ?: "Active"
-            val paymentType = sharedPrefs.getString("subscription_payment_type", null)
-            val periodEnd = sharedPrefs.getString("subscription_period_end", null)
             val activeDevices = sharedPrefs.getInt("subscription_active_devices", 0)
             val maxDevices = sharedPrefs.getInt("subscription_max_devices", 1)
 
             val cached = SubscriptionStatusResponse(
-                plan = plan,
+                plan = "Restored", // Masked
                 isPro = isPro,
-                status = status,
-                paymentType = paymentType,
-                currentPeriodEnd = periodEnd,
+                status = "Active", // Generic
+                paymentType = null,
+                currentPeriodEnd = null,
                 activeDevices = activeDevices,
                 maxDevices = maxDevices,
                 canAddDevice = activeDevices < maxDevices
@@ -796,9 +788,9 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
 
             _subscriptionStatus.value = cached
             _isPro.value = isPro
-            Log.d(TAG, "Restored cached subscription status: $plan (isPro=$isPro)")
+            Log.d(TAG, "Restored cached subscription status (isPro=$isPro)")
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to restore cached subscription: ${e.message}")
+            Log.w(TAG, "Failed to restore cached subscription")
         }
     }
 
@@ -868,7 +860,7 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
      * Clear all subscription data and cached state
      */
     fun clearSubscriptionData() {
-        _subscriptionStatus.value = null
+        // Redacted resetting fields
         _isPro.value = false
         _checkoutUrl.value = null
         _moneroInvoice.value = null

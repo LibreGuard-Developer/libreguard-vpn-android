@@ -106,17 +106,17 @@ fun LoginScreen(
             val type = jo.optString("type", "")
             if (type.equals("DEVICE_LIMIT_EXCEEDED", ignoreCase = true)) {
                 val logoutEmail = jo.optString("email", "")
-                android.util.Log.d("LoginScreen", "Forced logout detected, email from JSON: '$logoutEmail'")
+                android.util.Log.d("LoginScreen", "Forced logout detected")
                 if (logoutEmail.isNotBlank()) {
                     // Set lastKnownEmail for device management
                     if (lastKnownEmail.isBlank()) {
                         lastKnownEmail = logoutEmail
-                        android.util.Log.d("LoginScreen", "Set lastKnownEmail from forced logout: $logoutEmail")
+                        android.util.Log.d("LoginScreen", "Set lastKnownEmail from forced logout")
                     }
                     // Pre-fill the email text field so user only needs to enter password
                     if (email.isBlank()) {
                         email = logoutEmail
-                        android.util.Log.d("LoginScreen", "Pre-filled email field from forced logout: $logoutEmail")
+                        android.util.Log.d("LoginScreen", "Pre-filled email field from forced logout")
                     }
                 }
             }
@@ -226,8 +226,6 @@ fun LoginScreen(
 
     fun handleDeviceLimitError(errorBody: String?, emailFromLogin: String? = null) {
         android.util.Log.d("LoginScreen", "========== HANDLE DEVICE LIMIT ERROR ==========")
-        android.util.Log.d("LoginScreen", "Error body: $errorBody")
-        android.util.Log.d("LoginScreen", "Email from login: $emailFromLogin")
 
         if (errorBody.isNullOrBlank()) {
             android.util.Log.w("LoginScreen", "Error body is null or blank")
@@ -243,7 +241,6 @@ fun LoginScreen(
             android.util.Log.d("LoginScreen", "  - Current Devices: ${parsed.currentDevices}")
             android.util.Log.d("LoginScreen", "  - Max Devices: ${parsed.maxDevices}")
             android.util.Log.d("LoginScreen", "  - Plan Type: ${parsed.planType}")
-            android.util.Log.d("LoginScreen", "  - Email from response: ${parsed.email}")
             val devSize = parsed.devices?.size ?: 0
             val devicesMsg = if (devSize == 0) "NULL/EMPTY" else "EXISTS ($devSize devices)"
             android.util.Log.d("LoginScreen", "  - Devices array: $devicesMsg")
@@ -259,7 +256,7 @@ fun LoginScreen(
             // Store the email from response or login attempt for later use
             val emailToStore = parsed.email?.takeIf { it.isNotBlank() } ?: emailFromLogin
             if (!emailToStore.isNullOrBlank() && lastKnownEmail.isBlank()) {
-                android.util.Log.d("LoginScreen", "Storing email for device management: $emailToStore")
+                android.util.Log.d("LoginScreen", "Storing email for device management")
                 lastKnownEmail = emailToStore
             }
 
@@ -276,8 +273,6 @@ fun LoginScreen(
     fun removeDeviceAndRetryLogin(deviceIdToRemove: Int, attemptEmail: String, attemptPassword: String) {
         android.util.Log.d("LoginScreen", "========== PRE-AUTH DEVICE REMOVAL START ==========")
         android.util.Log.d("LoginScreen", "Device ID to remove: $deviceIdToRemove")
-        android.util.Log.d("LoginScreen", "Email: $attemptEmail")
-        android.util.Log.d("LoginScreen", "Password length: ${attemptPassword.length}")
 
         coroutineScope.launch {
             isRemovingDevice = true
@@ -384,7 +379,7 @@ fun LoginScreen(
             else -> null
         }
 
-        android.util.Log.d("LoginScreen", "fetchDevicesForManagement: emailToUse=$emailToUse, email=$email, lastKnownEmail=$lastKnownEmail, deviceLimitError.email=${deviceLimitError?.email}, password.length=${password.length}")
+        android.util.Log.d("LoginScreen", "fetchDevicesForManagement: emailToUse exists=${!emailToUse.isNullOrBlank()}, email exists=${email.isNotBlank()}, lastKnownEmail exists=${lastKnownEmail.isNotBlank()}, deviceLimitError.email exists=${deviceLimitError?.email?.isNotBlank()}, password.length=${password.length}")
 
         if (emailToUse.isNullOrBlank()) {
             android.util.Log.e("LoginScreen", "fetchDevicesForManagement: EMAIL IS BLANK - aborting")
@@ -405,7 +400,7 @@ fun LoginScreen(
                 // Use a PROBE device ID to force 409 response with devices list
                 // The real deviceId might already be registered, causing 200 response without devices
                 val probeDeviceId = "probe_${System.currentTimeMillis()}"
-                android.util.Log.d("LoginScreen", "fetchDevicesForManagement: Using probe deviceId=$probeDeviceId to get 409 with devices list")
+                android.util.Log.d("LoginScreen", "fetchDevicesForManagement: Using probe deviceId to get 409 with devices list")
 
                 val resp = RetrofitClient.instance.login(
                     AuthRequest(
@@ -419,7 +414,7 @@ fun LoginScreen(
                     )
                 )
                 val errorBody = resp.errorBody()?.string()
-                android.util.Log.d("LoginScreen", "fetchDevicesForManagement response: code=${resp.code()}, errorBody.length=${errorBody?.length ?: 0}")
+                android.util.Log.d("LoginScreen", "fetchDevicesForManagement response: code=${resp.code()}")
 
                 when (resp.code()) {
                     409 -> {
@@ -753,9 +748,8 @@ fun LoginScreen(
                         try {
                             // Detailed logging for debugging
                             android.util.Log.d("LoginScreen", "=== LOGIN ATTEMPT ===")
-                            android.util.Log.d("LoginScreen", "Email: $email")
                             android.util.Log.d("LoginScreen", "Password length: ${password.length}")
-                            android.util.Log.d("LoginScreen", "DeviceId: $deviceId")
+                            android.util.Log.d("LoginScreen", "DeviceId: ${deviceId.take(8)}...")
                             android.util.Log.d("LoginScreen", "AppVersion: $appVersion")
 
                             val authRequest = AuthRequest(
@@ -767,14 +761,12 @@ fun LoginScreen(
                                 devicePublicKeyId = DeviceKeyManager.publicKeyId(),
                                 devicePublicKeyAlgorithm = DeviceKeyManager.algorithm()
                             )
-                            android.util.Log.d("LoginScreen", "Request JSON: ${Gson().toJson(authRequest)}")
 
                             val response = RetrofitClient.instance.login(authRequest)
                             val errorBody = response.errorBody()?.string()
 
                             android.util.Log.d("LoginScreen", "Response code: ${response.code()}")
                             android.util.Log.d("LoginScreen", "Response successful: ${response.isSuccessful}")
-                            android.util.Log.d("LoginScreen", "Error body: $errorBody")
                             if (response.isSuccessful) {
                                 val authResponse = response.body()
                                 if (authResponse?.requiresTwoFactor == true) {
@@ -807,7 +799,7 @@ fun LoginScreen(
                                             )
                                         )
                                         val tempErrorBody = tempLoginResp.errorBody()?.string()
-                                        android.util.Log.d("LoginScreen", "Temp login response: ${tempLoginResp.code()}, body length=${tempErrorBody?.length ?: 0}")
+                                        android.util.Log.d("LoginScreen", "Temp login response: ${tempLoginResp.code()}")
 
                                         when (tempLoginResp.code()) {
                                             409 -> {
@@ -817,12 +809,13 @@ fun LoginScreen(
                                                     android.util.Log.d("LoginScreen", "Found ${deviceLimitError?.devices?.size} devices - showing picker")
                                                     showDevicePickerDialog = true
                                                 } else {
-                                                    android.util.Log.e("LoginScreen", "409 but no devices in response - manual parse fallback")
-                                                    // Try manual JSON parse
+                                                    android.util.Log.e("LoginScreen", "DEVICES ARRAY IS NULL/EMPTY - trying manual JSON parse")
+                                                    // Fallback: try to parse devices manually using JSONObject
                                                     try {
                                                         val jo = org.json.JSONObject(tempErrorBody ?: "{}")
                                                         val devicesJson = jo.optJSONArray("devices")
                                                         if (devicesJson != null && devicesJson.length() > 0) {
+                                                            android.util.Log.d("LoginScreen", "Manual parse found ${devicesJson.length()} devices")
                                                             val manualDevices = mutableListOf<DeviceDto>()
                                                             for (i in 0 until devicesJson.length()) {
                                                                 val dj = devicesJson.getJSONObject(i)
@@ -845,13 +838,14 @@ fun LoginScreen(
                                                                 devices = manualDevices,
                                                                 email = email
                                                             )
+                                                            android.util.Log.d("LoginScreen", "Manual parse successful, showing dialog")
                                                             showDevicePickerDialog = true
                                                         } else {
-                                                            errorMessage = "Device limit exceeded. Please manage your devices."
+                                                            fetchDevicesError = "Could not load device list"
                                                         }
-                                                    } catch (e: Exception) {
-                                                        android.util.Log.e("LoginScreen", "Manual parse failed", e)
-                                                        errorMessage = "Device limit exceeded. Please remove a device via web dashboard."
+                                                    } catch (parseEx: Exception) {
+                                                        android.util.Log.e("LoginScreen", "Manual JSON parse failed", parseEx)
+                                                        fetchDevicesError = "Failed to parse device list"
                                                     }
                                                 }
                                             }
@@ -1419,7 +1413,7 @@ fun LoginScreen(
         }
         val capturedPassword = password
 
-        android.util.Log.d("LoginScreen", "Device picker dialog opened: capturedEmail=$capturedEmail, password.length=${capturedPassword.length}")
+        android.util.Log.d("LoginScreen", "Device picker dialog opened: password.length=${capturedPassword.length}")
 
         // Show all devices - even if they match current device ID, user might need to remove them
         val otherDevices = deviceLimitError?.devices
@@ -1482,9 +1476,7 @@ fun LoginScreen(
                                         android.util.Log.d("LoginScreen", "========== DEVICE PICKER CLICK ==========")
                                         android.util.Log.d("LoginScreen", "Device index: $index")
                                         android.util.Log.d("LoginScreen", "Device DB ID: $deviceDbId")
-                                        android.util.Log.d("LoginScreen", "Device String ID: $deviceStringId")
                                         android.util.Log.d("LoginScreen", "Google token present: ${!capturedGoogleIdToken.isNullOrBlank()}")
-                                        android.util.Log.d("LoginScreen", "Email: $capturedEmail")
                                         android.util.Log.d("LoginScreen", "Password length: ${capturedPassword.length}")
 
                                         showDevicePickerDialog = false
@@ -1510,8 +1502,7 @@ fun LoginScreen(
                                                         deviceLimitError = null
                                                         errorMessage = "Device removed! Please sign in again with Google."
                                                     } else {
-                                                        val errorBody = response.errorBody()?.string()
-                                                        android.util.Log.e("LoginScreen", "OAuth device removal failed: $errorBody")
+                                                        android.util.Log.e("LoginScreen", "OAuth device removal failed")
                                                         errorMessage = when (response.code()) {
                                                             401 -> "Google token expired. Please sign in again."
                                                             404 -> "Device not found"
@@ -1528,7 +1519,7 @@ fun LoginScreen(
                                             }
                                         } else if (capturedEmail.isNotBlank() && capturedPassword.isNotBlank()) {
                                             // Password user - use password pre-auth endpoint
-                                            android.util.Log.d("LoginScreen", "Using password pre-auth to remove device $deviceDbId, email=$capturedEmail")
+                                            android.util.Log.d("LoginScreen", "Using password pre-auth to remove device $deviceDbId")
                                             removeDeviceAndRetryLogin(deviceDbId, capturedEmail, capturedPassword)
                                         } else {
                                             // No credentials available - show error
@@ -1670,8 +1661,6 @@ fun LoginScreen(
                                             android.util.Log.d("LoginScreen", "========== DEVICE CLICKED ==========")
                                             android.util.Log.d("LoginScreen", "Device index: $index")
                                             android.util.Log.d("LoginScreen", "Device ID (int): $capturedDeviceId")
-                                            android.util.Log.d("LoginScreen", "Device ID (string): $capturedDeviceIdString")
-                                            android.util.Log.d("LoginScreen", "Email to use: $capturedEmail")
                                             android.util.Log.d("LoginScreen", "Password length: ${capturedPassword.length}")
 
                                             if (capturedEmail.isBlank()) {
@@ -1733,8 +1722,7 @@ fun LoginScreen(
                                                             passwordForDeviceManagement = ""
                                                         }
                                                     } else {
-                                                        val errorBody = response.errorBody()?.string()
-                                                        android.util.Log.e("LoginScreen", "Device removal failed: $errorBody")
+                                                        android.util.Log.e("LoginScreen", "Device removal failed")
                                                         passwordDialogError = when (response.code()) {
                                                             401 -> "Invalid password"
                                                             404 -> "Device not found"
@@ -1849,7 +1837,7 @@ fun LoginScreen(
                                         if (devicesFromPasswordLogin != null) {
                                             // We already have devices - use probe to validate password and check if still over limit
                                             val probeDeviceId = "probe_${System.currentTimeMillis()}"
-                                            android.util.Log.d("LoginScreen", "Validating password with probe deviceId for pre-loaded devices (email: $emailToUse)")
+                                            android.util.Log.d("LoginScreen", "Validating password with probe deviceId for pre-loaded devices")
                                             val response = RetrofitClient.instance.login(
                                                 AuthRequest(
                                                     email = emailToUse,
@@ -1904,7 +1892,7 @@ fun LoginScreen(
                                         } else {
                                             // No pre-loaded devices, need to fetch from API using probe device ID
                                             val probeDeviceId = "probe_${System.currentTimeMillis()}"
-                                            android.util.Log.d("LoginScreen", "Attempting login with probe deviceId to get devices list: $emailToUse")
+                                            android.util.Log.d("LoginScreen", "Attempting login with probe deviceId to get devices list")
 
                                             val response = RetrofitClient.instance.login(
                                                 AuthRequest(
