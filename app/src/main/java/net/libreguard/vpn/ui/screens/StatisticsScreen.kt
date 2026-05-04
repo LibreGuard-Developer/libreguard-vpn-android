@@ -1,5 +1,13 @@
 package net.libreguard.vpn.ui.screens
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -15,10 +23,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.dp
 import net.libreguard.vpn.data.ConnectionHistoryManager
 import net.libreguard.vpn.data.DailyUsage
+import net.libreguard.vpn.data.formatDataAmount
 import net.libreguard.vpn.ui.theme.*
 import net.libreguard.vpn.viewmodel.VpnViewModel
 import java.util.Locale
@@ -32,8 +41,6 @@ import kotlinx.coroutines.delay
  */
 @Composable
 fun StatisticsScreen(viewModel: VpnViewModel) {
-    val context = LocalContext.current
-
     // CRITICAL: Use ViewModel's ConnectionHistoryManager for per-user data isolation
     val historyManager = remember { viewModel.getHistoryManager() }
 
@@ -70,9 +77,13 @@ fun StatisticsScreen(viewModel: VpnViewModel) {
     val hasData = recentConnections.isNotEmpty() || isConnected
 
     // Reactive data that changes with timeRange, refresh trigger, or live counter
-    val dailyStats = remember(timeRange, statisticsRefreshTrigger, refreshCounter) {
+    val historicalDailyStats = remember(timeRange, statisticsRefreshTrigger, refreshCounter) {
         if (timeRange == "week") historyManager.getDailyStats()
         else historyManager.getDailyStatsForMonth()
+    }
+
+    val dailyStats = remember(historicalDailyStats, isConnected, currentSessionMB) {
+        applyLiveSessionToToday(historicalDailyStats, if (isConnected) currentSessionMB else 0.0)
     }
 
     val totalDuration = remember(timeRange, statisticsRefreshTrigger, refreshCounter) {
@@ -83,12 +94,10 @@ fun StatisticsScreen(viewModel: VpnViewModel) {
     val mostActiveDay = remember(statisticsRefreshTrigger, refreshCounter) { historyManager.getMostActiveDay() }
     val peakUsageTime = remember(statisticsRefreshTrigger, refreshCounter) { historyManager.getPeakUsageTime() }
 
-    // Calculate totals - include current session data for real-time accuracy
+    // Calculate totals from the same data source the chart uses so the page stays internally consistent.
     val totalUpload = dailyStats.sumOf { it.upload }
     val totalDownload = dailyStats.sumOf { it.download }
-    // Add current session to total if connected (session not yet saved to history)
-    val liveSessionData = if (isConnected) currentSessionMB else 0.0
-    val totalData = totalUpload + totalDownload + liveSessionData
+    val totalData = totalUpload + totalDownload
 
     Column(
         modifier = Modifier
@@ -158,7 +167,7 @@ fun StatisticsScreen(viewModel: VpnViewModel) {
                     StatSummaryCard(
                         icon = Icons.Default.DataUsage,
                         iconColor = Primary,
-                        value = String.format(Locale.US, "%.2f GB", totalData / 1024.0),
+                        value = formatDataAmount(totalData),
                         label = "Total Data",
                         modifier = Modifier.weight(1f),
                         onClick = { /* Could show detailed breakdown */ }
@@ -182,7 +191,7 @@ fun StatisticsScreen(viewModel: VpnViewModel) {
                     StatSummaryCard(
                         icon = Icons.Default.ArrowDownward,
                         iconColor = androidx.compose.ui.graphics.Color(0xFF60A5FA),
-                        value = String.format(Locale.US, "%.2f GB", totalDownload / 1024.0),
+                        value = formatDataAmount(totalDownload),
                         label = "Downloaded",
                         modifier = Modifier.weight(1f),
                         onClick = { }
@@ -190,7 +199,7 @@ fun StatisticsScreen(viewModel: VpnViewModel) {
                     StatSummaryCard(
                         icon = Icons.Default.ArrowUpward,
                         iconColor = androidx.compose.ui.graphics.Color(0xFFA78BFA),
-                        value = String.format(Locale.US, "%.2f GB", totalUpload / 1024.0),
+                        value = formatDataAmount(totalUpload),
                         label = "Uploaded",
                         modifier = Modifier.weight(1f),
                         onClick = { }
@@ -374,12 +383,12 @@ fun StatisticsScreen(viewModel: VpnViewModel) {
 
                         if (hasData) {
                             val dailyAverage = if (dailyStats.isNotEmpty()) {
-                                totalData / dailyStats.size / 1024.0
+                                totalData / dailyStats.size
                             } else 0.0
 
                             InsightItem(
                                 "Your daily average is",
-                                String.format(Locale.US, "%.2f GB", dailyAverage)
+                                formatDataAmount(dailyAverage)
                             )
                             InsightItem(
                                 "Most active day:",
@@ -411,6 +420,11 @@ fun StatisticsScreen(viewModel: VpnViewModel) {
             }
         }
     }
+}
+
+private enum class UsageSegment {
+    Download,
+    Upload
 }
 
 // Helper composables
@@ -543,8 +557,56 @@ private fun UsageBar(
     day: DailyUsage,
     maxValue: Double
 ) {
-    val downloadPercent = (day.download / maxValue * 100).toFloat()
-    val uploadPercent = (day.upload / maxValue * 100).toFloat()
+    val totalUsed = (day.download + day.upload).coerceAtLeast(0.0)
+    val totalFraction = if (maxValue > 0) {
+        (totalUsed / maxValue).toFloat().coerceIn(0f, 1f)
+    } else {
+        0f
+    }
+
+    var selectedSegment by remember(day.day) { mutableStateOf<UsageSegment?>(null) }
+    var downloadPulseTrigger by remember(day.day) { mutableStateOf(0) }
+    var uploadPulseTrigger by remember(day.day) { mutableStateOf(0) }
+    val downloadPulseScale = remember(day.day) { Animatable(1f) }
+    val uploadPulseScale = remember(day.day) { Animatable(1f) }
+
+    LaunchedEffect(downloadPulseTrigger) {
+        if (downloadPulseTrigger == 0) return@LaunchedEffect
+        downloadPulseScale.snapTo(1f)
+        downloadPulseScale.animateTo(1.08f, animationSpec = tween(140))
+        downloadPulseScale.animateTo(
+            1f,
+            animationSpec = spring(
+                dampingRatio = Spring.DampingRatioMediumBouncy,
+                stiffness = Spring.StiffnessMedium
+            )
+        )
+    }
+
+    LaunchedEffect(uploadPulseTrigger) {
+        if (uploadPulseTrigger == 0) return@LaunchedEffect
+        uploadPulseScale.snapTo(1f)
+        uploadPulseScale.animateTo(1.08f, animationSpec = tween(140))
+        uploadPulseScale.animateTo(
+            1f,
+            animationSpec = spring(
+                dampingRatio = Spring.DampingRatioMediumBouncy,
+                stiffness = Spring.StiffnessMedium
+            )
+        )
+    }
+
+    val selectedLabel = when (selectedSegment) {
+        UsageSegment.Download -> "${formatDataAmount(day.download)} used"
+        UsageSegment.Upload -> "${formatDataAmount(day.upload)} used"
+        null -> null
+    }
+
+    val selectedLabelColor = when (selectedSegment) {
+        UsageSegment.Download -> androidx.compose.ui.graphics.Color(0xFF60A5FA)
+        UsageSegment.Upload -> androidx.compose.ui.graphics.Color(0xFFA78BFA)
+        null -> MutedForeground
+    }
 
     Column {
         Row(
@@ -557,37 +619,86 @@ private fun UsageBar(
                 color = MutedForeground
             )
             Text(
-                text = String.format(Locale.US, "%.2f GB", (day.upload + day.download) / 1024.0),
+                text = formatDataAmount(totalUsed),
                 style = MaterialTheme.typography.bodySmall,
                 color = MutedForeground
             )
         }
-        Spacer(modifier = Modifier.height(4.dp))
-        Row(
+
+        AnimatedContent(
+            targetState = selectedLabel,
+            transitionSpec = { fadeIn(animationSpec = tween(180)) togetherWith fadeOut(animationSpec = tween(120)) },
+            label = "usage_bar_selection"
+        ) { label ->
+            if (label != null) {
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = selectedLabelColor,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            } else {
+                Spacer(modifier = Modifier.height(0.dp))
+            }
+        }
+
+        Spacer(modifier = Modifier.height(6.dp))
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(20.dp)
                 .clip(RoundedCornerShape(4.dp))
-                .background(Secondary.copy(alpha = 0.3f)),
-            horizontalArrangement = Arrangement.Start
+                .background(Secondary.copy(alpha = 0.3f))
         ) {
-            // Download bar
-            if (downloadPercent > 0) {
-                Box(
+            if (totalFraction > 0f) {
+                Row(
                     modifier = Modifier
                         .fillMaxHeight()
-                        .fillMaxWidth(downloadPercent / 100f)
-                        .background(androidx.compose.ui.graphics.Color(0xFF60A5FA))
-                )
-            }
-            // Upload bar
-            if (uploadPercent > 0) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxHeight()
-                        .fillMaxWidth((uploadPercent / (100f - downloadPercent)).coerceIn(0f, 1f))
-                        .background(androidx.compose.ui.graphics.Color(0xFFA78BFA))
-                )
+                        .fillMaxWidth(totalFraction)
+                        .clip(RoundedCornerShape(4.dp))
+                ) {
+                    if (day.download > 0) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxHeight()
+                                .weight(day.download.toFloat())
+                                .graphicsLayer(
+                                    scaleX = downloadPulseScale.value,
+                                    scaleY = downloadPulseScale.value
+                                )
+                                .background(
+                                    androidx.compose.ui.graphics.Color(0xFF60A5FA).copy(
+                                        alpha = if (selectedSegment == UsageSegment.Download) 1f else 0.92f
+                                    )
+                                )
+                                .clickable {
+                                    selectedSegment = UsageSegment.Download
+                                    downloadPulseTrigger++
+                                }
+                        )
+                    }
+
+                    if (day.upload > 0) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxHeight()
+                                .weight(day.upload.toFloat())
+                                .graphicsLayer(
+                                    scaleX = uploadPulseScale.value,
+                                    scaleY = uploadPulseScale.value
+                                )
+                                .background(
+                                    androidx.compose.ui.graphics.Color(0xFFA78BFA).copy(
+                                        alpha = if (selectedSegment == UsageSegment.Upload) 1f else 0.92f
+                                    )
+                                )
+                                .clickable {
+                                    selectedSegment = UsageSegment.Upload
+                                    uploadPulseTrigger++
+                                }
+                        )
+                    }
+                }
             }
         }
     }
@@ -654,5 +765,25 @@ private fun formatDuration(minutes: Int): String {
     val hours = minutes / 60
     val mins = minutes % 60
     return "${hours}h ${mins}m"
+}
+
+private fun applyLiveSessionToToday(stats: List<DailyUsage>, liveSessionMB: Double): List<DailyUsage> {
+    if (liveSessionMB <= 0.0) return stats
+
+    val (liveDownload, liveUpload) = estimateSplit(liveSessionMB)
+    return stats.map { day ->
+        if (day.day == "Today") {
+            day.copy(
+                download = day.download + liveDownload,
+                upload = day.upload + liveUpload
+            )
+        } else {
+            day
+        }
+    }
+}
+
+private fun estimateSplit(totalMB: Double): Pair<Double, Double> {
+    return totalMB * 0.8 to totalMB * 0.2
 }
 

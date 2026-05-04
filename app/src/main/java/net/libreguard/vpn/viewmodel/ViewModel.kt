@@ -1023,7 +1023,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         // CRITICAL: Set user ID for connection history manager (per-user stats isolation)
         connectionHistoryManager.setUserId(userId)
 
-        // CRITICAL: Only reset to Quick Connect mode on FRESH login, not on screen navigation
+        // CRITICAL: Only reset to Quick Connect mode on FRESH login, not on screen navigation re-renders
         if (isNewLogin) {
             _isQuickConnectMode.value = true
             Log.d(TAG, "Reset to Quick Connect mode for new user")
@@ -2591,14 +2591,17 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
      * Stop tracking connection and update history
      */
     private fun stopConnectionTracking() {
-        val currentDataMB = _dataUsageInfo.value.totalBytesUsed / (1024.0 * 1024.0)
-        val dataUsedMB = (currentDataMB - currentConnectionDataStart).coerceAtLeast(0.0)
+        val sessionDataMB = _dataUsageInfo.value.sessionBytesUsed / (1024.0 * 1024.0)
+        val dataUsedMB = sessionDataMB.coerceAtLeast(0.0)
 
         connectionHistoryManager.updateLastRecord(
             disconnectedAt = System.currentTimeMillis(),
             dataUsedMB = dataUsedMB
         )
-        Log.d(TAG, "Stopped tracking connection. Data used: ${String.format(java.util.Locale.US, "%.2f", dataUsedMB)} MB")
+        Log.d(
+            TAG,
+            "Stopped tracking connection. Session data used: ${String.format(java.util.Locale.US, "%.2f", dataUsedMB)} MB"
+        )
 
         // Trigger statistics refresh for real-time UI updates
         _statisticsRefreshTrigger.value = System.currentTimeMillis()

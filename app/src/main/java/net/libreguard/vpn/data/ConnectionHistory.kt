@@ -34,11 +34,7 @@ data class ConnectionRecord(
         }
 
     val formattedData: String
-        get() = if (dataUsedMB >= 1024) {
-            String.format(Locale.US, "%.2f GB", dataUsedMB / 1024)
-        } else {
-            String.format(Locale.US, "%.0f MB", dataUsedMB)
-        }
+        get() = formatDataAmount(dataUsedMB)
 
     val timeAgo: String
         get() {
@@ -57,6 +53,24 @@ data class ConnectionRecord(
                 else -> SimpleDateFormat("MMM d", Locale.US).format(Date(timestamp))
             }
         }
+}
+
+fun formatDataAmount(dataUsedMB: Double): String {
+    val safeAmount = dataUsedMB.coerceAtLeast(0.0)
+    return when {
+        safeAmount >= 1024 -> {
+            val gb = safeAmount / 1024.0
+            if (gb >= 10) {
+                String.format(Locale.US, "%.0f GB", gb)
+            } else {
+                String.format(Locale.US, "%.1f GB", gb)
+            }
+        }
+        safeAmount >= 100 -> String.format(Locale.US, "%.0f MB", safeAmount)
+        safeAmount >= 1 -> String.format(Locale.US, "%.1f MB", safeAmount)
+        safeAmount > 0 -> String.format(Locale.US, "%.2f MB", safeAmount)
+        else -> "0 MB"
+    }
 }
 
 /**
