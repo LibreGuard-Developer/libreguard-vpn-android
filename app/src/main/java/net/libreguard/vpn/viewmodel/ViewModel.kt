@@ -259,6 +259,26 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         _isInstallingCertificate.value = false
     }
 
+    private fun restoreActiveVpnUiState(message: String) {
+        val wasConnected = _isConnected.value
+        _isConnected.value = true
+        _isConnecting.value = false
+        if (connectionEstablishedTimestamp == null) {
+            connectionEstablishedTimestamp = System.currentTimeMillis()
+        }
+        _errorMessage.value = message
+        dataUsageManager.startMonitoring()
+        Log.d(TAG, "Started data usage monitoring")
+        if (currentConnectionStartTime == null) {
+            startConnectionTracking()
+        }
+        saveConnectionState()
+        notifyKillSwitchConnected()
+        if (!wasConnected) {
+            Log.d(TAG, "Recovered connected UI state from verified active VPN tunnel")
+        }
+    }
+
     private fun cancelPendingConnectAttempt(message: String? = null) {
         activeConnectSessionId += 1L
         activeConnectJob?.cancel()
@@ -2307,20 +2327,17 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                                 _errorMessage.value = "Connecting to ${profile.gateway}..."
                             }
                             is ConnectionState.Connected -> {
-                                if (_isConnecting.value) {
-                                    _isConnected.value = true
-                                    _isConnecting.value = false
-                                    // Set connection establishment timestamp for grace period
-                                    connectionEstablishedTimestamp = System.currentTimeMillis()
-                                    _errorMessage.value = "Connected using IKEv2/IPSec to ${profile.gateway}"
+                                val recoveredFromUiRace = if (!_isConnecting.value && !_isConnected.value) {
+                                    checkVpnStatusImproved()
+                                } else {
+                                    false
+                                }
+                                if (_isConnecting.value || _isConnected.value || recoveredFromUiRace) {
+                                    if (recoveredFromUiRace && !_isConnecting.value && !_isConnected.value) {
+                                        Log.w(TAG, "Accepting Connected state after UI race because the VPN tunnel is verified active")
+                                    }
+                                    restoreActiveVpnUiState("Connected using IKEv2/IPSec to ${profile.gateway}")
                                     Log.d(TAG, "Successfully connected via StateFlow")
-                                    dataUsageManager.startMonitoring()
-                                    Log.d(TAG, "Started data usage monitoring")
-                                    startConnectionTracking()
-                                    saveConnectionState()
-
-                                    // Notify Kill Switch that VPN connected
-                                    notifyKillSwitchConnected()
                                 } else {
                                     Log.w(TAG, "Ignoring Connected state - not in Connecting state (possible stale update)")
                                 }
@@ -2384,6 +2401,8 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                             }
                         }
                     }
+                } catch (e: CancellationException) {
+                    Log.d(TAG, "StrongSwan state observer cancelled")
                 } catch (e: Exception) {
                     Log.e(TAG, "StateFlow observer error: ${e.message}")
                 }
@@ -2902,6 +2921,8 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
     fun disconnect() {
         viewModelScope.launch {
+            var disconnectSessionId = activeConnectSessionId
+            var vpnStillActiveAfterDisconnect = false
             try {
                 val context = getApplication<Application>().applicationContext
                 val cancelInProgress = _isConnecting.value && !_isConnected.value
@@ -2915,6 +2936,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 } else {
                     clearPendingConnectArtifacts()
                 }
+                disconnectSessionId = activeConnectSessionId
 
                 // Validate token before disconnect with SHORT timeout (2 seconds)
                 // If revoked, still allow disconnect to happen but mark it as a forced logout scenario
@@ -3039,11 +3061,16 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 // Wait a moment for disconnect actions to take effect
                 delay(1500)
 
+                if (!isConnectSessionActive(disconnectSessionId)) {
+                    Log.d(TAG, "Skipping disconnect verification because a newer connection attempt started")
+                    return@launch
+                }
+
                 // Final verification: check if VPN is actually disconnected
-                val isStillActive = checkVpnStatusImproved()
-                if (isStillActive) {
+                vpnStillActiveAfterDisconnect = checkVpnStatusImproved()
+                if (vpnStillActiveAfterDisconnect) {
                     Log.w(TAG, "VPN still appears to be active after disconnect")
-                    _errorMessage.value = "VPN disconnect attempted - please check if connection is actually terminated"
+                    restoreActiveVpnUiState("Connected using ${_selectedProtocol.value.displayName}")
                 } else {
                     Log.d(TAG, "VPN successfully disconnected - no active VPN detected")
                     _errorMessage.value = if (cancelInProgress) "Connection cancelled" else "VPN disconnected successfully"
@@ -3053,29 +3080,35 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 Log.e(TAG, "Error during disconnect process", e)
                 _errorMessage.value = "Disconnect error: ${e.localizedMessage}"
             } finally {
+                if (!isConnectSessionActive(disconnectSessionId)) {
+                    Log.d(TAG, "Skipping disconnect cleanup because a newer connection attempt is active")
+                } else if (vpnStillActiveAfterDisconnect) {
+                    Log.d(TAG, "Skipping disconnect cleanup because the VPN tunnel is still active")
+                } else {
                 // Stop connection history tracking
-                stopConnectionTracking()
+                    stopConnectionTracking()
 
                 // Stop data usage monitoring when VPN disconnects
-                dataUsageManager.stopMonitoring()
-                Log.d(TAG, "Stopped data usage monitoring")
+                    dataUsageManager.stopMonitoring()
+                    Log.d(TAG, "Stopped data usage monitoring")
 
                 // Always clean up state regardless of disconnect success
-                activeVpnHandler = null
-                activeConnectJob = null
-                _isConnected.value = false
-                _isConnecting.value = false
+                    activeVpnHandler = null
+                    activeConnectJob = null
+                    _isConnected.value = false
+                    _isConnecting.value = false
 
                 // Notify Kill Switch of manual disconnect (don't block traffic)
-                notifyKillSwitchDisconnected(isManual = true)
+                    notifyKillSwitchDisconnected(isManual = true)
 
                 // Reset auto-connect session flag so it can trigger again on next app launch
-                resetAutoConnectSession()
+                    resetAutoConnectSession()
 
                 // Clear persisted state when manually disconnecting
-                clearPersistedState()
+                    clearPersistedState()
 
-                Log.d(TAG, "Disconnect process completed - connection state cleared")
+                    Log.d(TAG, "Disconnect process completed - connection state cleared")
+                }
             }
         }
     }
