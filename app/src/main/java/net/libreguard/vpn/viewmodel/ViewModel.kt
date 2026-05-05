@@ -10,6 +10,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -222,6 +223,51 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     // When true, a connect attempt is waiting on VPN consent. We'll retry once consent is granted.
     @Volatile
     private var pendingConnectAfterVpnConsent: Boolean = false
+    private var activeConnectJob: Job? = null
+    private var activeConnectSessionId: Long = 0L
+
+    private fun beginConnectSession(): Long {
+        activeConnectJob?.cancel()
+        activeConnectSessionId += 1L
+        return activeConnectSessionId
+    }
+
+    private fun isConnectSessionActive(sessionId: Long): Boolean {
+        return activeConnectSessionId == sessionId
+    }
+
+    private fun ensureConnectSessionActive(sessionId: Long) {
+        if (!isConnectSessionActive(sessionId)) {
+            throw CancellationException("VPN connection attempt cancelled")
+        }
+    }
+
+    private fun isHandlerStateRelevant(sessionId: Long): Boolean {
+        return _isConnected.value || activeConnectSessionId == sessionId
+    }
+
+    private fun clearPendingConnectArtifacts() {
+        pendingConnectAfterVpnConsent = false
+        pendingProfile?.userCertificateAlias?.let { alias ->
+            runCatching { configManager.cleanupInstallIntentData(alias) }
+        }
+        pendingProfile = null
+        _pendingKeyChainImport.value = null
+        _showCertPicker.value = false
+        _showCertSelectionDialog.value = false
+        _showImportCertDialog.value = false
+        _isInstallingCertificate.value = false
+    }
+
+    private fun cancelPendingConnectAttempt(message: String? = null) {
+        activeConnectSessionId += 1L
+        activeConnectJob?.cancel()
+        activeConnectJob = null
+        clearPendingConnectArtifacts()
+        if (message != null) {
+            _errorMessage.value = message
+        }
+    }
 
     init {
         // Load persisted auth token and connection state immediately on startup
@@ -1368,6 +1414,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
+        val connectSessionId = beginConnectSession()
         _isConnecting.value = true
         _errorMessage.value = null
 
@@ -1388,11 +1435,14 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             // Continue; handler/connect will surface errors if permission truly missing.
         }
 
-        viewModelScope.launch {
+        var connectJob: Job? = null
+        connectJob = viewModelScope.launch {
             try {
+                ensureConnectSessionActive(connectSessionId)
                 val tokenManager = RetrofitClient.getTokenManager()
                 Log.d(TAG, "Checking token refresh before connection")
                 val refreshSuccess = tokenManager.refreshTokenIfNeeded(RetrofitClient.authApiService)
+                ensureConnectSessionActive(connectSessionId)
 
                 if (!refreshSuccess) {
                     Log.w(TAG, "Token refresh failed - session expired")
@@ -1425,6 +1475,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
                 // Re-validate actual VPN status
                 val actuallyConnected = checkVpnStatusImproved()
+                ensureConnectSessionActive(connectSessionId)
 
                 // If VPN is already connected, just update the state and return
                 if (actuallyConnected) {
@@ -1448,6 +1499,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 if (manager != null) {
                     Log.d(TAG, "Validating token before VPN connection")
                     val tokenValid = manager.validateTokenBeforeAction()
+                    ensureConnectSessionActive(connectSessionId)
                     if (!tokenValid) {
                         _errorMessage.value = "Token invalid or revoked. Please login again."
                         _isConnecting.value = false
@@ -1458,6 +1510,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 // Pre-flight data usage check - verify user hasn't exceeded quota
                 Log.d(TAG, "Checking data usage quota before VPN connection")
                 val canConnectResult = dataUsageManager.checkCanConnect()
+                ensureConnectSessionActive(connectSessionId)
                 if (canConnectResult != null && !canConnectResult.allowed) {
                     Log.w(TAG, "Data usage quota exceeded")
                     _errorMessage.value = canConnectResult.message ?: "Data limit exceeded. Upgrade to Pro for unlimited data."
@@ -1490,10 +1543,12 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 if (selected == VpnProtocol.OPENVPN) {
                     // Use download endpoint and cached config
                     val ok = connectOpenVpnViaDownload(remoteServer.id)
-                    if (!ok) {
+                    if (!ok && isConnectSessionActive(connectSessionId)) {
                         _errorMessage.value = "Failed to connect using OpenVPN"
                     }
-                    _isConnecting.value = false
+                    if (isConnectSessionActive(connectSessionId)) {
+                        _isConnecting.value = false
+                    }
                     return@launch
                 }
 
@@ -1505,6 +1560,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
                 // IMPORTANT: use fresh token for config request
                 var response = fetchVpnConfigWithRecovery(request, tokenManager)
+                ensureConnectSessionActive(connectSessionId)
                 tokenManager.getAccessToken()?.takeIf { it.isNotBlank() }?.let { token = it }
 
                 if (response.isSuccessful && response.body()?.success == true) {
@@ -1514,11 +1570,12 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                         tokenManager = tokenManager,
                         body = response.body() ?: throw IllegalStateException("VPN config response body missing")
                     )
+                    ensureConnectSessionActive(connectSessionId)
 
                     if (preparedConfig.configContent.isNotBlank()) {
                         Log.d(TAG, "Config received for ${selected.displayName}")
                         _errorMessage.value = "Config received: ${preparedConfig.certificateName ?: "VPN config"}"
-                        connectWithConfig(preparedConfig.configContent, server, selected, preparedConfig.certificateName, preparedConfig.passphrase)
+                        connectWithConfig(preparedConfig.configContent, server, selected, preparedConfig.certificateName, preparedConfig.passphrase, connectSessionId)
                     } else {
                         _errorMessage.value = "No config content received"
                         // Since we couldn't even start, allow retry
@@ -1527,9 +1584,11 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 } else if (response.code() == 404 && selected == VpnProtocol.IKEV2_IPSEC) {
                     _errorMessage.value = "No certificate found. Requesting one now…"
                     val issued = ensureCertificateIssued(selected, remoteServer.id, token)
+                    ensureConnectSessionActive(connectSessionId)
                     if (issued) {
                         _errorMessage.value = "Certificate issued. Fetching configuration…"
                         response = fetchVpnConfigWithRecovery(request, tokenManager)
+                        ensureConnectSessionActive(connectSessionId)
                         if (response.isSuccessful && response.body()?.success == true) {
                             val preparedConfig = prepareVpnConfigForConnection(
                                 protocol = selected,
@@ -1537,8 +1596,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                                 tokenManager = tokenManager,
                                 body = response.body() ?: throw IllegalStateException("VPN config response body missing")
                             )
+                            ensureConnectSessionActive(connectSessionId)
                             if (preparedConfig.configContent.isNotBlank()) {
-                                connectWithConfig(preparedConfig.configContent, server, selected, preparedConfig.certificateName, preparedConfig.passphrase)
+                                connectWithConfig(preparedConfig.configContent, server, selected, preparedConfig.certificateName, preparedConfig.passphrase, connectSessionId)
                             } else {
                                 _errorMessage.value = "Configuration still empty after certificate issuance"
                                 _isConnecting.value = false
@@ -1555,16 +1615,22 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                     _errorMessage.value = extractApiMessage(response) ?: "Failed to get VPN config: ${response.code()}"
                     _isConnecting.value = false
                 }
+            } catch (e: CancellationException) {
+                Log.d(TAG, "Connection attempt cancelled")
             } catch (e: Exception) {
                 Log.e(TAG, "Error connecting to VPN", e)
                 _errorMessage.value = "Connection error"
                 _isConnecting.value = false
             } finally {
+                if (activeConnectJob === connectJob) {
+                    activeConnectJob = null
+                }
                 // IMPORTANT: Do not set _isConnecting=false here for IKEv2/WireGuard when we handed off to handler
                 // The handler's StateFlow observer will update _isConnecting when it transitions to Connected/Error/Disconnected
                 // For OpenVPN we handled it in the early return above
             }
         }
+        activeConnectJob = connectJob
     }
 
     private fun extractApiMessage(response: retrofit2.Response<*>): String? {
@@ -1918,45 +1984,48 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun connectWithConfig(
+    private suspend fun connectWithConfig(
         configContent: String,
         server: RemoteVpnServer,
         protocol: VpnProtocol,
         certificateName: String?,
-        passphrase: String?
+        passphrase: String?,
+        connectSessionId: Long
     ) {
-        viewModelScope.launch {
-            try {
-                val appContext = getApplication<Application>().applicationContext
+        try {
+            ensureConnectSessionActive(connectSessionId)
+            val appContext = getApplication<Application>().applicationContext
 
-                // Create and initialize the appropriate VPN handler based on protocol
-                activeVpnHandler = VpnProtocolFactory.createHandler(protocol, appContext)
+            // Create and initialize the appropriate VPN handler based on protocol
+            activeVpnHandler = VpnProtocolFactory.createHandler(protocol, appContext)
 
-                val initialized = withContext(Dispatchers.IO) {
-                    activeVpnHandler?.initialize(appContext) ?: false
-                }
-
-                if (!initialized) {
-                    throw Exception("Failed to initialize ${protocol.displayName} handler")
-                }
-
-                when (protocol) {
-                    VpnProtocol.IKEV2_IPSEC -> {
-                        connectStrongSwan(configContent, certificateName, passphrase)
-                    }
-                    VpnProtocol.OPENVPN -> {
-                        connectOpenVpn(configContent)
-                    }
-                    VpnProtocol.WIREGUARD -> {
-                        connectWireGuard(configContent)
-                    }
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Error in connectWithConfig", e)
-                _isConnected.value = false
-                _errorMessage.value = "Connection error"
-                activeVpnHandler = null
+            val initialized = withContext(Dispatchers.IO) {
+                activeVpnHandler?.initialize(appContext) ?: false
             }
+
+            ensureConnectSessionActive(connectSessionId)
+            if (!initialized) {
+                throw Exception("Failed to initialize ${protocol.displayName} handler")
+            }
+
+            when (protocol) {
+                VpnProtocol.IKEV2_IPSEC -> {
+                    connectStrongSwan(configContent, certificateName, passphrase, connectSessionId)
+                }
+                VpnProtocol.OPENVPN -> {
+                    connectOpenVpn(configContent)
+                }
+                VpnProtocol.WIREGUARD -> {
+                    connectWireGuard(configContent)
+                }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in connectWithConfig", e)
+            _isConnected.value = false
+            _errorMessage.value = "Connection error"
+            activeVpnHandler = null
         }
     }
 
@@ -1970,8 +2039,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // Modified connectStrongSwan implementing checklist gating
-    private suspend fun connectStrongSwan(configContent: String, certificateName: String?, passphrase: String?) {
+    private suspend fun connectStrongSwan(configContent: String, certificateName: String?, passphrase: String?, connectSessionId: Long) {
         try {
+            ensureConnectSessionActive(connectSessionId)
             val context = getApplication<Application>().applicationContext
             Log.d(TAG, "[CertFlow] Starting strongSwan connection parse phase")
             val profile = configManager.parseServerResponseToProfile(configContent)
@@ -1982,6 +2052,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             }
             Log.d(TAG, "[CertFlow] Parsed profile gateway=${profile.gateway} vpnType=${profile.vpnType}")
             withContext(Dispatchers.IO) { logUserCert(profile.userCertificateAlias) }
+            ensureConnectSessionActive(connectSessionId)
 
             // Start with the alias provided by the server/profile (if any). We do NOT override a provided alias with an old mapping.
             var alias = profile.userCertificateAlias
@@ -2034,7 +2105,10 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 VpnConfigManager.UserCertState.INSTALLED_NO_KEY -> { _errorMessage.value = "Installed certificate has no private key. Pick another certificate."; _showCertPicker.value = true; pendingProfile = profile; return }
                 else -> { _errorMessage.value = "Certificate not installed yet. Pick certificate or reinstall."; pendingProfile = profile; _showCertPicker.value = true; return }
             }
-            completeStrongSwanConnection(profile)
+            ensureConnectSessionActive(connectSessionId)
+            completeStrongSwanConnection(profile, connectSessionId)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.e(TAG, "IKEv2/IPSec connection error", e)
             _isConnected.value = false
@@ -2048,6 +2122,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             _errorMessage.value = "No pending profile for cert selection"
             return
         }
+        val connectSessionId = activeConnectSessionId
         try {
             _showCertPicker.value = false
             KeyChain.choosePrivateKeyAlias(activity, KeyChainAliasCallback { chosenAlias ->
@@ -2059,17 +2134,23 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 Log.d(TAG, "[CertFlow] User selected certificate alias=$chosenAlias")
                 viewModelScope.launch {
-                    withContext(Dispatchers.IO) { logUserCert(chosenAlias) }
-                    prof.userCertificateAlias = chosenAlias
-                    val diag = withContext(Dispatchers.IO) { configManager.diagnoseUserCertificate(chosenAlias) }
-                    if (diag.state == VpnConfigManager.UserCertState.INSTALLED_OK) {
-                        val remoteKey = perUserRemoteId(prof.remoteId, prof.username)
-                        withContext(Dispatchers.IO) { configManager.saveMappedCertAlias(prof.gateway, remoteKey, chosenAlias) }
-                        _errorMessage.value = "Certificate selected: $chosenAlias"
-                        completeStrongSwanConnection(prof)
-                        pendingProfile = null
-                    } else {
-                        _errorMessage.value = "Selected certificate not usable (state=${diag.state}). Try another."; _showCertPicker.value = true
+                    try {
+                        ensureConnectSessionActive(connectSessionId)
+                        withContext(Dispatchers.IO) { logUserCert(chosenAlias) }
+                        prof.userCertificateAlias = chosenAlias
+                        val diag = withContext(Dispatchers.IO) { configManager.diagnoseUserCertificate(chosenAlias) }
+                        ensureConnectSessionActive(connectSessionId)
+                        if (diag.state == VpnConfigManager.UserCertState.INSTALLED_OK) {
+                            val remoteKey = perUserRemoteId(prof.remoteId, prof.username)
+                            withContext(Dispatchers.IO) { configManager.saveMappedCertAlias(prof.gateway, remoteKey, chosenAlias) }
+                            _errorMessage.value = "Certificate selected: $chosenAlias"
+                            completeStrongSwanConnection(prof, connectSessionId)
+                            pendingProfile = null
+                        } else {
+                            _errorMessage.value = "Selected certificate not usable (state=${diag.state}). Try another."; _showCertPicker.value = true
+                        }
+                    } catch (e: CancellationException) {
+                        Log.d(TAG, "Certificate selection ignored because the connection attempt was cancelled")
                     }
                 }
             }, null, null, null, -1, prof.userCertificateAlias)
@@ -2086,35 +2167,43 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             _errorMessage.value = "No pending profile to resume"
             return
         }
+        val connectSessionId = activeConnectSessionId
         viewModelScope.launch {
-            Log.d(TAG, "[CertFlow] Resume after certificate install for alias=${prof.userCertificateAlias}")
-            withContext(Dispatchers.IO) { logUserCert(prof.userCertificateAlias) }
-            val alias = prof.userCertificateAlias
-            if (alias != null) {
-                // Poll for the certificate to become available (installation is async)
-                var diag = withContext(Dispatchers.IO) { configManager.diagnoseUserCertificate(alias) }
-                var attempts = 0
-                while (diag.state != VpnConfigManager.UserCertState.INSTALLED_OK && attempts < 10) {
-                    attempts++
-                    Log.d(TAG, "[CertFlow] Waiting for KeyChain to expose cert alias=$alias attempt=$attempts state=${diag.state}")
-                    delay(500)
-                    diag = withContext(Dispatchers.IO) { configManager.diagnoseUserCertificate(alias) }
-                }
-                if (diag.state != VpnConfigManager.UserCertState.INSTALLED_OK) {
-                    _errorMessage.value = "Certificate not yet available (state=${diag.state}). Pick certificate manually.";
+            try {
+                ensureConnectSessionActive(connectSessionId)
+                Log.d(TAG, "[CertFlow] Resume after certificate install for alias=${prof.userCertificateAlias}")
+                withContext(Dispatchers.IO) { logUserCert(prof.userCertificateAlias) }
+                val alias = prof.userCertificateAlias
+                if (alias != null) {
+                    // Poll for the certificate to become available (installation is async)
+                    var diag = withContext(Dispatchers.IO) { configManager.diagnoseUserCertificate(alias) }
+                    var attempts = 0
+                    while (diag.state != VpnConfigManager.UserCertState.INSTALLED_OK && attempts < 10) {
+                        ensureConnectSessionActive(connectSessionId)
+                        attempts++
+                        Log.d(TAG, "[CertFlow] Waiting for KeyChain to expose cert alias=$alias attempt=$attempts state=${diag.state}")
+                        delay(500)
+                        diag = withContext(Dispatchers.IO) { configManager.diagnoseUserCertificate(alias) }
+                    }
+                    ensureConnectSessionActive(connectSessionId)
+                    if (diag.state != VpnConfigManager.UserCertState.INSTALLED_OK) {
+                        _errorMessage.value = "Certificate not yet available (state=${diag.state}). Pick certificate manually.";
+                        _showCertPicker.value = true
+                        return@launch
+                    }
+                    withContext(Dispatchers.IO) { configManager.clearPendingInstall(alias) }
+                    Log.d(TAG, "[CertFlow] Certificate installed and accessible; proceeding to connect")
+                } else {
                     _showCertPicker.value = true
+                    _errorMessage.value = "No alias present; select installed certificate"
                     return@launch
                 }
-                withContext(Dispatchers.IO) { configManager.clearPendingInstall(alias) }
-                Log.d(TAG, "[CertFlow] Certificate installed and accessible; proceeding to connect")
-            } else {
-                _showCertPicker.value = true
-                _errorMessage.value = "No alias present; select installed certificate"
-                return@launch
+                _pendingKeyChainImport.value = null
+                completeStrongSwanConnection(prof, connectSessionId)
+                pendingProfile = null
+            } catch (e: CancellationException) {
+                Log.d(TAG, "Certificate-install resume ignored because the connection attempt was cancelled")
             }
-            _pendingKeyChainImport.value = null
-            completeStrongSwanConnection(prof)
-            pendingProfile = null
         }
     }
 
@@ -2136,7 +2225,8 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         _errorMessage.value = "Certificate installation cancelled"
     }
 
-    private suspend fun completeStrongSwanConnection(profile: VpnProfile) {
+    private suspend fun completeStrongSwanConnection(profile: VpnProfile, connectSessionId: Long) {
+        ensureConnectSessionActive(connectSessionId)
         val context = getApplication<Application>().applicationContext
         val dsObj = VpnProfileSource(context)
         // Call open() reflectively to handle both signatures: open():VpnProfileDataSource and open():void
@@ -2190,7 +2280,8 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 configManager.saveMappedCertAlias(profile.gateway, remoteKey, chosenAlias)
             }
         }
-        
+        ensureConnectSessionActive(connectSessionId)
+
         // CRITICAL: Cancel any existing state observer to prevent stacking
         stateObserverJob?.cancel()
         stateObserverJob = null
@@ -2204,6 +2295,10 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             stateObserverJob = viewModelScope.launch {
                 try {
                     handler.connectionState.collect { state ->
+                        if (!isHandlerStateRelevant(connectSessionId)) {
+                            Log.d(TAG, "Ignoring stale StrongSwan state after connection cancel: $state")
+                            return@collect
+                        }
                         Log.d(TAG, "StrongSwan connection state changed: $state")
                         when (state) {
                             is ConnectionState.Connecting -> {
@@ -2294,7 +2389,8 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
-        
+        ensureConnectSessionActive(connectSessionId)
+
         val initiatedSuccessfully = withContext(Dispatchers.IO) {
             handler?.connect(context, profile) ?: false
         }
@@ -2654,9 +2750,14 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     private fun observeActiveHandlerState() {
         openVpnStateJob?.cancel()
         val handler = activeVpnHandler ?: return
+        val connectSessionId = activeConnectSessionId
         openVpnStateJob = viewModelScope.launch {
             try {
                 handler.connectionState.collect { st ->
+                    if (!isHandlerStateRelevant(connectSessionId)) {
+                        Log.d(TAG, "Ignoring stale handler state after connection cancel: $st")
+                        return@collect
+                    }
                     when (st) {
                         is ConnectionState.Connected -> {
                             _isConnected.value = true
@@ -2676,7 +2777,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                             _isConnected.value = false
                         }
                         is ConnectionState.Disconnecting -> {
-                            _isConnecting.value = true
+                            _isConnecting.value = false
+                            _isConnected.value = false
+                            _errorMessage.value = "Cancelling connection..."
                         }
                         is ConnectionState.Disconnected -> {
                             val wasConnected = _isConnected.value
@@ -2727,7 +2830,11 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
             } catch (t: Throwable) {
-                Log.w(TAG, "Handler state observe error: ${t.message}")
+                if (t is CancellationException) {
+                    Log.d(TAG, "Handler state observer cancelled")
+                } else {
+                    Log.w(TAG, "Handler state observe error: ${t.message}")
+                }
             }
         }
     }
@@ -2797,14 +2904,24 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             try {
                 val context = getApplication<Application>().applicationContext
+                val cancelInProgress = _isConnecting.value && !_isConnected.value
                 Log.d(TAG, "Starting disconnect process - activeHandler exists: ${activeVpnHandler != null}")
+
+                if (cancelInProgress) {
+                    Log.d(TAG, "Cancelling active VPN connection attempt")
+                    cancelPendingConnectAttempt("Cancelling connection...")
+                    _isConnecting.value = false
+                    _isConnected.value = false
+                } else {
+                    clearPendingConnectArtifacts()
+                }
 
                 // Validate token before disconnect with SHORT timeout (2 seconds)
                 // If revoked, still allow disconnect to happen but mark it as a forced logout scenario
                 // If validation times out (server unresponsive), skip it and proceed with disconnect
                 val token = authToken
                 val manager = tokenValidationManager
-                if (token != null && manager != null) {
+                if (!cancelInProgress && token != null && manager != null) {
                     Log.d(TAG, "Validating token before VPN disconnection (2 second timeout)")
                     val tokenValid = manager.validateTokenWithTimeout(timeoutMs = 2000L)
                     if (!tokenValid) {
@@ -2816,6 +2933,10 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 // Cancel OpenVPN state observer
                 openVpnStateJob?.cancel()
                 openVpnStateJob = null
+
+                // Cancel StrongSwan state observer as well; disconnect() updates UI state explicitly.
+                stateObserverJob?.cancel()
+                stateObserverJob = null
 
                 // If we don't have an active handler but connection state shows connected,
                 // try to create one to handle the disconnect properly
@@ -2925,7 +3046,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                     _errorMessage.value = "VPN disconnect attempted - please check if connection is actually terminated"
                 } else {
                     Log.d(TAG, "VPN successfully disconnected - no active VPN detected")
-                    _errorMessage.value = "VPN disconnected successfully"
+                    _errorMessage.value = if (cancelInProgress) "Connection cancelled" else "VPN disconnected successfully"
                 }
 
             } catch (e: Exception) {
@@ -2941,6 +3062,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
                 // Always clean up state regardless of disconnect success
                 activeVpnHandler = null
+                activeConnectJob = null
                 _isConnected.value = false
                 _isConnecting.value = false
 

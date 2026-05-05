@@ -426,9 +426,9 @@ fun DashboardScreen(
             // Connect/Disconnect button (design: big rounded)
             Button(
                 onClick = {
-                    if (isConnected) {
+                    if (isConnected || isConnecting) {
                         viewModel.disconnect()
-                    } else if (!isConnecting) {
+                    } else {
                         if (isQuickConnectMode) {
                             // Quick Connect mode: auto-select and connect
                             viewModel.quickConnect()
@@ -442,7 +442,7 @@ fun DashboardScreen(
                         }
                     }
                 },
-                enabled = !isConnecting,
+                enabled = isConnected || isConnecting || isQuickConnectMode || selectedServer != null,
                 modifier = Modifier
                     .height(if (isConnected) 48.dp else 56.dp)
                     .padding(horizontal = 18.dp),
