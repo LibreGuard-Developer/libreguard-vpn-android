@@ -1280,7 +1280,40 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun selectProtocol(protocol: VpnProtocol) {
-        _selectedProtocol.value = protocol
+        saveDefaultProtocol(protocol)
+    }
+
+    private fun getPendingUpgradeProtocolPrefsKey(): String {
+        return if (currentUserId != null) {
+            "pending_upgrade_protocol_${currentUserId}"
+        } else {
+            "pending_upgrade_protocol"
+        }
+    }
+
+    fun rememberPendingUpgradeProtocolSelection(protocol: VpnProtocol) {
+        sharedPrefs.edit()
+            .putString(getPendingUpgradeProtocolPrefsKey(), protocol.displayName)
+            .apply()
+        Log.d(TAG, "Saved pending protocol selection for upgrade: ${protocol.displayName}")
+    }
+
+    private fun consumePendingUpgradeProtocolSelection(): VpnProtocol? {
+        return try {
+            val prefsKey = getPendingUpgradeProtocolPrefsKey()
+            val protocolName = sharedPrefs.getString(prefsKey, null)
+            sharedPrefs.edit().remove(prefsKey).apply()
+            VpnProtocol.values().find { it.displayName == protocolName }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to consume pending upgrade protocol selection")
+            null
+        }
+    }
+
+    private fun applyPendingUpgradeSelectionsAfterPurchase() {
+        val pendingProtocol = consumePendingUpgradeProtocolSelection() ?: return
+        saveDefaultProtocol(pendingProtocol)
+        Log.d(TAG, "Applied pending protocol selection after successful upgrade: ${pendingProtocol.displayName}")
     }
 
     private fun findRemoteServerByName(serverName: String): RemoteVpnServer? {
@@ -3348,7 +3381,13 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun updateSubscriptionStatus() {
         Log.d(TAG, "updateSubscriptionStatus() called - triggering subscription refresh via SubscriptionViewModel")
+        subscriptionViewModel.markPurchaseVerified()
+        applyPendingUpgradeSelectionsAfterPurchase()
         subscriptionViewModel.subscriptionUpdated()
+
+        viewModelScope.launch {
+            dataUsageManager.forceQuotaRefresh()
+        }
     }
 
     // ===== AUTO-CONNECT FEATURE =====

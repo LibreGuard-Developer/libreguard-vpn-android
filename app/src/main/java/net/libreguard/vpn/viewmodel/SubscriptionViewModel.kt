@@ -804,6 +804,20 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
     }
 
     /**
+     * Mark the user as Pro immediately after a verified purchase so UI/access checks update
+     * before the follow-up subscription fetch completes.
+     */
+    fun markPurchaseVerified() {
+        _isPro.value = true
+        try {
+            sharedPrefs.edit().putBoolean("subscription_is_pro", true).apply()
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to persist optimistic Pro state: ${e.message}")
+        }
+        Log.d(TAG, "Marked subscription as Pro locally after verified purchase")
+    }
+
+    /**
      * Force immediate subscription status update
      * Call this after payment completion or subscription changes
      */

@@ -120,7 +120,7 @@ fun ServerListScreen(
                         color = if (selectedProtocol == VpnProtocol.IKEV2_IPSEC) Primary else CardBackground,
                         border = if (selectedProtocol != VpnProtocol.IKEV2_IPSEC)
                             ButtonDefaults.outlinedButtonBorder(enabled = true) else null,
-                        onClick = { viewModel.selectProtocol(VpnProtocol.IKEV2_IPSEC) }
+                        onClick = { viewModel.saveDefaultProtocol(VpnProtocol.IKEV2_IPSEC) }
                     ) {
                         Box(contentAlignment = Alignment.Center) {
                             Text(
@@ -143,9 +143,10 @@ fun ServerListScreen(
                                 ButtonDefaults.outlinedButtonBorder(enabled = true) else null,
                             onClick = {
                                 if (!isPro) {
+                                    viewModel.rememberPendingUpgradeProtocolSelection(VpnProtocol.OPENVPN)
                                     onNavigateToUpgrade?.invoke()
                                 } else {
-                                    viewModel.selectProtocol(VpnProtocol.OPENVPN)
+                                    viewModel.saveDefaultProtocol(VpnProtocol.OPENVPN)
                                 }
                             }
                         ) {
