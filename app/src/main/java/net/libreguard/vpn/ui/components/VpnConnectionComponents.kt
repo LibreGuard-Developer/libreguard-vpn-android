@@ -43,6 +43,7 @@ data class VpnStatusConfig(
 /**
  * Get configuration based on connection status
  */
+@Composable
 fun getStatusConfig(status: VpnConnectionStatus): VpnStatusConfig {
     return when (status) {
         VpnConnectionStatus.CONNECTED -> VpnStatusConfig(

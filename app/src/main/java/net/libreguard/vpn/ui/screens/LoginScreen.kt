@@ -138,6 +138,7 @@ fun LoginScreen(
     val gson = remember { Gson() }
 
     val tokenManager = RetrofitClient.getTokenManager()
+    val isDarkMode = IsDarkMode
 
     // Helpers for device identity (prefer hashed IDs)
     fun DeviceDto.remoteId(): String = (deviceIdHash?.takeIf { it.isNotBlank() } ?: deviceId).orEmpty()
@@ -1005,7 +1006,7 @@ fun LoginScreen(
                         factory = { ctx: android.content.Context ->
                             SignInButton(ctx).apply {
                                 setSize(SignInButton.SIZE_WIDE)
-                                setColorScheme(SignInButton.COLOR_LIGHT)
+                                setColorScheme(if (isDarkMode) SignInButton.COLOR_DARK else SignInButton.COLOR_LIGHT)
                                 setOnClickListener {
                                     errorMessage = null
                                     googleLoading = true
@@ -1018,6 +1019,7 @@ fun LoginScreen(
                         },
                         update = { btn: SignInButton ->
                             btn.isEnabled = !isLoading && !googleLoading
+                            btn.setColorScheme(if (isDarkMode) SignInButton.COLOR_DARK else SignInButton.COLOR_LIGHT)
                         },
                         modifier = Modifier.fillMaxSize()
                     )

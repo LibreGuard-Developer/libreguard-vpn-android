@@ -14,6 +14,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.*
@@ -41,6 +42,8 @@ import net.libreguard.vpn.ui.screens.CardPaymentScreen
 import net.libreguard.vpn.ui.screens.MoneroPaymentScreen
 import net.libreguard.vpn.ui.screens.GooglePlayPaymentScreen
 import net.libreguard.vpn.ui.screens.DeviceManagementScreen
+import net.libreguard.vpn.ui.theme.ThemePreferences
+import net.libreguard.vpn.ui.theme.ThemeMode
 import net.libreguard.vpn.ui.theme.LibreGuardVPNTheme
 import net.libreguard.vpn.viewmodel.VpnViewModel
 import net.libreguard.vpn.util.TokenManager
@@ -70,9 +73,29 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            LibreGuardVPNTheme {
+            val context = LocalContext.current
+            val systemIsDark = isSystemInDarkTheme()
+            var themeMode by rememberSaveable {
+                mutableStateOf(ThemePreferences.getThemeMode(context))
+            }
+            val effectiveDarkMode = when (themeMode) {
+                ThemeMode.SYSTEM -> systemIsDark
+                ThemeMode.LIGHT -> false
+                ThemeMode.DARK -> true
+            }
+
+            LibreGuardVPNTheme(darkTheme = effectiveDarkMode) {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    AppNavigation(modifier = Modifier.padding(innerPadding))
+                    AppNavigation(
+                        modifier = Modifier.padding(innerPadding),
+                        themeMode = themeMode,
+                        effectiveDarkMode = effectiveDarkMode,
+                        onThemeModeChange = { selectedMode ->
+                            themeMode = selectedMode
+                            ThemePreferences.setThemeMode(context, selectedMode)
+                            ThemePreferences.applyThemeMode(selectedMode)
+                        }
+                    )
                 }
             }
         }
@@ -81,7 +104,12 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 @SuppressLint("UnspecifiedRegisterReceiverFlag")
-fun AppNavigation(modifier: Modifier = Modifier) {
+fun AppNavigation(
+    modifier: Modifier = Modifier,
+    themeMode: ThemeMode,
+    effectiveDarkMode: Boolean,
+    onThemeModeChange: (ThemeMode) -> Unit
+) {
     val navController = rememberNavController()
     val context = LocalContext.current
     var authToken by remember { mutableStateOf<String?>(null) }
@@ -781,6 +809,9 @@ fun AppNavigation(modifier: Modifier = Modifier) {
 
                 MainScreen(
                     authToken = token,
+                    themeMode = themeMode,
+                    effectiveDarkMode = effectiveDarkMode,
+                    onThemeModeChange = onThemeModeChange,
                     vpnViewModel = vpnViewModel,
                     onLogout = {
                         // Disconnect VPN first, then logout
@@ -814,6 +845,9 @@ fun AppNavigation(modifier: Modifier = Modifier) {
         composable("settings") {
             authToken?.let { _ ->
                 SettingsScreen(
+                    themeMode = themeMode,
+                    effectiveDarkMode = effectiveDarkMode,
+                    onThemeModeChange = onThemeModeChange,
                     onNavigateBack = { navController.popBackStack() },
                     onNavigateToTwoFactor = { navController.navigate("twoFactorSettings") },
                     onNavigateToUpgrade = { navController.navigate("payment/googleplay") },

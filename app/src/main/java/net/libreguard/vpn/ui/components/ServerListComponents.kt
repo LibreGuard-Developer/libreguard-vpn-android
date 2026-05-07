@@ -41,6 +41,7 @@ data class ServerItemData(
 /**
  * Get color based on ping latency
  */
+@Composable
 private fun getPingColor(ping: Int): Color {
     return when {
         ping <= 100 -> StatusConnected
@@ -52,6 +53,7 @@ private fun getPingColor(ping: Int): Color {
 /**
  * Get color based on server load
  */
+@Composable
 private fun getLoadColor(load: Int): Color {
     return when {
         load < 40 -> StatusConnected

@@ -14,7 +14,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -24,6 +23,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import net.libreguard.vpn.ui.theme.*
 
 @Composable
 fun CodeInputField(
@@ -98,20 +98,24 @@ fun CodeDigitBox(
     isFocused: Boolean,
     modifier: Modifier = Modifier
 ) {
+    val backgroundColor = if (isFocused) Primary.copy(alpha = 0.12f) else CardBackground
+    val borderColor = when {
+        isFocused -> Primary
+        digit.isNotEmpty() -> StatusConnected
+        else -> Border
+    }
+    val textColor = if (digit.isNotEmpty()) Foreground else MutedForeground
+
     Box(
         modifier = modifier
             .aspectRatio(1f)
             .background(
-                color = if (isFocused) Color(0xFFEEF2FF) else Color.White,
+                color = backgroundColor,
                 shape = RoundedCornerShape(12.dp)
             )
             .border(
                 width = 2.dp,
-                color = when {
-                    isFocused -> Color(0xFF6366F1)
-                    digit.isNotEmpty() -> Color(0xFF10B981)
-                    else -> Color(0xFFE2E8F0)
-                },
+                color = borderColor,
                 shape = RoundedCornerShape(12.dp)
             ),
         contentAlignment = Alignment.Center
@@ -120,7 +124,7 @@ fun CodeDigitBox(
             text = digit,
             fontSize = 24.sp,
             fontWeight = FontWeight.Bold,
-            color = if (digit.isNotEmpty()) Color(0xFF0F172A) else Color(0xFFCBD5E1),
+            color = textColor,
             textAlign = TextAlign.Center
         )
     }

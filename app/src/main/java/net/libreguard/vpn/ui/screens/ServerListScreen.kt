@@ -581,6 +581,7 @@ private fun ServerCard(
     }
 }
 
+@Composable
 private fun getPingColor(ping: Int): Color {
     return when {
         ping <= 100 -> StatusConnected
@@ -589,6 +590,7 @@ private fun getPingColor(ping: Int): Color {
     }
 }
 
+@Composable
 private fun getLoadColor(load: Int): androidx.compose.ui.graphics.Color {
     return when {
         load < 40 -> StatusConnected

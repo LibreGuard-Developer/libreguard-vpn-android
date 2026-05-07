@@ -9,6 +9,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import net.libreguard.vpn.ui.navigation.BottomNavScaffold
 import net.libreguard.vpn.ui.navigation.MainTab
 import net.libreguard.vpn.ui.theme.Background
+import net.libreguard.vpn.ui.theme.ThemeMode
 import net.libreguard.vpn.viewmodel.VpnViewModel
 
 /**
@@ -25,6 +26,9 @@ enum class LegalScreen {
 @Composable
 fun MainContainerScreen(
     authToken: String,
+    themeMode: ThemeMode,
+    effectiveDarkMode: Boolean,
+    onThemeModeChange: (ThemeMode) -> Unit,
     onLogout: () -> Unit,
     onNavigateToUpgrade: () -> Unit,
     onNavigateToTwoFactor: () -> Unit,
@@ -83,6 +87,9 @@ fun MainContainerScreen(
                     }
                     MainTab.SETTINGS -> {
                         SettingsScreen(
+                            themeMode = themeMode,
+                            effectiveDarkMode = effectiveDarkMode,
+                            onThemeModeChange = onThemeModeChange,
                             onNavigateBack = { currentTab = MainTab.DASHBOARD },
                             onNavigateToTwoFactor = onNavigateToTwoFactor,
                             onNavigateToUpgrade = onNavigateToUpgrade,
@@ -138,6 +145,9 @@ fun MainContainerScreen(
 @Composable
 fun MainScreen(
     authToken: String,
+    themeMode: ThemeMode,
+    effectiveDarkMode: Boolean,
+    onThemeModeChange: (ThemeMode) -> Unit,
     vpnViewModel: VpnViewModel? = null,
     onLogout: (() -> Unit)? = null,
     onNavigateToSettings: (() -> Unit)? = null,
@@ -146,6 +156,9 @@ fun MainScreen(
 ) {
     MainContainerScreen(
         authToken = authToken,
+        themeMode = themeMode,
+        effectiveDarkMode = effectiveDarkMode,
+        onThemeModeChange = onThemeModeChange,
         onLogout = { onLogout?.invoke() },
         onNavigateToUpgrade = { onNavigateToUpgrade?.invoke() },
         onNavigateToTwoFactor = { onNavigateToTwoFactor?.invoke() },

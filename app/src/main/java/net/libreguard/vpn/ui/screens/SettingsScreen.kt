@@ -36,6 +36,9 @@ import org.json.JSONObject
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
+    themeMode: ThemeMode = ThemeMode.SYSTEM,
+    effectiveDarkMode: Boolean = false,
+    onThemeModeChange: (ThemeMode) -> Unit = {},
     onNavigateBack: () -> Unit,
     onNavigateToTwoFactor: () -> Unit,
     onNavigateToUpgrade: () -> Unit,
@@ -428,6 +431,19 @@ fun SettingsScreen(
 
             Spacer(modifier = Modifier.height(24.dp))
 
+            // Preferences Section
+            SectionHeader(title = "Preferences", modifier = Modifier.padding(horizontal = 24.dp))
+
+            SettingsCard(modifier = Modifier.padding(horizontal = 24.dp)) {
+                ThemeModeSelector(
+                    selectedThemeMode = themeMode,
+                    effectiveDarkMode = effectiveDarkMode,
+                    onThemeModeChange = onThemeModeChange
+                )
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
             // Support Section
             SectionHeader(title = "Support", modifier = Modifier.padding(horizontal = 24.dp))
 
@@ -798,6 +814,115 @@ private fun SettingsToggleRow(
 }
 
 @Composable
+private fun ThemeModeSelector(
+    selectedThemeMode: ThemeMode,
+    effectiveDarkMode: Boolean,
+    onThemeModeChange: (ThemeMode) -> Unit
+) {
+    val currentAppearance = if (effectiveDarkMode) "Dark" else "Light"
+    val subtitle = when (selectedThemeMode) {
+        ThemeMode.SYSTEM -> "Following system theme • Currently $currentAppearance"
+        ThemeMode.LIGHT -> "Manual theme override • Always Light"
+        ThemeMode.DARK -> "Manual theme override • Always Dark"
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(16.dp)
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Primary.copy(alpha = 0.1f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.DarkMode,
+                    contentDescription = null,
+                    tint = Primary,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Theme",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = Foreground
+                )
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MutedForeground
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            ThemeMode.entries.forEach { mode ->
+                val chipIcon = when (mode) {
+                    ThemeMode.SYSTEM -> Icons.Default.BrightnessAuto
+                    ThemeMode.LIGHT -> Icons.Default.LightMode
+                    ThemeMode.DARK -> Icons.Default.DarkMode
+                }
+
+                Box(modifier = Modifier.weight(1f)) {
+                    FilterChip(
+                        selected = selectedThemeMode == mode,
+                        onClick = { onThemeModeChange(mode) },
+                        modifier = Modifier.fillMaxWidth(),
+                        leadingIcon = {
+                            Icon(
+                                imageVector = chipIcon,
+                                contentDescription = null,
+                                modifier = Modifier.size(FilterChipDefaults.IconSize)
+                            )
+                        },
+                        label = {
+                            Text(
+                                text = when (mode) {
+                                    ThemeMode.SYSTEM -> if (selectedThemeMode == ThemeMode.SYSTEM) {
+                                        "System • $currentAppearance"
+                                    } else {
+                                        "System"
+                                    }
+                                    ThemeMode.LIGHT -> "Light"
+                                    ThemeMode.DARK -> "Dark"
+                                },
+                                maxLines = 1
+                            )
+                        },
+                        shape = RoundedCornerShape(12.dp),
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = Primary.copy(alpha = 0.12f),
+                            selectedLabelColor = Primary,
+                            containerColor = Background,
+                            labelColor = MutedForeground
+                        ),
+                        border = FilterChipDefaults.filterChipBorder(
+                            enabled = true,
+                            selected = selectedThemeMode == mode,
+                            borderColor = Border,
+                            selectedBorderColor = Primary.copy(alpha = 0.35f)
+                        )
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun FeatureItem(text: String) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -982,6 +1107,8 @@ private fun ProPlanCard(
 @Composable
 fun PreviewSettingsScreenNew() {
     SettingsScreen(
+        themeMode = ThemeMode.SYSTEM,
+        effectiveDarkMode = false,
         onNavigateBack = { },
         onNavigateToTwoFactor = { },
         onNavigateToUpgrade = { },
