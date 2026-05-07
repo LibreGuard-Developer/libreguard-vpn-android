@@ -30,6 +30,8 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+    id("com.google.gms.google-services")
+    id("com.google.firebase.crashlytics")
 }
 
 android {
@@ -40,8 +42,8 @@ android {
         applicationId = "net.libreguard.vpn"
         minSdk = 29
         targetSdk = 35
-        versionCode = 10440
-        versionName = "1.4.4"
+        versionCode = 10500
+        versionName = "1.5.0"
 
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
@@ -217,4 +219,9 @@ dependencies {
 
     // Add strongSwan Android library module
     implementation(project(":strongswan-android"))
+
+    // Adding Firebase integration for crash reporting and analytics
+    implementation(platform("com.google.firebase:firebase-bom:34.12.0"))
+    implementation("com.google.firebase:firebase-crashlytics")
+
 }

@@ -20,6 +20,7 @@ import java.io.ByteArrayInputStream
 import java.io.FileOutputStream
 import android.content.SharedPreferences
 import android.database.sqlite.SQLiteDatabase
+import net.libreguard.vpn.util.CrashlyticsReporter
 
 class VpnConfigManager(private val context: Context) {
 
@@ -424,6 +425,10 @@ class VpnConfigManager(private val context: Context) {
                 return certAlias
             } else {
                 Log.e(tag, "✗✗✗ LocalCertificateKeyStoreManager.importP12Certificate returned NULL")
+                CrashlyticsReporter.recordHandledException(
+                    IllegalStateException("LocalCertificateKeyStoreManager.importP12Certificate returned null"),
+                    "Client certificate import returned null"
+                )
 
                 // Fallback: Save for debugging
                 val fallbackAlias = "shadowlink_${System.currentTimeMillis()}"
@@ -437,6 +442,7 @@ class VpnConfigManager(private val context: Context) {
         } catch (e: Exception) {
             Log.e(tag, "✗✗✗ Exception during client certificate import: ${e.javaClass.simpleName}: ${e.message}")
             e.printStackTrace()
+            CrashlyticsReporter.recordHandledException(e, "Exception during client certificate import")
             null
         }
     }

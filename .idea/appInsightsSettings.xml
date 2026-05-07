@@ -22,10 +22,10 @@
             <InsightsFilterSettings>
               <option name="connection">
                 <ConnectionSetting>
-                  <option name="appId" value="PLACEHOLDER" />
-                  <option name="mobileSdkAppId" value="" />
-                  <option name="projectId" value="" />
-                  <option name="projectNumber" value="" />
+                  <option name="appId" value="net.libreguard.vpn" />
+                  <option name="mobileSdkAppId" value="1:428314693134:android:29c8a04941cfc7f38e765f" />
+                  <option name="projectId" value="test-b6c5ab62" />
+                  <option name="projectNumber" value="428314693134" />
                 </ConnectionSetting>
               </option>
               <option name="signal" value="SIGNAL_UNSPECIFIED" />

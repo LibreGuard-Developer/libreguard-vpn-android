@@ -25,9 +25,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.launch
+import net.libreguard.vpn.BuildConfig
 import net.libreguard.vpn.network.RetrofitClient
 import net.libreguard.vpn.network.SubscriptionStatusResponse
 import net.libreguard.vpn.ui.theme.*
+import net.libreguard.vpn.util.CrashlyticsReporter
 import net.libreguard.vpn.viewmodel.SubscriptionViewModel
 import org.json.JSONObject
 
@@ -86,6 +88,7 @@ fun SettingsScreen(
                     }
                 } catch (e: Exception) {
                     android.util.Log.e("SettingsScreen", "Error fetching 2FA status: ${e.message}")
+                    CrashlyticsReporter.recordHandledException(e, "Error fetching 2FA status")
                 } finally {
                     isLoading2fa = false
                 }
@@ -500,7 +503,7 @@ fun SettingsScreen(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
-                    text = "LibreGuard v${net.libreguard.vpn.BuildConfig.VERSION_NAME}",
+                    text = "LibreGuard v${BuildConfig.VERSION_NAME}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MutedForeground
                 )
@@ -622,6 +625,7 @@ fun SettingsScreen(
                                 }
                             } catch (e: Exception) {
                                 android.util.Log.e("SettingsScreen", "Error disabling 2FA: ${e.message}")
+                                CrashlyticsReporter.recordHandledException(e, "Error disabling 2FA")
                             }
                         }
                     },
@@ -643,6 +647,7 @@ fun SettingsScreen(
             shape = RoundedCornerShape(24.dp)
         )
     }
+
 }
 
 @Composable
