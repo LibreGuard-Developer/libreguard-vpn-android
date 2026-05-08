@@ -8,6 +8,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -21,20 +22,23 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
 import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions
 import com.google.android.gms.auth.api.signin.GoogleSignInStatusCodes
-import com.google.android.gms.common.SignInButton
 import com.google.android.gms.common.api.ApiException
 import com.google.gson.Gson
 import kotlinx.coroutines.delay
@@ -990,54 +994,64 @@ fun LoginScreen(
             Spacer(modifier = Modifier.height(24.dp))
 
             // Google Sign In Button
-            Surface(
+            Button(
+                onClick = {
+                    errorMessage = null
+                    googleLoading = true
+                    googleSignInClient.signOut()
+                        .addOnCompleteListener {
+                            googleLauncher.launch(googleSignInClient.signInIntent)
+                        }
+                },
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(56.dp),
+                enabled = !isLoading && !googleLoading,
                 shape = RoundedCornerShape(12.dp),
-                color = CardBackground,
-                border = ButtonDefaults.outlinedButtonBorder(enabled = true)
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = CardBackground,
+                    contentColor = Foreground,
+                    disabledContainerColor = CardBackground.copy(alpha = 0.6f),
+                    disabledContentColor = MutedForeground
+                ),
+                elevation = ButtonDefaults.buttonElevation(defaultElevation = 1.dp)
             ) {
                 Box(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier
+                        .size(26.dp)
+                        .background(Color.White, CircleShape),
                     contentAlignment = Alignment.Center
                 ) {
-                    AndroidView(
-                        factory = { ctx: android.content.Context ->
-                            SignInButton(ctx).apply {
-                                setSize(SignInButton.SIZE_WIDE)
-                                setColorScheme(if (isDarkMode) SignInButton.COLOR_DARK else SignInButton.COLOR_LIGHT)
-                                setOnClickListener {
-                                    errorMessage = null
-                                    googleLoading = true
-                                    googleSignInClient.signOut()
-                                        .addOnCompleteListener {
-                                            googleLauncher.launch(googleSignInClient.signInIntent)
-                                        }
-                                }
-                            }
-                        },
-                        update = { btn: SignInButton ->
-                            btn.isEnabled = !isLoading && !googleLoading
-                            btn.setColorScheme(if (isDarkMode) SignInButton.COLOR_DARK else SignInButton.COLOR_LIGHT)
-                        },
-                        modifier = Modifier.fillMaxSize()
+                    Text(
+                        text = "G",
+                        style = MaterialTheme.typography.labelMedium.copy(
+                            brush = Brush.sweepGradient(
+                                listOf(
+                                    Color(0xFF4285F4),
+                                    Color(0xFFEA4335),
+                                    Color(0xFFFBBC05),
+                                    Color(0xFF34A853),
+                                    Color(0xFF4285F4)
+                                )
+                            ),
+                            fontWeight = FontWeight.Bold
+                        )
                     )
-                    if (googleLoading) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .background(CardBackground.copy(alpha = 0.8f)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            CircularProgressIndicator(
-                                color = Primary,
-                                strokeWidth = 2.dp,
-                                modifier = Modifier.size(24.dp)
-                            )
-                        }
-                    }
                 }
+                Spacer(modifier = Modifier.width(12.dp))
+                Text(
+                    text = buildAnnotatedString {
+                        append("Sign in with ")
+                        withStyle(SpanStyle(color = Color(0xFF4285F4))) { append("G") }
+                        withStyle(SpanStyle(color = Color(0xFFEA4335))) { append("o") }
+                        withStyle(SpanStyle(color = Color(0xFFFBBC05))) { append("o") }
+                        withStyle(SpanStyle(color = Color(0xFF4285F4))) { append("g") }
+                        withStyle(SpanStyle(color = Color(0xFF34A853))) { append("l") }
+                        withStyle(SpanStyle(color = Color(0xFFEA4335))) { append("e") }
+                    },
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold
+                )
             }
 
             // Error message - Enhanced for device limit errors
