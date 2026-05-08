@@ -155,6 +155,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
     // Track the StateFlow observer job to prevent stacking observers
     private var stateObserverJob: Job? = null
+    private var subscriptionStateObserverJob: Job? = null
 
     // Add SharedPreferences for state persistence
     private val sharedPrefs by lazy {
@@ -314,6 +315,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
         // Fetch user's real IP on app startup (only if not connected)
         fetchUserIP()
+
+        // Observe subscription state changes
+        observeSubscriptionState()
     }
 
     /**
@@ -1320,6 +1324,35 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         return _servers.value.find { it.serverName == serverName }
     }
 
+    private fun normalizeProtocolForSubscription(protocol: VpnProtocol, isPro: Boolean): VpnProtocol {
+        return if (!isPro && protocol == VpnProtocol.OPENVPN) {
+            VpnProtocol.IKEV2_IPSEC
+        } else {
+            protocol
+        }
+    }
+
+    private fun ensureProtocolMatchesSubscription(isPro: Boolean): VpnProtocol {
+        val currentProtocol = _selectedProtocol.value
+        val normalizedProtocol = normalizeProtocolForSubscription(currentProtocol, isPro)
+
+        if (normalizedProtocol != currentProtocol) {
+            Log.w(TAG, "OpenVPN selected for a free account - switching to IKEV2/IPSec")
+            saveDefaultProtocol(normalizedProtocol)
+        }
+
+        return normalizedProtocol
+    }
+
+    private fun observeSubscriptionState() {
+        subscriptionStateObserverJob?.cancel()
+        subscriptionStateObserverJob = viewModelScope.launch {
+            subscriptionViewModel.isPro.collect { isPro ->
+                ensureProtocolMatchesSubscription(isPro)
+            }
+        }
+    }
+
     /**
      * Quick Connect - Automatically select and connect to the best available server
      *
@@ -1370,8 +1403,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         // Get user subscription status
-        val prefs = getApplication<Application>().getSharedPreferences("vpn_subscription_prefs", Context.MODE_PRIVATE)
-        val isProCached = prefs.getBoolean("subscription_is_pro", false)
+        val isProCached = subscriptionViewModel.isPro.value
 
         // Select best server using helper
         val bestServer = ServerSelectionHelper.selectBestServer(
@@ -1408,8 +1440,8 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
         // Guard: ensure access for server/protocol before attempting
         try {
-            val prefs = getApplication<Application>().getSharedPreferences("vpn_subscription_prefs", Context.MODE_PRIVATE)
-            val isProCached = prefs.getBoolean("subscription_is_pro", false)
+            val isProCached = subscriptionViewModel.isPro.value
+            val selected = ensureProtocolMatchesSubscription(isProCached)
 
             // If server is premium and user is not pro, emit upgrade event and abort
             if (server != null && server.pricingTier.equals("Premium", ignoreCase = true) && !isProCached) {
@@ -1426,22 +1458,18 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 return
             }
 
-            val selected = _selectedProtocol.value
-            if (selected == VpnProtocol.OPENVPN) {
-                // OpenVPN is Pro-only; if not Pro, emit upgrade
-                if (!isProCached) {
-                    viewModelScope.launch {
-                        _upgradeEvents.emit(mapOf(
-                            "reason" to "Protocol requires Pro",
-                            "resource_type" to "protocol",
-                            "resource_id" to selected.name,
-                            "required_tier" to "Pro"
-                        ))
-                    }
-                    _errorMessage.value = "OpenVPN requires Pro subscription. Redirecting to upgrade..."
-                    _isConnecting.value = false
-                    return
+            if (selected == VpnProtocol.OPENVPN && !isProCached) {
+                viewModelScope.launch {
+                    _upgradeEvents.emit(mapOf(
+                        "reason" to "Protocol requires Pro",
+                        "resource_type" to "protocol",
+                        "resource_id" to selected.name,
+                        "required_tier" to "Pro"
+                    ))
                 }
+                _errorMessage.value = "OpenVPN requires Pro subscription. Redirecting to upgrade..."
+                _isConnecting.value = false
+                return
             }
         } catch (e: Exception) {
             Log.w(TAG, "Failed to validate local subscription cache")
@@ -2480,6 +2508,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 Log.d(TAG, "Started data usage monitoring")
 
                 startConnectionTracking()
+
                 // Save connection state for persistence
                 saveConnectionState()
 
