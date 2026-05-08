@@ -9,10 +9,12 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.strongswan.android.data.VpnProfile
 import org.strongswan.android.data.VpnType
+import org.strongswan.android.security.LocalCertificateStore
 import org.strongswan.android.security.LocalCertificateKeyStoreManager
 import java.io.File
 import java.security.KeyStore
 import java.security.PrivateKey
+import java.security.Provider
 import java.security.cert.CertificateFactory
 import java.security.cert.X509Certificate
 import java.util.*
@@ -390,6 +392,28 @@ class VpnConfigManager(private val context: Context) {
      * Import client certificate (signed by YOUR private CA) - ONE-CLICK, NO PROMPTS
      * Uses LocalCertificateKeyStoreManager for seamless import
      */
+    private data class LocalImportAttempt(
+        val certAlias: String?,
+        val loadStrategy: String? = null,
+        val failureReason: String? = null,
+        val failureThrowable: Throwable? = null,
+        val shouldOfferKeyChainFallback: Boolean = false
+    )
+
+    private data class ParsedPkcs12Identity(
+        val userCertificate: X509Certificate,
+        val privateKey: PrivateKey,
+        val loadStrategy: String
+    )
+
+    private data class ParsedPkcs12Attempt(
+        val identity: ParsedPkcs12Identity? = null,
+        val failureReason: String? = null,
+        val failureThrowable: Throwable? = null,
+        val loadStrategy: String? = null,
+        val shouldOfferKeyChainFallback: Boolean = false
+    )
+
     private fun importClientCertificateOneClick(p12Base64: String, password: String): String? {
         return try {
             Log.i(tag, "=== ONE-CLICK CLIENT CERTIFICATE IMPORT ===")
@@ -401,13 +425,23 @@ class VpnConfigManager(private val context: Context) {
                 return null
             }
 
+            val cleanBase64 = p12Base64.replace("\\s".toRegex(), "")
+            val p12Bytes = Base64.decode(cleanBase64, Base64.DEFAULT)
+            if (p12Bytes == null || p12Bytes.isEmpty()) {
+                Log.e(tag, "Decoded P12 data is empty")
+                return null
+            }
+
             // Use LocalCertificateKeyStoreManager for one-click import (NO Android KeyStore prompts!)
-            Log.d(tag, "Calling LocalCertificateKeyStoreManager.importP12Certificate()...")
-            val certAlias = localCertManager.importP12Certificate(p12Base64, password)
+            Log.d(tag, "Calling LocalCertificateKeyStoreManager import API...")
+            val result: LocalImportAttempt = importWithLocalCertificateManager(p12Base64, p12Bytes, password)
+            val certAlias = result.certAlias
+            val importStrategy = result.loadStrategy
 
             if (certAlias != null) {
                 Log.i(tag, "✓✓✓ Client certificate imported successfully: $certAlias")
                 Log.i(tag, "✓✓✓ Certificate alias: ${certAlias}")
+                Log.i(tag, "✓✓✓ Import strategy: ${importStrategy ?: "unknown"}")
                 Log.i(tag, "✓✓✓ NO USER INTERACTION REQUIRED - Ready to connect!")
 
                 // Verify accessibility
@@ -424,16 +458,24 @@ class VpnConfigManager(private val context: Context) {
 
                 return certAlias
             } else {
-                Log.e(tag, "✗✗✗ LocalCertificateKeyStoreManager.importP12Certificate returned NULL")
-                CrashlyticsReporter.recordHandledException(
-                    IllegalStateException("LocalCertificateKeyStoreManager.importP12Certificate returned null"),
-                    "Client certificate import returned null"
-                )
+                val failureReason = result.failureReason ?: "Local PKCS#12 import failed"
+                val failureThrowable = result.failureThrowable ?: IllegalStateException(failureReason)
+
+                if (result.shouldOfferKeyChainFallback) {
+                    val fallbackAlias = stagePendingKeyChainInstall(p12Bytes, failureReason)
+                    Log.w(tag, "Device PKCS#12 provider issue detected; prepared KeyChain fallback alias=$fallbackAlias reason=$failureReason")
+                    CrashlyticsReporter.recordHandledException(
+                        failureThrowable,
+                        "Local PKCS#12 import failed; KeyChain fallback prepared. $failureReason"
+                    )
+                    return fallbackAlias
+                }
+
+                Log.e(tag, "✗✗✗ LocalCertificateKeyStoreManager.importP12CertificateDetailed failed: $failureReason")
+                CrashlyticsReporter.recordHandledException(failureThrowable, "Client certificate import failed: $failureReason")
 
                 // Fallback: Save for debugging
                 val fallbackAlias = "shadowlink_${System.currentTimeMillis()}"
-                val cleanBase64 = p12Base64.replace("\\s".toRegex(), "")
-                val p12Bytes = Base64.decode(cleanBase64, Base64.DEFAULT)
                 saveP12File(fallbackAlias, p12Bytes)
                 Log.w(tag, "Saved raw P12 for debugging: $fallbackAlias")
 
@@ -445,6 +487,226 @@ class VpnConfigManager(private val context: Context) {
             CrashlyticsReporter.recordHandledException(e, "Exception during client certificate import")
             null
         }
+    }
+
+    private fun importWithLocalCertificateManager(p12Base64: String, p12Bytes: ByteArray, password: String): LocalImportAttempt {
+        return try {
+            val detailedMethod = localCertManager.javaClass.methods.firstOrNull {
+                it.name == "importP12CertificateDetailed" &&
+                    it.parameterTypes.contentEquals(arrayOf(String::class.java, String::class.java))
+            }
+
+            val detailedAttempt = if (detailedMethod != null) {
+                val rawResult = detailedMethod.invoke(localCertManager, p12Base64, password)
+                if (rawResult != null) {
+                    LocalImportAttempt(
+                        certAlias = invokeStringGetter(rawResult, "getCertAlias"),
+                        loadStrategy = invokeStringGetter(rawResult, "getLoadStrategy"),
+                        failureReason = invokeStringGetter(rawResult, "getFailureReason"),
+                        failureThrowable = invokeThrowableGetter(rawResult, "getException"),
+                        shouldOfferKeyChainFallback = invokeBooleanGetter(rawResult, "shouldOfferKeyChainFallback")
+                    )
+                } else {
+                    LocalImportAttempt(
+                        certAlias = null,
+                        failureReason = "Local certificate import API returned null result"
+                    )
+                }
+            } else {
+                null
+            }
+
+            if (detailedAttempt?.certAlias != null) {
+                return detailedAttempt
+            }
+
+            val parseAttempt = parsePkcs12Identity(p12Bytes, password)
+            val parsedIdentity = parseAttempt.identity
+            if (parsedIdentity != null) {
+                val localAlias = importParsedIdentityLocally(parsedIdentity, p12Bytes, password)
+                if (localAlias != null) {
+                    return LocalImportAttempt(
+                        certAlias = localAlias,
+                        loadStrategy = parsedIdentity.loadStrategy
+                    )
+                }
+
+                return LocalImportAttempt(
+                    certAlias = null,
+                    loadStrategy = parsedIdentity.loadStrategy,
+                    failureReason = "Parsed PKCS#12 successfully but failed to persist the client certificate locally",
+                    failureThrowable = parseAttempt.failureThrowable ?: detailedAttempt?.failureThrowable,
+                    shouldOfferKeyChainFallback = true
+                )
+            }
+
+            if (parseAttempt.failureReason != null) {
+                return LocalImportAttempt(
+                    certAlias = null,
+                    loadStrategy = parseAttempt.loadStrategy ?: detailedAttempt?.loadStrategy,
+                    failureReason = parseAttempt.failureReason,
+                    failureThrowable = parseAttempt.failureThrowable ?: detailedAttempt?.failureThrowable,
+                    shouldOfferKeyChainFallback = parseAttempt.shouldOfferKeyChainFallback || detailedAttempt?.shouldOfferKeyChainFallback == true
+                )
+            }
+
+            detailedAttempt ?: LocalImportAttempt(
+                certAlias = null,
+                failureReason = "Local PKCS#12 import failed",
+                shouldOfferKeyChainFallback = true
+            )
+        } catch (e: Exception) {
+            LocalImportAttempt(
+                certAlias = null,
+                failureReason = "Failed to invoke local certificate import API: ${e.message}",
+                failureThrowable = e
+            )
+        }
+    }
+
+    private fun invokeStringGetter(target: Any, methodName: String): String? {
+        return runCatching { target.javaClass.getMethod(methodName).invoke(target) as? String }.getOrNull()
+    }
+
+    private fun invokeThrowableGetter(target: Any, methodName: String): Throwable? {
+        return runCatching { target.javaClass.getMethod(methodName).invoke(target) as? Throwable }.getOrNull()
+    }
+
+    private fun invokeBooleanGetter(target: Any, methodName: String): Boolean {
+        return runCatching { target.javaClass.getMethod(methodName).invoke(target) as? Boolean ?: false }.getOrDefault(false)
+    }
+
+    private fun parsePkcs12Identity(p12Bytes: ByteArray, password: String): ParsedPkcs12Attempt {
+        val provider = BouncyCastleBootstrap.ensureExternalProviderRegistered()
+            ?: return ParsedPkcs12Attempt(
+                failureReason = "External BouncyCastle provider is unavailable on this build",
+                shouldOfferKeyChainFallback = true,
+                loadStrategy = "app-bc-unavailable"
+            )
+        val passwordCandidates = buildPasswordCandidates(password)
+        var lastError: Exception? = null
+        val providerClass = provider.javaClass.name
+
+        for (storePassword in passwordCandidates) {
+            try {
+                val keyStore = KeyStore.getInstance("PKCS12", provider.name)
+                ByteArrayInputStream(p12Bytes).use { input ->
+                    keyStore.load(input, storePassword)
+                }
+
+                val aliases = keyStore.aliases()
+                while (aliases.hasMoreElements()) {
+                    val alias = aliases.nextElement()
+                    val cert = keyStore.getCertificate(alias) as? X509Certificate ?: continue
+                    for (keyPassword in passwordCandidates) {
+                        try {
+                            val key = keyStore.getKey(alias, keyPassword) as? PrivateKey ?: continue
+                            return ParsedPkcs12Attempt(
+                                identity = ParsedPkcs12Identity(
+                                    userCertificate = cert,
+                                    privateKey = key,
+                                    loadStrategy = "app-bc-pkcs12 provider=$providerClass password=${if (storePassword.isEmpty()) "empty" else "provided"}"
+                                ),
+                                loadStrategy = "app-bc-pkcs12 provider=$providerClass"
+                            )
+                        } catch (e: Exception) {
+                            lastError = e
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                lastError = e
+                Log.w(tag, "BC PKCS#12 parsing failed with ${if (storePassword.isEmpty()) "empty" else "provided"} password: ${e.message}")
+            }
+        }
+
+        if (lastError != null) {
+            Log.w(tag, "Unable to parse PKCS#12 with app-bundled BouncyCastle", lastError)
+        }
+        return ParsedPkcs12Attempt(
+            failureReason = lastError?.message ?: "Unable to parse PKCS#12 with app-bundled BouncyCastle",
+            failureThrowable = lastError,
+            shouldOfferKeyChainFallback = true,
+            loadStrategy = "app-bc-pkcs12 provider=$providerClass"
+        )
+    }
+
+    private fun importParsedIdentityLocally(identity: ParsedPkcs12Identity, p12Bytes: ByteArray, password: String): String? {
+        return try {
+            val certificateStore = LocalCertificateStore()
+            if (!certificateStore.addCertificate(identity.userCertificate)) {
+                Log.e(tag, "Failed to add parsed client certificate to LocalCertificateStore")
+                return null
+            }
+
+            val certAlias = certificateStore.getCertificateAlias(identity.userCertificate)
+            if (certAlias.isNullOrBlank()) {
+                Log.e(tag, "LocalCertificateStore returned no alias for parsed client certificate")
+                return null
+            }
+
+            if (!storeLocalPrivateKey(certAlias, identity.privateKey)) {
+                certificateStore.deleteCertificate(certAlias)
+                return null
+            }
+
+            storeLocalP12Artifacts(certAlias, p12Bytes, password)
+            Log.i(tag, "Imported client certificate via direct local-store path alias=$certAlias strategy=${identity.loadStrategy}")
+            certAlias
+        } catch (e: Exception) {
+            Log.e(tag, "Failed direct local-store import of parsed client certificate", e)
+            null
+        }
+    }
+
+    private fun storeLocalPrivateKey(certAlias: String, privateKey: PrivateKey): Boolean {
+        return try {
+            val keyId = certAlias.removePrefix("local:")
+            val keyDir = File(context.filesDir, "user_keys").apply { if (!exists()) mkdirs() }
+            val keyFile = File(keyDir, "key-$keyId")
+            FileOutputStream(keyFile).use { out ->
+                out.write(privateKey.encoded)
+            }
+            true
+        } catch (e: Exception) {
+            Log.e(tag, "Failed to store direct-import private key", e)
+            false
+        }
+    }
+
+    private fun storeLocalP12Artifacts(certAlias: String, p12Bytes: ByteArray, password: String) {
+        try {
+            val keyId = certAlias.removePrefix("local:")
+            val p12Dir = File(context.filesDir, "user_p12").apply { if (!exists()) mkdirs() }
+            File(p12Dir, "cert-$keyId.p12").writeBytes(p12Bytes)
+            if (password.isNotEmpty()) {
+                File(p12Dir, "cert-$keyId.pwd").writeText(password)
+            }
+        } catch (e: Exception) {
+            Log.w(tag, "Failed to persist direct-import PKCS#12 artifacts", e)
+        }
+    }
+
+    private fun buildPasswordCandidates(password: String): List<CharArray> {
+        val provided = password.toCharArray()
+        return if (password.isEmpty()) {
+            listOf(provided)
+        } else {
+            listOf(provided, CharArray(0))
+        }
+    }
+
+    private fun stagePendingKeyChainInstall(p12Bytes: ByteArray, reason: String): String {
+        val alias = "libreguard_${System.currentTimeMillis()}"
+        File(pendingDir, "$alias.p12").writeBytes(p12Bytes)
+        File(pendingDir, "$alias.meta").writeText(
+            JSONObject()
+                .put("createdAt", System.currentTimeMillis())
+                .put("reason", reason)
+                .toString()
+        )
+        Log.i(tag, "Prepared Android KeyChain fallback alias=$alias reason=$reason")
+        return alias
     }
 
     private fun saveP12File(alias: String, p12Bytes: ByteArray) {
@@ -757,6 +1019,13 @@ class VpnConfigManager(private val context: Context) {
                 if (file.exists()) {
                     file.delete()
                     Log.d(tag, "Cleaned up file: $filename")
+                }
+            }
+            listOf("$alias.p12", "$alias.meta").forEach { filename ->
+                val file = File(pendingDir, filename)
+                if (file.exists()) {
+                    file.delete()
+                    Log.d(tag, "Cleaned up pending install file: $filename")
                 }
             }
         } catch (e: Exception) {

@@ -5,6 +5,7 @@ import android.util.Log
 import org.strongswan.android.logic.StrongSwanApplication
 import net.libreguard.vpn.network.RetrofitClient
 import net.libreguard.vpn.ui.theme.ThemePreferences
+import net.libreguard.vpn.util.BouncyCastleBootstrap
 import net.libreguard.vpn.util.CrashlyticsReporter
 import net.libreguard.vpn.util.DeviceKeyManager
 import net.libreguard.vpn.util.PassphraseDecryptor
@@ -12,6 +13,7 @@ import net.libreguard.vpn.util.PassphraseDecryptor
 class LibreGuardVpnApp : StrongSwanApplication() {
     override fun onCreate() {
         super.onCreate()
+        BouncyCastleBootstrap.ensureExternalProviderRegistered()
         ThemePreferences.applyThemeMode(this)
         // Application-specific initialization can go here
         CrashlyticsReporter.setCollectionEnabled(BuildConfig.DEBUG)

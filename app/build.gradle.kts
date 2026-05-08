@@ -216,6 +216,7 @@ dependencies {
     implementation(libs.androidx.fragment.ktx)
     implementation(libs.androidx.appcompat)
     implementation(libs.androidx.recyclerview)
+    implementation(libs.org.bouncycastle.bcprov.jdk15on)
 
     // Add strongSwan Android library module
     implementation(project(":strongswan-android"))

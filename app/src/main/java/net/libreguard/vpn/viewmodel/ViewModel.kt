@@ -2170,7 +2170,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 if (installIntent != null) {
                     pendingProfile = profile
                     _pendingKeyChainImport.value = installIntent
-                    _errorMessage.value = "Client certificate installation required. Please approve KeyChain dialog."
+                    _errorMessage.value = "Client certificate installation required on this device. Approve the Android certificate dialog and enter the certificate password if prompted."
                     return
                 } else {
                     pendingProfile = profile
