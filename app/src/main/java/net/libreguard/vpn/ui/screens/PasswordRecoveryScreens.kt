@@ -35,10 +35,12 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -51,7 +53,9 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.google.gson.Gson
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.isActive
 import net.libreguard.vpn.R
 import net.libreguard.vpn.network.ForgotPasswordResponse
 import net.libreguard.vpn.network.ForgotPasswordRequest
@@ -75,6 +79,8 @@ private fun isValidRecoveryEmail(email: String): Boolean =
 
 private fun isLocallyAcceptableResetPassword(password: String): Boolean = password.length >= 8
 
+private const val FORGOT_PASSWORD_COOLDOWN_MILLIS = 120_000L
+
 @Composable
 fun ForgotPasswordScreen(
     initialEmail: String = "",
@@ -84,12 +90,22 @@ fun ForgotPasswordScreen(
     var isLoading by remember { mutableStateOf(false) }
     var infoMessage by remember { mutableStateOf<String?>(null) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+    var cooldownRemainingMillis by rememberSaveable { mutableStateOf(0L) }
 
     val context = LocalContext.current
     val keyboardController = LocalSoftwareKeyboardController.current
     val coroutineScope = rememberCoroutineScope()
     val scrollState = rememberScrollState()
     val gson = remember { Gson() }
+
+    LaunchedEffect(cooldownRemainingMillis) {
+        if (cooldownRemainingMillis <= 0L) return@LaunchedEffect
+        while (isActive && cooldownRemainingMillis > 0L) {
+            delay(1000L)
+            cooldownRemainingMillis = (cooldownRemainingMillis - 1000L).coerceAtLeast(0L)
+        }
+    }
+
     val buttonScale by animateFloatAsState(
         targetValue = 1f,
         animationSpec = tween(100),
@@ -258,6 +274,7 @@ fun ForgotPasswordScreen(
                             if (response.isSuccessful) {
                                 infoMessage = response.body()?.message
                                     ?: context.getString(R.string.forgot_password_success_default)
+                                cooldownRemainingMillis = FORGOT_PASSWORD_COOLDOWN_MILLIS
                             } else {
                                 val fallbackMessage = when (response.code()) {
                                     400 -> context.getString(R.string.error_empty_email)
@@ -282,7 +299,7 @@ fun ForgotPasswordScreen(
                     .fillMaxWidth()
                     .height(56.dp)
                     .scale(buttonScale),
-                enabled = !isLoading && email.isNotBlank(),
+                enabled = !isLoading && email.isNotBlank() && cooldownRemainingMillis <= 0L,
                 shape = RoundedCornerShape(12.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = Primary,
@@ -298,8 +315,27 @@ fun ForgotPasswordScreen(
                         color = PrimaryForeground
                     )
                 } else {
-                    Text(text = stringResource(R.string.send_reset_link))
+                    Text(
+                        text = if (cooldownRemainingMillis > 0L) {
+                            stringResource(R.string.send_reset_link)
+                        } else {
+                            stringResource(R.string.send_reset_link)
+                        }
+                    )
                 }
+            }
+
+            if (cooldownRemainingMillis > 0L) {
+                Spacer(modifier = Modifier.height(8.dp))
+                val minutes = (cooldownRemainingMillis / 1000L) / 60L
+                val seconds = (cooldownRemainingMillis / 1000L) % 60L
+                val timeText = String.format("%02d:%02d", minutes, seconds)
+                Text(
+                    text = stringResource(R.string.time_remaining_label, timeText),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MutedForeground,
+                    textAlign = TextAlign.Center
+                )
             }
 
             Spacer(modifier = Modifier.height(12.dp))
