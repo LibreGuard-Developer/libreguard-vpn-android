@@ -27,10 +27,15 @@
     <string name="error_password_requirements">Password must be at least 8 characters and include a number and a special character</string>
     <string name="error_empty_password">Please enter a password</string>
     <string name="error_empty_code">Please enter the confirmation code</string>
+    <string name="error_empty_new_password">Please enter a new password</string>
+    <string name="error_empty_confirm_password">Please confirm your new password</string>
+    <string name="error_passwords_do_not_match">Passwords do not match</string>
+    <string name="error_reset_password_too_short">Password must be at least 8 characters</string>
 
     <!-- Progress/info -->
     <string name="polling_waiting_confirmation">Waiting for email confirmation…</string>
     <string name="email_confirmed_logged_in">Email confirmed! Logging you in…</string>
+    <string name="network_error_template">Network error: %1$s</string>
 
     <!-- Generic registration messages -->
     <string name="registration_generic_error">We couldn’t create your account. Please check your information or try logging in.</string>
@@ -46,4 +51,24 @@
     <string name="google_web_client_id"></string>
     <string name="google_android_client_id"></string>
     <string name="google_signin_diagnostics">Google Sign-In Diagnostics</string>
+
+    <!-- Password recovery -->
+    <string name="back_to_login">Back to login</string>
+    <string name="forgot_password_title">Forgot password?</string>
+    <string name="forgot_password_subtitle">Enter your email and we’ll send you a reset link.</string>
+    <string name="forgot_password_helper">If the email is associated with a LibreGuard account, a password reset link will be sent shortly.</string>
+    <string name="forgot_password_success_default">If this email address is associated with a LibreGuard account, you will receive a password reset link shortly.</string>
+    <string name="forgot_password_error_default">We couldn’t request a password reset right now. Please try again.</string>
+    <string name="send_reset_link">Send reset link</string>
+    <string name="reset_password_title">Reset password</string>
+    <string name="reset_password_subtitle">Choose a new password for your LibreGuard account.</string>
+    <string name="reset_password_invalid_link">This reset link is invalid or incomplete. Please request a new password reset email.</string>
+    <string name="new_password_label">New password</string>
+    <string name="confirm_new_password_label">Confirm new password</string>
+    <string name="reset_password_helper">Use at least 8 characters. If the server requires more, the missing rules will be shown below.</string>
+    <string name="reset_password_success_default">Password has been reset successfully.</string>
+    <string name="reset_password_error_default">Failed to reset password.</string>
+    <string name="reset_password_action">Update password</string>
+    <string name="show_password">Show password</string>
+    <string name="hide_password">Hide password</string>
 </resources>

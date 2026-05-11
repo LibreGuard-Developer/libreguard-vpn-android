@@ -42,6 +42,8 @@ import net.libreguard.vpn.ui.screens.CardPaymentScreen
 import net.libreguard.vpn.ui.screens.MoneroPaymentScreen
 import net.libreguard.vpn.ui.screens.GooglePlayPaymentScreen
 import net.libreguard.vpn.ui.screens.DeviceManagementScreen
+import net.libreguard.vpn.ui.screens.ForgotPasswordScreen
+import net.libreguard.vpn.ui.screens.ResetPasswordScreen
 import net.libreguard.vpn.ui.theme.ThemePreferences
 import net.libreguard.vpn.ui.theme.ThemeMode
 import net.libreguard.vpn.ui.theme.LibreGuardVPNTheme
@@ -68,9 +70,12 @@ import androidx.core.content.ContextCompat
 class MainActivity : ComponentActivity() {
 
     private val TAG = "MainActivity"
+    var pendingDeepLinkUri by mutableStateOf<Uri?>(null)
+        private set
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        pendingDeepLinkUri = intent?.data
         enableEdgeToEdge()
         setContent {
             val context = LocalContext.current
@@ -100,6 +105,17 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        pendingDeepLinkUri = intent.data
+    }
+
+    fun consumePendingDeepLinkUri() {
+        pendingDeepLinkUri = null
+        intent?.data = null
+    }
 }
 
 @Composable
@@ -115,6 +131,9 @@ fun AppNavigation(
     var authToken by remember { mutableStateOf<String?>(null) }
     var isCheckingToken by remember { mutableStateOf(true) }
     var pendingEmail by remember { mutableStateOf<String?>(null) }
+    var loginPrefilledEmail by rememberSaveable { mutableStateOf<String?>(null) }
+    var resetEmail by rememberSaveable { mutableStateOf<String?>(null) }
+    var resetToken by rememberSaveable { mutableStateOf<String?>(null) }
 
     // Forced logout reason shown on login screen (e.g., device limit exceeded)
     var forcedLogoutReasonJson by remember { mutableStateOf<String?>(null) }
@@ -334,38 +353,30 @@ fun AppNavigation(
         }
     }
 
-    // Handle deep links that bring the app to foreground after email confirmation
-    LaunchedEffect(Unit) {
-        val mainActivity = context as? MainActivity
-        val data: Uri? = mainActivity?.intent?.data
-        data?.let { uri ->
-            // We expect libreguardvpn://email/confirmed?userId=...&token=...
-            // The token here is a CONFIRMATION token, NOT an auth token
-            // We must go through proper login to get an auth token with device_id claim
-            if (uri.scheme == "libreguardvpn" && uri.host == "email" && uri.path == "/confirmed") {
+    // Handle auth-related deep links on cold start and when MainActivity receives new intents.
+    val mainActivity = context as? MainActivity
+    val pendingDeepLinkUri = mainActivity?.pendingDeepLinkUri
+    LaunchedEffect(pendingDeepLinkUri?.toString()) {
+        val uri = pendingDeepLinkUri ?: return@LaunchedEffect
+
+        when {
+            uri.scheme == "libreguardvpn" && uri.host == "email" && uri.path == "/confirmed" -> {
                 val uid = uri.getQueryParameter("userId")
                 val confirmToken = uri.getQueryParameter("token")
                 android.util.Log.d("MainActivity", "Email confirmed deep link received")
 
-                // IMPORTANT: Do NOT use the token directly - it's a confirmation token, not an auth token
-                // The auth token needs to be obtained via /api/login with DeviceId to get device_id claim
                 if (!uid.isNullOrBlank()) {
-                    // Store the confirmation token if provided, so ConfirmEmailScreen can use it
                     if (!confirmToken.isNullOrBlank()) {
                         regToken = confirmToken
                     }
                     regUserId = uid
 
-                    // Verify we have email and password for auto-login
                     if (regEmail.isNullOrBlank() || regPassword.isNullOrBlank()) {
                         android.util.Log.e("MainActivity", "Missing credentials for auto-login")
                     } else {
                         android.util.Log.d("MainActivity", "Credentials available for auto-login")
                     }
 
-                    // CRITICAL FIX: Only navigate to confirmEmail if not already there
-                    // If already on confirmEmail, the state update above will trigger auto-login
-                    // This prevents duplicate confirmEmail entries in back stack
                     val currentRoute = navController.currentBackStackEntry?.destination?.route
                     if (currentRoute != "confirmEmail") {
                         android.util.Log.d("MainActivity", "Deep link: Navigating to confirmEmail")
@@ -375,14 +386,24 @@ fun AppNavigation(
                         }
                     } else {
                         android.util.Log.d("MainActivity", "Deep link: Already on confirmEmail")
-                        // State is already updated above, ConfirmEmailScreen will handle auto-login
                     }
+                }
+            }
 
-                    // Clear the intent data to prevent re-processing if activity is recreated
-                    mainActivity?.intent?.data = null
+            uri.scheme == "libreguardvpn" && uri.host == "account" && uri.path == "/reset-password" -> {
+                resetToken = uri.getQueryParameter("code")
+                resetEmail = uri.getQueryParameter("email")
+                if (!resetEmail.isNullOrBlank()) {
+                    loginPrefilledEmail = resetEmail
+                }
+                android.util.Log.d("MainActivity", "Password reset deep link received")
+                navController.navigate("resetPassword") {
+                    launchSingleTop = true
                 }
             }
         }
+
+        mainActivity?.consumePendingDeepLinkUri()
     }
 
     // Check for persisted auth token on startup
@@ -583,6 +604,7 @@ fun AppNavigation(
                 // Not authenticated - show login screen
                 LoginScreen(
                     forcedLogoutReasonJson = forcedLogoutReasonJson,
+                    prefilledEmail = loginPrefilledEmail,
                     onDismissForcedLogoutReason = { forcedLogoutReasonJson = null },
                     onNavigateToUpgrade = {
                         navController.navigate("upgrade")
@@ -592,6 +614,9 @@ fun AppNavigation(
                     },
                     onLoginSuccess = { token ->
                         authToken = token
+                        loginPrefilledEmail = null
+                        resetEmail = null
+                        resetToken = null
                         // Clear registration state on successful login
                         regUserId = null
                         regEmail = null
@@ -608,6 +633,11 @@ fun AppNavigation(
                         pendingEmail = email
                         navController.navigate("twoFactor")
                     },
+                    onNavigateToForgotPassword = {
+                        navController.navigate("forgotPassword") {
+                            launchSingleTop = true
+                        }
+                    },
                     onNavigateToRegister = {
                         navController.navigate("register")
                     },
@@ -617,6 +647,39 @@ fun AppNavigation(
                     }
                 )
             }
+        }
+
+        composable("forgotPassword") {
+            ForgotPasswordScreen(
+                initialEmail = loginPrefilledEmail.orEmpty(),
+                onBackToLogin = {
+                    navController.popBackStack()
+                }
+            )
+        }
+
+        composable("resetPassword") {
+            ResetPasswordScreen(
+                initialEmail = resetEmail,
+                initialToken = resetToken,
+                onBackToLogin = {
+                    resetEmail = null
+                    resetToken = null
+                    navController.navigate("login") {
+                        popUpTo(0) { inclusive = true }
+                        launchSingleTop = true
+                    }
+                },
+                onResetSuccess = { email ->
+                    loginPrefilledEmail = email
+                    resetEmail = null
+                    resetToken = null
+                    navController.navigate("login") {
+                        popUpTo(0) { inclusive = true }
+                        launchSingleTop = true
+                    }
+                }
+            )
         }
 
         composable("register") {

@@ -16,10 +16,10 @@ class AuthInterceptor(
         val originalRequest = chain.request()
         val url = originalRequest.url.encodedPath
 
-        // Skip authentication for pre-auth endpoints (OAuth and password-based)
-        // These endpoints authenticate via the request body, not JWT tokens
-        if (url.contains("/pre-auth/")) {
-            Log.d(TAG, "Skipping Authorization header for pre-auth endpoint: $url")
+        // Skip JWT handling for public auth/account endpoints.
+        // These routes are intentionally callable before login.
+        if (isPublicAuthEndpoint(url)) {
+            Log.d(TAG, "Skipping Authorization header for public endpoint: $url")
             return chain.proceed(originalRequest)
         }
 

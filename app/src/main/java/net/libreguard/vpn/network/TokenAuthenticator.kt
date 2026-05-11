@@ -37,10 +37,9 @@ class TokenAuthenticator(
     override fun authenticate(route: Route?, response: Response): Request? {
         val url = response.request.url.encodedPath
 
-        // Skip authentication for pre-auth endpoints
-        // These endpoints don't use JWT tokens, so token refresh doesn't apply
-        if (url.contains("/pre-auth/")) {
-            android.util.Log.d(TAG, "Skipping token refresh for pre-auth endpoint")
+        // Public auth/account endpoints are intentionally reachable without a JWT.
+        if (isPublicAuthEndpoint(url)) {
+            android.util.Log.d(TAG, "Skipping token refresh for public endpoint: $url")
             return null
         }
 

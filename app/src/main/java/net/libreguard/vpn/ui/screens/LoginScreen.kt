@@ -67,11 +67,13 @@ import kotlin.reflect.KClass
 @Composable
 fun LoginScreen(
     forcedLogoutReasonJson: String? = null,
+    prefilledEmail: String? = null,
     onDismissForcedLogoutReason: () -> Unit = {},
     onNavigateToUpgrade: () -> Unit = {},
     onNavigateToDeviceManagement: () -> Unit = {},
     onLoginSuccess: (String) -> Unit,
     onRequires2FA: (String) -> Unit,
+    onNavigateToForgotPassword: () -> Unit = {},
     onNavigateToRegister: () -> Unit,
     onNavigateToEmailVerification: (email: String, userId: String?) -> Unit
 ) {
@@ -102,6 +104,12 @@ fun LoginScreen(
             } catch (_: Exception) {
                 null
             }
+        }
+    }
+
+    LaunchedEffect(prefilledEmail) {
+        if (email.isBlank() && !prefilledEmail.isNullOrBlank()) {
+            email = prefilledEmail
         }
     }
 
@@ -728,7 +736,7 @@ fun LoginScreen(
                     text = "Forgot password?",
                     style = MaterialTheme.typography.bodySmall,
                     color = Primary,
-                    modifier = Modifier.clickable { /* TODO: Navigate to forgot password */ }
+                    modifier = Modifier.clickable { onNavigateToForgotPassword() }
                 )
             }
 

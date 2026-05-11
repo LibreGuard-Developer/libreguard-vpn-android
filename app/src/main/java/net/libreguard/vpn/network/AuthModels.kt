@@ -181,6 +181,32 @@ data class MessageResponse(
     val message: String
 )
 
+data class ForgotPasswordRequest(
+    @SerializedName("email")
+    val email: String
+)
+
+data class ForgotPasswordResponse(
+    @SerializedName("message")
+    val message: String
+)
+
+data class ResetPasswordRequest(
+    @SerializedName("email")
+    val email: String,
+    @SerializedName("token")
+    val token: String,
+    @SerializedName("newPassword")
+    val newPassword: String
+)
+
+data class ResetPasswordResponse(
+    @SerializedName("message")
+    val message: String,
+    @SerializedName("errors")
+    val errors: List<String>? = null
+)
+
 // Recovery Codes Response
 data class RecoveryCodesResponse(
     val recoveryCodes: List<String>,

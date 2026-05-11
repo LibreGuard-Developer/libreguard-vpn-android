@@ -228,6 +228,12 @@ interface ApiService {
     @POST("api/register")
     suspend fun register(@Body request: RegisterRequest): Response<RegisterResponse>
 
+    @POST("api/account/forgot-password")
+    suspend fun forgotPassword(@Body request: ForgotPasswordRequest): Response<ForgotPasswordResponse>
+
+    @POST("api/account/reset-password")
+    suspend fun resetPassword(@Body request: ResetPasswordRequest): Response<ResetPasswordResponse>
+
     @POST("api/register/confirm-email")
     suspend fun confirmEmail(@Body request: ConfirmEmailRequest): Response<ConfirmEmailResponse>
 
