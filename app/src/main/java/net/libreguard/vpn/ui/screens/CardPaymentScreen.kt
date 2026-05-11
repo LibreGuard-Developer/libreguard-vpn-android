@@ -7,8 +7,6 @@ import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -17,6 +15,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import net.libreguard.vpn.ui.components.LogoWithGradient
+import net.libreguard.vpn.ui.components.ScreenHeader
 import net.libreguard.vpn.ui.theme.*
 
 private const val TAG = "CardPaymentScreen"
@@ -54,51 +53,20 @@ fun CardPaymentScreen(
         Column(
             modifier = Modifier.fillMaxSize()
         ) {
-            // Header
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(24.dp)
-            ) {
-                IconButton(
-                    onClick = onClose,
-                    modifier = Modifier.size(40.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.ArrowBack,
-                        contentDescription = "Back",
-                        tint = MutedForeground
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    LogoWithGradient(size = 40.dp)
-                    Text(
-                        text = "Card Payment",
-                        style = MaterialTheme.typography.headlineMedium,
-                        color = Foreground
-                    )
-                }
-
-                Text(
-                    text = "Complete your Pro subscription payment",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MutedForeground,
-                    modifier = Modifier.padding(top = 4.dp)
-                )
-            }
+            ScreenHeader(
+                title = "Card Payment",
+                subtitle = "Complete your Pro subscription payment",
+                onBack = onClose,
+                backLabel = "Back",
+                leading = { LogoWithGradient(size = 40.dp) }
+            )
 
             // Content
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(horizontal = 24.dp)
-                    .padding(bottom = 24.dp),
+                    .padding(horizontal = LibreGuardDimens.screenHorizontalPadding)
+                    .padding(bottom = LibreGuardDimens.screenBottomPadding),
                 contentAlignment = Alignment.Center
             ) {
                 when {

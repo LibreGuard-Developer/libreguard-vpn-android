@@ -7,5 +7,14 @@
         <item name="android:navigationBarColor">#FFFFFFFF</item>
         <item name="android:windowLightStatusBar">true</item>
         <item name="android:windowLightNavigationBar">true</item>
+        <item name="textAppearanceHeadlineMedium">@style/TextAppearance.LibreGuard.Header</item>
+        <item name="textAppearanceTitleMedium">@style/TextAppearance.LibreGuard.Subheading</item>
+        <item name="textAppearanceTitleSmall">@style/TextAppearance.LibreGuard.Title</item>
+        <item name="textAppearanceBodyLarge">@style/TextAppearance.LibreGuard.Body</item>
+        <item name="textAppearanceBodyMedium">@style/TextAppearance.LibreGuard.Body</item>
+        <item name="textAppearanceBodySmall">@style/TextAppearance.LibreGuard.Secondary</item>
+        <item name="textAppearanceLabelLarge">@style/TextAppearance.LibreGuard.Button</item>
+        <item name="textAppearanceLabelMedium">@style/TextAppearance.LibreGuard.Label</item>
+        <item name="textAppearanceLabelSmall">@style/TextAppearance.LibreGuard.Caption</item>
     </style>
 </resources>

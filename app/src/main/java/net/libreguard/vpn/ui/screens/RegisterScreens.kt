@@ -33,6 +33,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import net.libreguard.vpn.R
 import net.libreguard.vpn.network.*
+import net.libreguard.vpn.ui.components.CenteredScreenHeader
 import net.libreguard.vpn.ui.components.LogoWithGradient
 import net.libreguard.vpn.ui.theme.*
 import net.libreguard.vpn.util.DeviceIdManager
@@ -85,7 +86,7 @@ fun RegisterScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(scrollState)
-                .padding(24.dp),
+                .padding(LibreGuardDimens.screenHorizontalPadding),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Spacer(modifier = Modifier.height(24.dp))
@@ -111,18 +112,9 @@ fun RegisterScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            Text(
-                text = "Create Account",
-                style = MaterialTheme.typography.headlineMedium,
-                color = Foreground
-            )
-
-            Spacer(modifier = Modifier.height(4.dp))
-
-            Text(
-                text = "Join LibreGuard for secure browsing",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MutedForeground
+            CenteredScreenHeader(
+                title = "Create Account",
+                subtitle = "Join LibreGuard for secure browsing"
             )
 
             Spacer(modifier = Modifier.height(32.dp))
@@ -600,7 +592,7 @@ fun ConfirmEmailScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(24.dp),
+                .padding(LibreGuardDimens.screenHorizontalPadding),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
@@ -636,18 +628,9 @@ fun ConfirmEmailScreen(
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            Text(
-                text = "Check Your Email",
-                style = MaterialTheme.typography.headlineMedium,
-                color = Foreground
-            )
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Text(
-                text = "We've sent a confirmation link to",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MutedForeground
+            CenteredScreenHeader(
+                title = "Check Your Email",
+                subtitle = "We've sent a confirmation link to"
             )
 
             Spacer(modifier = Modifier.height(4.dp))

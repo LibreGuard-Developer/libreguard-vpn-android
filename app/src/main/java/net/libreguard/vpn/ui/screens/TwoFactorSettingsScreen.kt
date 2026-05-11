@@ -19,7 +19,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
@@ -34,6 +33,7 @@ import com.google.zxing.qrcode.QRCodeWriter
 import kotlinx.coroutines.launch
 import net.libreguard.vpn.network.*
 import net.libreguard.vpn.ui.components.CodeInputField
+import net.libreguard.vpn.ui.components.ScreenHeader
 import net.libreguard.vpn.ui.theme.*
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -106,100 +106,84 @@ fun TwoFactorSettingsScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(scrollState)
-                .padding(24.dp)
+                .padding(bottom = LibreGuardDimens.screenBottomPadding)
         ) {
-            // Back Button
-            IconButton(
-                onClick = onNavigateBack,
-                modifier = Modifier.size(40.dp)
+            ScreenHeader(
+                title = "Two-Factor Authentication",
+                subtitle = "Add an extra layer of security to your account",
+                onBack = onNavigateBack,
+                backLabel = "Back"
+            )
+
+            Column(
+                modifier = Modifier.padding(horizontal = LibreGuardDimens.screenHorizontalPadding)
             ) {
-                Icon(
-                    imageVector = Icons.Default.ArrowBack,
-                    contentDescription = "Back",
-                    tint = MutedForeground
-                )
-            }
+                Spacer(modifier = Modifier.height(8.dp))
 
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Header
-            Text(
-                text = "Two-Factor Authentication",
-                style = MaterialTheme.typography.headlineMedium,
-                color = Foreground
-            )
-            Text(
-                text = "Add an extra layer of security to your account",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MutedForeground
-            )
-
-            Spacer(modifier = Modifier.height(24.dp))
-
-            if (isLoading) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(200.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    CircularProgressIndicator(color = Primary)
-                }
-            } else {
-                // Status Card
-                Surface(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
-                    color = if (is2faEnabled) Primary.copy(alpha = 0.1f) else CardBackground,
-                    border = ButtonDefaults.outlinedButtonBorder(enabled = true).copy(
-                        brush = androidx.compose.ui.graphics.SolidColor(if (is2faEnabled) Primary else Border)
-                    )
-                ) {
-                    Row(
+                if (isLoading) {
+                    Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(20.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                            .height(200.dp),
+                        contentAlignment = Alignment.Center
                     ) {
-                        Box(
+                        CircularProgressIndicator(color = Primary)
+                    }
+                } else {
+                    // Status Card
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (is2faEnabled) Primary.copy(alpha = 0.1f) else CardBackground,
+                        border = ButtonDefaults.outlinedButtonBorder(enabled = true).copy(
+                            brush = androidx.compose.ui.graphics.SolidColor(if (is2faEnabled) Primary else Border)
+                        )
+                    ) {
+                        Row(
                             modifier = Modifier
-                                .size(48.dp)
-                                .background(
-                                    if (is2faEnabled) Primary else Secondary,
-                                    RoundedCornerShape(12.dp)
-                                ),
-                            contentAlignment = Alignment.Center
+                                .fillMaxWidth()
+                                .padding(20.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(
-                                imageVector = if (is2faEnabled) Icons.Default.Lock else Icons.Default.LockOpen,
-                                contentDescription = null,
-                                tint = if (is2faEnabled) PrimaryForeground else MutedForeground,
-                                modifier = Modifier.size(24.dp)
-                            )
-                        }
-                        Spacer(modifier = Modifier.width(16.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = if (is2faEnabled) "2FA Enabled" else "2FA Disabled",
-                                style = MaterialTheme.typography.titleMedium,
-                                color = if (is2faEnabled) Primary else Foreground
-                            )
-                            if (is2faEnabled) {
-                                Text(
-                                    text = "$recoveryCodesLeft recovery codes remaining",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = if (recoveryCodesLeft < 3) Destructive else MutedForeground
+                            Box(
+                                modifier = Modifier
+                                    .size(48.dp)
+                                    .background(
+                                        if (is2faEnabled) Primary else Secondary,
+                                        RoundedCornerShape(12.dp)
+                                    ),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = if (is2faEnabled) Icons.Default.Lock else Icons.Default.LockOpen,
+                                    contentDescription = null,
+                                    tint = if (is2faEnabled) PrimaryForeground else MutedForeground,
+                                    modifier = Modifier.size(24.dp)
                                 )
-                            } else {
+                            }
+                            Spacer(modifier = Modifier.width(16.dp))
+                            Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = "Your account is less secure",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MutedForeground
+                                    text = if (is2faEnabled) "2FA Enabled" else "2FA Disabled",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = if (is2faEnabled) Primary else Foreground
                                 )
+                                if (is2faEnabled) {
+                                    Text(
+                                        text = "$recoveryCodesLeft recovery codes remaining",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = if (recoveryCodesLeft < 3) Destructive else MutedForeground
+                                    )
+                                } else {
+                                    Text(
+                                        text = "Your account is less secure",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MutedForeground
+                                    )
+                                }
                             }
                         }
                     }
-                }
 
                 // Warning for low recovery codes
                 if (is2faEnabled && recoveryCodesLeft < 3) {
@@ -453,6 +437,7 @@ fun TwoFactorSettingsScreen(
 
                 Spacer(modifier = Modifier.height(32.dp))
             }
+        }
         }
 
         // Setup Dialog

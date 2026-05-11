@@ -79,11 +79,15 @@ fun MainContainerScreen(
                             authToken = authToken,
                             vpnViewModel = viewModel,
                             onServerSelected = { currentTab = MainTab.DASHBOARD },
+                            onNavigateBack = { currentTab = MainTab.DASHBOARD },
                             onNavigateToUpgrade = onNavigateToUpgrade
                         )
                     }
                     MainTab.STATISTICS -> {
-                        StatisticsScreen(viewModel = viewModel)
+                        StatisticsScreen(
+                            viewModel = viewModel,
+                            onNavigateBack = { currentTab = MainTab.DASHBOARD }
+                        )
                     }
                     MainTab.SETTINGS -> {
                         SettingsScreen(

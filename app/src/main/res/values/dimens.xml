@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <dimen name="text_size_header">28sp</dimen>
+    <dimen name="text_size_subheading">18sp</dimen>
+    <dimen name="text_size_title">16sp</dimen>
+    <dimen name="text_size_body">15sp</dimen>
+    <dimen name="text_size_body_secondary">13sp</dimen>
+    <dimen name="text_size_label">13sp</dimen>
+    <dimen name="text_size_caption">11sp</dimen>
+    <dimen name="text_size_button">14sp</dimen>
+
+    <dimen name="space_screen_horizontal">24dp</dimen>
+    <dimen name="space_screen_top">20dp</dimen>
+    <dimen name="space_screen_bottom">24dp</dimen>
+    <dimen name="space_header_bottom">24dp</dimen>
+    <dimen name="space_header_content">12dp</dimen>
+    <dimen name="space_header_subtitle">4dp</dimen>
+    <dimen name="space_section">24dp</dimen>
+    <dimen name="space_content">16dp</dimen>
+    <dimen name="space_compact">8dp</dimen>
+    <dimen name="space_badge_horizontal">6dp</dimen>
+    <dimen name="space_badge_vertical">2dp</dimen>
+</resources>
+

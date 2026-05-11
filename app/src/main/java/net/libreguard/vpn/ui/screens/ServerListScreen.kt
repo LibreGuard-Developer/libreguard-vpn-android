@@ -15,13 +15,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import net.libreguard.vpn.network.RemoteVpnServer
+import net.libreguard.vpn.ui.components.ProBadge
+import net.libreguard.vpn.ui.components.ScreenHeader
 import net.libreguard.vpn.ui.theme.*
 import net.libreguard.vpn.viewmodel.VpnProtocol
 import net.libreguard.vpn.viewmodel.VpnViewModel
@@ -36,6 +38,7 @@ fun ServerListScreen(
     authToken: String,
     vpnViewModel: VpnViewModel? = null,
     onServerSelected: () -> Unit = {},
+    onNavigateBack: () -> Unit = {},
     onNavigateToUpgrade: (() -> Unit)? = null
 ) {
     val viewModel: VpnViewModel = vpnViewModel ?: viewModel()
@@ -85,93 +88,62 @@ fun ServerListScreen(
             .background(Background)
     ) {
         // Header with title and protocol selector
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                // Greatly reduce top/bottom padding to bring the title closer to the top.
-                .padding(horizontal = 24.dp, vertical = 4.dp)
-        ) {
-            Text(
-                text = "Server Locations",
-                style = MaterialTheme.typography.headlineSmall,
-                color = Foreground
+        Column {
+            ScreenHeader(
+                title = "Server Locations",
+                subtitle = "Connection Protocol",
+                onBack = onNavigateBack,
+                backLabel = "Back"
             )
 
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Connection Protocol Toggle
-            Column {
-                Text(
-                    text = "Connection Protocol",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MutedForeground
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                Row(
+            Column(
+                modifier = Modifier.padding(horizontal = LibreGuardDimens.screenHorizontalPadding)
+            ) {
+//                Text(
+//                    text = "Connection Protocol",
+//                    style = MaterialTheme.typography.labelMedium,
+//                    color = MutedForeground
+//                )
+                Surface(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    shape = RoundedCornerShape(12.dp),
+                    color = CardBackground,
+                    border = ButtonDefaults.outlinedButtonBorder(enabled = true)
                 ) {
-                    // IKEv2/IPSec Button
-                    Surface(
+                    Row(
                         modifier = Modifier
-                            .weight(1f)
-                            .height(44.dp),
-                        shape = RoundedCornerShape(12.dp),
-                        color = if (selectedProtocol == VpnProtocol.IKEV2_IPSEC) Primary else CardBackground,
-                        border = if (selectedProtocol != VpnProtocol.IKEV2_IPSEC)
-                            ButtonDefaults.outlinedButtonBorder(enabled = true) else null,
-                        onClick = { viewModel.saveDefaultProtocol(VpnProtocol.IKEV2_IPSEC) }
+                            .fillMaxWidth()
+                            .padding(4.dp)
                     ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Text(
-                                text = "IKEv2/IPSec",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = if (selectedProtocol == VpnProtocol.IKEV2_IPSEC) PrimaryForeground else Foreground
-                            )
-                        }
-                    }
+                        // IKEv2/IPSec Button
+                        ProtocolToggleButton(
+                            text = "IKEv2/IPSec",
+                            selected = selectedProtocol == VpnProtocol.IKEV2_IPSEC,
+                            onClick = { viewModel.saveDefaultProtocol(VpnProtocol.IKEV2_IPSEC) },
+                            modifier = Modifier.weight(1f)
+                        )
 
-                    // OpenVPN Button with PRO badge
-                    Box(modifier = Modifier.weight(1f)) {
-                        Surface(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(44.dp),
-                            shape = RoundedCornerShape(12.dp),
-                            color = if (selectedProtocol == VpnProtocol.OPENVPN) Primary else CardBackground,
-                            border = if (selectedProtocol != VpnProtocol.OPENVPN)
-                                ButtonDefaults.outlinedButtonBorder(enabled = true) else null,
-                            onClick = {
-                                if (!isPro) {
-                                    viewModel.rememberPendingUpgradeProtocolSelection(VpnProtocol.OPENVPN)
-                                    onNavigateToUpgrade?.invoke()
-                                } else {
-                                    viewModel.saveDefaultProtocol(VpnProtocol.OPENVPN)
-                                }
-                            }
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Text(
-                                    text = "OpenVPN",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = if (selectedProtocol == VpnProtocol.OPENVPN) PrimaryForeground else Foreground
-                                )
-                            }
-                        }
-                        // PRO badge
-                        if (!isPro) {
-                            Surface(
-                                modifier = Modifier
-                                    .align(Alignment.TopEnd)
-                                    .offset(x = 4.dp, y = (-4).dp),
-                                shape = RoundedCornerShape(8.dp),
-                                color = Primary
-                            ) {
-                                Text(
-                                    text = "PRO",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = PrimaryForeground,
-                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        // OpenVPN Button with PRO badge
+                        Box(modifier = Modifier.weight(1f)) {
+                            ProtocolToggleButton(
+                                text = "OpenVPN",
+                                selected = selectedProtocol == VpnProtocol.OPENVPN,
+                                onClick = {
+                                    if (!isPro) {
+                                        viewModel.rememberPendingUpgradeProtocolSelection(VpnProtocol.OPENVPN)
+                                        onNavigateToUpgrade?.invoke()
+                                    } else {
+                                        viewModel.saveDefaultProtocol(VpnProtocol.OPENVPN)
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            // PRO badge
+                            if (!isPro) {
+                                ProBadge(
+                                    modifier = Modifier
+                                        .align(Alignment.TopEnd)
+                                        .offset(x = 4.dp, y = (-4).dp)
                                 )
                             }
                         }
@@ -181,10 +153,11 @@ fun ServerListScreen(
         }
 
         // Search Bar with Refresh Button
+        Spacer(modifier = Modifier.height(12.dp))
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 24.dp),
+                .padding(horizontal = LibreGuardDimens.screenHorizontalPadding),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -251,20 +224,18 @@ fun ServerListScreen(
                 }
             ) {
                 Box(contentAlignment = Alignment.Center) {
-                    val rotation by rememberInfiniteTransition(label = "refresh").animateFloat(
-                        initialValue = 0f,
+                    val rotation by animateFloatAsState(
                         targetValue = if (isRefreshing) 360f else 0f,
-                        animationSpec = infiniteRepeatable(
-                            animation = tween(1000, easing = LinearEasing),
-                            repeatMode = RepeatMode.Restart
-                        ),
+                        animationSpec = tween(1000, easing = LinearEasing),
                         label = "rotation"
                     )
                     Icon(
                         imageVector = Icons.Default.Refresh,
                         contentDescription = "Refresh servers",
                         tint = PrimaryForeground,
-                        modifier = Modifier.size(24.dp)
+                        modifier = Modifier
+                            .size(24.dp)
+                            .graphicsLayer(rotationZ = rotation)
                     )
                 }
             }
@@ -287,7 +258,7 @@ fun ServerListScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
-                    .padding(horizontal = 24.dp),
+                    .padding(horizontal = LibreGuardDimens.screenHorizontalPadding),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 // Favorites Section
@@ -403,6 +374,27 @@ fun ServerListScreen(
 }
 
 @Composable
+private fun ProtocolToggleButton(
+    text: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Button(
+        onClick = onClick,
+        modifier = modifier,
+        shape = RoundedCornerShape(8.dp),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = if (selected) Primary else Color.Transparent,
+            contentColor = if (selected) PrimaryForeground else MutedForeground
+        ),
+        elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp)
+    ) {
+        Text(text = text, style = MaterialTheme.typography.labelMedium)
+    }
+}
+
+@Composable
 private fun ServerCard(
     server: RemoteVpnServer,
     latency: Int?,
@@ -442,17 +434,7 @@ private fun ServerCard(
                     ) {
                         // PRO label above flag
                         if (isPremiumServer) {
-                            Surface(
-                                shape = RoundedCornerShape(4.dp),
-                                color = Primary
-                            ) {
-                                Text(
-                                    text = "PRO",
-                                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
-                                    color = Color.White,
-                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
-                                )
-                            }
+                            ProBadge()
                             Spacer(modifier = Modifier.height(2.dp))
                         }
                         // Flag emoji
@@ -592,7 +574,7 @@ private fun getPingColor(ping: Int): Color {
 }
 
 @Composable
-private fun getLoadColor(load: Int): androidx.compose.ui.graphics.Color {
+private fun getLoadColor(load: Int): Color {
     return when {
         load < 40 -> StatusConnected
         load < 70 -> StatusConnecting

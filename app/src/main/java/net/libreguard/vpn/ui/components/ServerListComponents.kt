@@ -63,6 +63,34 @@ private fun getLoadColor(load: Int): Color {
 }
 
 /**
+ * Shared segmented-control button styling used by Statistics and Server List.
+ */
+@Composable
+fun LibreGuardSegmentedButton(
+    text: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true
+) {
+    Button(
+        onClick = onClick,
+        modifier = modifier,
+        shape = RoundedCornerShape(8.dp),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = if (selected) Primary else Color.Transparent,
+            contentColor = if (selected) PrimaryForeground else MutedForeground,
+            disabledContainerColor = Color.Transparent,
+            disabledContentColor = MutedForeground.copy(alpha = 0.5f)
+        ),
+        elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp),
+        enabled = enabled
+    ) {
+        Text(text = text, style = MaterialTheme.typography.labelMedium)
+    }
+}
+
+/**
  * Server list item component matching the new design
  */
 @Composable

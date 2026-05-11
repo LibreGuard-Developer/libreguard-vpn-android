@@ -18,6 +18,7 @@ import kotlinx.coroutines.launch
 import net.libreguard.vpn.network.RetrofitClient
 import net.libreguard.vpn.network.Verify2faRequest
 import net.libreguard.vpn.network.VerifyRecoveryRequest
+import net.libreguard.vpn.ui.components.CenteredScreenHeader
 import net.libreguard.vpn.ui.components.LogoWithGradient
 import net.libreguard.vpn.ui.theme.*
 import net.libreguard.vpn.util.DeviceKeyManager
@@ -46,7 +47,7 @@ fun TwoFactorVerificationScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(24.dp),
+                .padding(LibreGuardDimens.screenHorizontalPadding),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
@@ -72,24 +73,13 @@ fun TwoFactorVerificationScreen(
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            // Title
-            Text(
-                text = if (showRecoveryCodeInput) "Recovery Code" else "Two-Factor Authentication",
-                style = MaterialTheme.typography.headlineMedium,
-                color = Foreground
-            )
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // Subtitle
-            Text(
-                text = if (showRecoveryCodeInput)
+            CenteredScreenHeader(
+                title = if (showRecoveryCodeInput) "Recovery Code" else "Two-Factor Authentication",
+                subtitle = if (showRecoveryCodeInput) {
                     "Enter one of your saved recovery codes"
-                else
-                    "Enter the 6-digit code from your authenticator app",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MutedForeground,
-                textAlign = TextAlign.Center
+                } else {
+                    "Enter the 6-digit code from your authenticator app"
+                }
             )
 
             Spacer(modifier = Modifier.height(32.dp))

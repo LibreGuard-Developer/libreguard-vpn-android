@@ -53,6 +53,7 @@ import org.json.JSONObject
 import net.libreguard.vpn.network.*
 import net.libreguard.vpn.util.DeviceIdManager
 import net.libreguard.vpn.ui.theme.*
+import net.libreguard.vpn.ui.components.CenteredScreenHeader
 import net.libreguard.vpn.ui.components.LogoWithGradient
 import kotlinx.coroutines.launch
 import net.libreguard.vpn.R
@@ -621,7 +622,7 @@ fun LoginScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(scrollState)
-                .padding(24.dp),
+                .padding(LibreGuardDimens.screenHorizontalPadding),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
@@ -632,19 +633,9 @@ fun LoginScreen(
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            // Header
-            Text(
-                text = "Welcome Back",
-                style = MaterialTheme.typography.headlineMedium,
-                color = Foreground
-            )
-
-            Spacer(modifier = Modifier.height(4.dp))
-
-            Text(
-                text = "Sign in to your LibreGuard account",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MutedForeground
+            CenteredScreenHeader(
+                title = "Welcome Back",
+                subtitle = "Sign in to your LibreGuard account"
             )
 
 

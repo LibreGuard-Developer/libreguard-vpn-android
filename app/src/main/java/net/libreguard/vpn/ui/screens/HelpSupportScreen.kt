@@ -21,6 +21,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import net.libreguard.vpn.ui.components.ScreenHeader
 import net.libreguard.vpn.ui.theme.*
 
 /**
@@ -46,59 +47,24 @@ fun HelpSupportScreen(
             .fillMaxSize()
             .background(Background)
     ) {
-        // Header
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            color = Background,
-            shadowElevation = 2.dp
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 24.dp, vertical = 16.dp)
-            ) {
-                Row(
-                    modifier = Modifier
-                        .clickable { onBack() }
-                        .padding(vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.ArrowBack,
-                        contentDescription = "Back",
-                        tint = MutedForeground,
-                        modifier = Modifier.size(20.dp)
-                    )
-                    Text(
-                        text = "Back to Settings",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MutedForeground
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                Text(
-                    text = "Help & Support",
-                    style = MaterialTheme.typography.headlineMedium,
-                    color = Foreground
-                )
-                Text(
-                    text = "Get assistance with LibreGuard VPN",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MutedForeground
-                )
-            }
-        }
+        ScreenHeader(
+            title = "Help & Support",
+            subtitle = "Get assistance with LibreGuard VPN",
+            onBack = onBack,
+            backLabel = "Back to Settings"
+        )
 
         // Content
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(scrollState)
-                .padding(horizontal = 24.dp, vertical = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(24.dp)
+                .padding(
+                    start = LibreGuardDimens.screenHorizontalPadding,
+                    end = LibreGuardDimens.screenHorizontalPadding,
+                    bottom = LibreGuardDimens.screenBottomPadding
+                ),
+            verticalArrangement = Arrangement.spacedBy(LibreGuardDimens.sectionSpacing)
         ) {
             // Email Support Card
             Surface(

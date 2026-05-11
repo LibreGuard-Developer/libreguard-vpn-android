@@ -3,6 +3,44 @@
     <!-- Base application theme - minimal styling for app shell -->
     <!-- Actual VPN UI is provided by strongswan submodule -->
 
+    <style name="TextAppearance.LibreGuard.Header" parent="TextAppearance.Material3.HeadlineMedium">
+        <item name="android:textSize">@dimen/text_size_header</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+
+    <style name="TextAppearance.LibreGuard.Subheading" parent="TextAppearance.Material3.TitleMedium">
+        <item name="android:textSize">@dimen/text_size_subheading</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+
+    <style name="TextAppearance.LibreGuard.Title" parent="TextAppearance.Material3.TitleSmall">
+        <item name="android:textSize">@dimen/text_size_title</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+
+    <style name="TextAppearance.LibreGuard.Body" parent="TextAppearance.Material3.BodyMedium">
+        <item name="android:textSize">@dimen/text_size_body</item>
+    </style>
+
+    <style name="TextAppearance.LibreGuard.Secondary" parent="TextAppearance.Material3.BodySmall">
+        <item name="android:textSize">@dimen/text_size_body_secondary</item>
+    </style>
+
+    <style name="TextAppearance.LibreGuard.Label" parent="TextAppearance.Material3.LabelMedium">
+        <item name="android:textSize">@dimen/text_size_label</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+
+    <style name="TextAppearance.LibreGuard.Caption" parent="TextAppearance.Material3.LabelSmall">
+        <item name="android:textSize">@dimen/text_size_caption</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+
+    <style name="TextAppearance.LibreGuard.Button" parent="TextAppearance.Material3.LabelLarge">
+        <item name="android:textSize">@dimen/text_size_button</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+
     <style name="AppTheme" parent="Theme.AppCompat.Light.NoActionBar">
         <item name="colorPrimary">@color/primary</item>
         <item name="colorPrimaryDark">@color/primary_dark</item>

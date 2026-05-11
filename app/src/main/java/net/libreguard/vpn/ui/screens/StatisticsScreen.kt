@@ -25,12 +25,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.dp
-import net.libreguard.vpn.data.ConnectionHistoryManager
 import net.libreguard.vpn.data.DailyUsage
 import net.libreguard.vpn.data.formatDataAmount
+import net.libreguard.vpn.ui.components.ScreenHeader
 import net.libreguard.vpn.ui.theme.*
 import net.libreguard.vpn.viewmodel.VpnViewModel
-import java.util.Locale
 import kotlinx.coroutines.delay
 
 /**
@@ -40,7 +39,10 @@ import kotlinx.coroutines.delay
  * Now uses ViewModel's user-scoped ConnectionHistoryManager for proper per-user stats
  */
 @Composable
-fun StatisticsScreen(viewModel: VpnViewModel) {
+fun StatisticsScreen(
+    viewModel: VpnViewModel,
+    onNavigateBack: () -> Unit = {}
+) {
     // CRITICAL: Use ViewModel's ConnectionHistoryManager for per-user data isolation
     val historyManager = remember { viewModel.getHistoryManager() }
 
@@ -104,28 +106,17 @@ fun StatisticsScreen(viewModel: VpnViewModel) {
             .fillMaxSize()
             .background(Background)
     ) {
-        // Header
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp)
-        ) {
-            Text(
-                text = "Statistics",
-                style = MaterialTheme.typography.headlineSmall,
-                color = Foreground
-            )
-            Text(
-                text = "Track your VPN usage",
-                style = MaterialTheme.typography.bodySmall,
-                color = MutedForeground
-            )
-        }
+        ScreenHeader(
+            title = "Statistics",
+            subtitle = "Track your VPN usage",
+            onBack = onNavigateBack,
+            backLabel = "Back"
+        )
 
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 16.dp),
+                .padding(horizontal = LibreGuardDimens.screenHorizontalPadding),
             verticalArrangement = Arrangement.spacedBy(12.dp),
             contentPadding = PaddingValues(bottom = 16.dp)
         ) {
@@ -455,6 +446,7 @@ private fun PrivacyNoticeCard() {
         }
     }
 }
+
 
 @Composable
 private fun TimeRangeButton(

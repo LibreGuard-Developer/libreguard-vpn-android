@@ -3,7 +3,6 @@ package net.libreguard.vpn.ui.screens
 import android.util.Base64
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.foundation.rememberScrollState
@@ -19,15 +18,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.launch
 import net.libreguard.vpn.BuildConfig
 import net.libreguard.vpn.network.RetrofitClient
 import net.libreguard.vpn.network.SubscriptionStatusResponse
+import net.libreguard.vpn.ui.components.ProBadge
+import net.libreguard.vpn.ui.components.ScreenHeader
+import net.libreguard.vpn.ui.components.SectionHeader
 import net.libreguard.vpn.ui.theme.*
 import net.libreguard.vpn.util.CrashlyticsReporter
 import net.libreguard.vpn.viewmodel.SubscriptionViewModel
@@ -131,27 +131,16 @@ fun SettingsScreen(
                 .fillMaxSize()
                 .verticalScroll(scrollState)
         ) {
-            // Header
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(24.dp)
-            ) {
-                Text(
-                    text = "Settings",
-                    style = MaterialTheme.typography.headlineMedium,
-                    color = Foreground
-                )
-                Text(
-                    text = "Configure your VPN preferences",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MutedForeground
-                )
-            }
+            ScreenHeader(
+                title = "Settings",
+                subtitle = "Configure your VPN preferences",
+                onBack = onNavigateBack,
+                backLabel = "Back"
+            )
 
             // Account Info Card
             if (!userEmail.isNullOrBlank()) {
-                SettingsCard(modifier = Modifier.padding(horizontal = 24.dp)) {
+                SettingsCard(modifier = Modifier.padding(horizontal = LibreGuardDimens.screenHorizontalPadding)) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -187,31 +176,31 @@ fun SettingsScreen(
                         }
                     }
                 }
-                Spacer(modifier = Modifier.height(24.dp))
+                Spacer(modifier = Modifier.height(LibreGuardDimens.sectionSpacing))
             }
 
             // Plan Upgrade Card (only show if not Pro)
             if (!isPro && !isLoading) {
                 UpgradeCard(
                     onUpgradeClick = onNavigateToUpgrade,
-                    modifier = Modifier.padding(horizontal = 24.dp)
+                    modifier = Modifier.padding(horizontal = LibreGuardDimens.screenHorizontalPadding)
                 )
-                Spacer(modifier = Modifier.height(24.dp))
+                Spacer(modifier = Modifier.height(LibreGuardDimens.sectionSpacing))
             }
 
             // Pro Plan Display (if Pro)
             if (isPro && subscriptionStatus != null) {
                 ProPlanCard(
                     subscriptionStatus = subscriptionStatus!!,
-                    modifier = Modifier.padding(horizontal = 24.dp)
+                    modifier = Modifier.padding(horizontal = LibreGuardDimens.screenHorizontalPadding)
                 )
-                Spacer(modifier = Modifier.height(24.dp))
+                Spacer(modifier = Modifier.height(LibreGuardDimens.sectionSpacing))
             }
 
             // Security Section
-            SectionHeader(title = "Security", modifier = Modifier.padding(horizontal = 24.dp))
+            SectionHeader(title = "Security", modifier = Modifier.padding(horizontal = LibreGuardDimens.screenHorizontalPadding))
 
-            SettingsCard(modifier = Modifier.padding(horizontal = 24.dp)) {
+            SettingsCard(modifier = Modifier.padding(horizontal = LibreGuardDimens.screenHorizontalPadding)) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -270,12 +259,12 @@ fun SettingsScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(LibreGuardDimens.sectionSpacing))
 
             // Connection Section
-            SectionHeader(title = "Connection", modifier = Modifier.padding(horizontal = 24.dp))
+            SectionHeader(title = "Connection", modifier = Modifier.padding(horizontal = LibreGuardDimens.screenHorizontalPadding))
 
-            SettingsCard(modifier = Modifier.padding(horizontal = 24.dp)) {
+            SettingsCard(modifier = Modifier.padding(horizontal = LibreGuardDimens.screenHorizontalPadding)) {
                 // Default Protocol Selection
                 Column(
                     modifier = Modifier
@@ -340,21 +329,11 @@ fun SettingsScreen(
                             }
                             // PRO badge for free users
                             if (!isPro) {
-                                Surface(
+                                ProBadge(
                                     modifier = Modifier
                                         .align(Alignment.TopEnd)
-                                        .offset(x = 4.dp, y = (-4).dp),
-                                    shape = RoundedCornerShape(6.dp),
-                                    color = Primary
-                                ) {
-                                    Text(
-                                        text = "PRO",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = PrimaryForeground,
-                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
-                                        fontSize = 9.sp
-                                    )
-                                }
+                                        .offset(x = 4.dp, y = (-4).dp)
+                                )
                             }
                         }
                     }
@@ -376,21 +355,11 @@ fun SettingsScreen(
                     )
                     // PRO badge for free users
                     if (!isPro) {
-                        Surface(
+                        ProBadge(
                             modifier = Modifier
                                 .align(Alignment.TopEnd)
-                                .offset(x = (-16).dp, y = 16.dp),
-                            shape = RoundedCornerShape(6.dp),
-                            color = Primary
-                        ) {
-                            Text(
-                                text = "PRO",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = PrimaryForeground,
-                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
-                                fontSize = 9.sp
-                            )
-                        }
+                                .offset(x = (-16).dp, y = 16.dp)
+                        )
                     }
                 }
                 HorizontalDivider(color = Border, modifier = Modifier.padding(start = 68.dp))
@@ -410,31 +379,21 @@ fun SettingsScreen(
                     )
                     // PRO badge for free users
                     if (!isPro) {
-                        Surface(
+                        ProBadge(
                             modifier = Modifier
                                 .align(Alignment.TopEnd)
-                                .offset(x = (-16).dp, y = 16.dp),
-                            shape = RoundedCornerShape(6.dp),
-                            color = Primary
-                        ) {
-                            Text(
-                                text = "PRO",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = PrimaryForeground,
-                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
-                                fontSize = 9.sp
-                            )
-                        }
+                                .offset(x = (-16).dp, y = 16.dp)
+                        )
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(LibreGuardDimens.sectionSpacing))
 
             // Preferences Section
-            SectionHeader(title = "Preferences", modifier = Modifier.padding(horizontal = 24.dp))
+            SectionHeader(title = "Preferences", modifier = Modifier.padding(horizontal = LibreGuardDimens.screenHorizontalPadding))
 
-            SettingsCard(modifier = Modifier.padding(horizontal = 24.dp)) {
+            SettingsCard(modifier = Modifier.padding(horizontal = LibreGuardDimens.screenHorizontalPadding)) {
                 ThemeModeSelector(
                     selectedThemeMode = themeMode,
                     effectiveDarkMode = effectiveDarkMode,
@@ -442,10 +401,10 @@ fun SettingsScreen(
                 )
             }
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(LibreGuardDimens.sectionSpacing))
 
             // Support Section
-            SectionHeader(title = "Support", modifier = Modifier.padding(horizontal = 24.dp))
+            SectionHeader(title = "Support", modifier = Modifier.padding(horizontal = LibreGuardDimens.screenHorizontalPadding))
 
             SettingsCard(modifier = Modifier.padding(horizontal = 24.dp)) {
                 SettingsItemRow(
@@ -666,15 +625,6 @@ fun SettingsScreen(
 
 }
 
-@Composable
-private fun SectionHeader(title: String, modifier: Modifier = Modifier) {
-    Text(
-        text = title,
-        style = MaterialTheme.typography.bodySmall,
-        color = MutedForeground,
-        modifier = modifier.padding(bottom = 12.dp)
-    )
-}
 
 @Composable
 private fun SettingsCard(

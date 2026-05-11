@@ -1,5 +1,7 @@
 package net.libreguard.vpn.ui.components
 
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -18,6 +20,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import net.libreguard.vpn.ui.theme.*
 
@@ -62,7 +65,7 @@ fun PrimaryButton(
                 strokeWidth = 2.dp
             )
         } else {
-            Text(text = text)
+            Text(text = text, style = MaterialTheme.typography.labelLarge)
         }
     }
 }
@@ -98,7 +101,7 @@ fun SecondaryButton(
         border = ButtonDefaults.outlinedButtonBorder(enabled = enabled),
         interactionSource = interactionSource
     ) {
-        Text(text = text)
+        Text(text = text, style = MaterialTheme.typography.labelLarge)
     }
 }
 
@@ -122,7 +125,130 @@ fun DestructiveButton(
             contentColor = Destructive
         )
     ) {
-        Text(text = text)
+        Text(text = text, style = MaterialTheme.typography.labelLarge)
+    }
+}
+
+@Composable
+fun ProBadge(
+    modifier: Modifier = Modifier,
+    text: String = "PRO"
+) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(8.dp),
+        color = Primary
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelSmall,
+            color = PrimaryForeground,
+            modifier = Modifier.padding(
+                horizontal = LibreGuardDimens.badgeHorizontalPadding,
+                vertical = LibreGuardDimens.badgeVerticalPadding
+            )
+        )
+    }
+}
+
+@Composable
+fun ScreenHeader(
+    title: String,
+    subtitle: String? = null,
+    modifier: Modifier = Modifier,
+    onBack: (() -> Unit)? = null,
+    backLabel: String = "Back",
+    leading: (@Composable () -> Unit)? = null,
+    actions: @Composable RowScope.() -> Unit = {}
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = LibreGuardDimens.screenHorizontalPadding)
+            .padding(top = LibreGuardDimens.screenTopPadding, bottom = LibreGuardDimens.headerBottomSpacing)
+    ) {
+        if (onBack != null) {
+            Row(
+                modifier = Modifier
+                    .clickable { onBack() }
+                    .padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(LibreGuardDimens.compactSpacing)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.ArrowBack,
+                    contentDescription = backLabel,
+                    tint = MutedForeground,
+                    modifier = Modifier.size(20.dp)
+                )
+                Text(
+                    text = backLabel,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MutedForeground
+                )
+            }
+
+            Spacer(modifier = Modifier.height(LibreGuardDimens.headerContentSpacing))
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(LibreGuardDimens.headerContentSpacing)
+        ) {
+            leading?.invoke()
+
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.headlineMedium,
+                    color = Foreground
+                )
+
+                if (!subtitle.isNullOrBlank()) {
+                    Text(
+                        text = subtitle,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MutedForeground,
+                        modifier = Modifier.padding(top = LibreGuardDimens.headerSubtitleSpacing)
+                    )
+                }
+            }
+
+            actions()
+        }
+    }
+}
+
+@Composable
+fun CenteredScreenHeader(
+    title: String,
+    subtitle: String? = null,
+    modifier: Modifier = Modifier,
+    leading: (@Composable () -> Unit)? = null
+) {
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        leading?.invoke()
+
+        Text(
+            text = title,
+            style = MaterialTheme.typography.headlineMedium,
+            color = Foreground,
+            textAlign = TextAlign.Center
+        )
+
+        if (!subtitle.isNullOrBlank()) {
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MutedForeground,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(top = LibreGuardDimens.headerSubtitleSpacing)
+            )
+        }
     }
 }
 
@@ -268,8 +394,8 @@ fun SectionHeader(
 ) {
     Text(
         text = title,
-        style = MaterialTheme.typography.bodySmall,
+        style = MaterialTheme.typography.labelMedium,
         color = MutedForeground,
-        modifier = modifier.padding(bottom = 12.dp)
+        modifier = modifier.padding(bottom = LibreGuardDimens.headerContentSpacing)
     )
 }

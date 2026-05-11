@@ -2,7 +2,6 @@ package net.libreguard.vpn.ui.screens
 
 import android.text.format.DateUtils
 import android.util.Log
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -21,6 +20,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import net.libreguard.vpn.network.DeviceDto
 import net.libreguard.vpn.network.ApiError
+import net.libreguard.vpn.ui.components.ScreenHeader
 import net.libreguard.vpn.ui.theme.*
 import net.libreguard.vpn.util.DeviceIdManager
 import net.libreguard.vpn.util.DeviceNameGenerator
@@ -127,25 +127,6 @@ fun DeviceManagementScreen(
     }
 
     Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Manage Devices") },
-                navigationIcon = {
-                    IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
-                    }
-                },
-                actions = {
-                    IconButton(onClick = { viewModel.fetchDevices(isRefresh = true) }) {
-                        Icon(Icons.Default.Refresh, contentDescription = "Refresh")
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Background,
-                    titleContentColor = Foreground
-                )
-            )
-        },
         snackbarHost = { SnackbarHost(snackbarHostState) },
         containerColor = Background
     ) { paddingValues ->
@@ -157,8 +138,29 @@ fun DeviceManagementScreen(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(16.dp)
             ) {
+                ScreenHeader(
+                    title = "Manage Devices",
+                    subtitle = "Review active devices and clean up access when needed",
+                    onBack = onNavigateBack,
+                    backLabel = "Back",
+                    actions = {
+                        IconButton(onClick = { viewModel.fetchDevices(isRefresh = true) }) {
+                            Icon(
+                                imageVector = Icons.Default.Refresh,
+                                contentDescription = "Refresh",
+                                tint = MutedForeground
+                            )
+                        }
+                    }
+                )
+
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = LibreGuardDimens.screenHorizontalPadding)
+                        .padding(bottom = LibreGuardDimens.screenBottomPadding)
+                ) {
                 // Error message
                 error?.let { apiError ->
                     ErrorBanner(
@@ -205,6 +207,7 @@ fun DeviceManagementScreen(
                         onRemoveAllInactive = { showRemoveAllInactiveDialog = true },
                         currentDeviceId = currentDeviceId
                     )
+                }
                 }
             }
         }

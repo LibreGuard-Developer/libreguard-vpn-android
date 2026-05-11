@@ -19,7 +19,6 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import net.libreguard.vpn.service.data.DataUsageInfo
 
 /**
@@ -262,25 +261,22 @@ fun CompactDataUsageIndicator(
         ) {
             Text(
                 text = "${dataUsage.usagePercentage.toInt()}%",
-                style = MaterialTheme.typography.bodyMedium,
+                style = MaterialTheme.typography.labelLarge,
                 fontWeight = FontWeight.SemiBold,
-                color = progressColor,
-                fontSize = 14.sp
+                color = progressColor
             )
 
             Text(
                 text = dataUsage.formattedTotal,
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                fontSize = 12.sp
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
             if (dataUsage.sessionBytesUsed > 0) {
                 Text(
                     text = "Session: ${dataUsage.formattedSession}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.primary,
-                    fontSize = 11.sp
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary
                 )
             }
         }

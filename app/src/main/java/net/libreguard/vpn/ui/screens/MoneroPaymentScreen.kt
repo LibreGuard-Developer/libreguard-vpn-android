@@ -13,12 +13,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.core.content.ContextCompat
 import net.libreguard.vpn.ui.components.LogoWithGradient
+import net.libreguard.vpn.ui.components.ScreenHeader
 import net.libreguard.vpn.ui.theme.*
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -43,7 +42,6 @@ fun MoneroPaymentScreen(
     onSuccess: (() -> Unit)? = null
 ) {
     val clipboardManager = LocalClipboardManager.current
-    val context = LocalContext.current
     val scrollState = rememberScrollState()
     var copied by remember { mutableStateOf(false) }
 
@@ -74,85 +72,60 @@ fun MoneroPaymentScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(scrollState)
-                .padding(24.dp)
+                .padding(bottom = LibreGuardDimens.screenBottomPadding)
         ) {
-            // Back Button
-            IconButton(
-                onClick = onClose,
-                modifier = Modifier.size(40.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.ArrowBack,
-                    contentDescription = "Back",
-                    tint = MutedForeground
-                )
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Header
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                LogoWithGradient(size = 40.dp)
-                Text(
-                    text = "Monero Payment",
-                    style = MaterialTheme.typography.headlineMedium,
-                    color = Foreground
-                )
-            }
-
-            Text(
-                text = "Send XMR to complete your Pro subscription",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MutedForeground,
-                modifier = Modifier.padding(top = 4.dp)
+            ScreenHeader(
+                title = "Monero Payment",
+                subtitle = "Send XMR to complete your Pro subscription",
+                onBack = onClose,
+                backLabel = "Back",
+                leading = { LogoWithGradient(size = 40.dp) }
             )
 
-            Spacer(modifier = Modifier.height(24.dp))
-
-            // Timer Card
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
-                color = CardBackground,
-                border = ButtonDefaults.outlinedButtonBorder(enabled = true).copy(
-                    brush = androidx.compose.ui.graphics.SolidColor(Primary)
-                )
+            Column(
+                modifier = Modifier.padding(horizontal = LibreGuardDimens.screenHorizontalPadding)
             ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                // Timer Card
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    color = CardBackground,
+                    border = ButtonDefaults.outlinedButtonBorder(enabled = true).copy(
+                        brush = androidx.compose.ui.graphics.SolidColor(Primary)
+                    )
                 ) {
                     Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Schedule,
-                            contentDescription = null,
-                            tint = Primary,
-                            modifier = Modifier.size(20.dp)
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Schedule,
+                                contentDescription = null,
+                                tint = Primary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Text(
+                                text = "Payment expires in:",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = Foreground
+                            )
+                        }
                         Text(
-                            text = "Payment expires in:",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = Foreground
+                            text = String.format("%02d:%02d:%02d", hoursRemaining, minutesRemaining, secondsRemaining),
+                            style = MaterialTheme.typography.headlineSmall,
+                            color = Primary
                         )
                     }
-                    Text(
-                        text = String.format("%02d:%02d:%02d", hoursRemaining, minutesRemaining, secondsRemaining),
-                        style = MaterialTheme.typography.headlineSmall,
-                        color = Primary
-                    )
                 }
-            }
 
-            Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(16.dp))
 
             // Amount Card
             Surface(
@@ -462,4 +435,7 @@ fun MoneroPaymentScreen(
         }
     }
 }
+}
+
+
 

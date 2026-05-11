@@ -115,8 +115,8 @@ fun DashboardScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(Background)
-            .padding(horizontal = 20.dp)
-            .padding(top = 0.dp, bottom = 0.dp)
+            .padding(horizontal = LibreGuardDimens.screenHorizontalPadding)
+            .padding(top = LibreGuardDimens.screenTopPadding, bottom = 0.dp)
     ) {
         // Header - Compact
         Row(
@@ -126,12 +126,12 @@ fun DashboardScreen(
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                horizontalArrangement = Arrangement.spacedBy(LibreGuardDimens.headerContentSpacing)
             ) {
-                LogoWithGradient(size = 32.dp)
+                LogoWithGradient(size = 40.dp)
                 Text(
                     text = "LibreGuard",
-                    style = MaterialTheme.typography.titleLarge,
+                    style = MaterialTheme.typography.headlineMedium,
                     color = Foreground
                 )
             }
