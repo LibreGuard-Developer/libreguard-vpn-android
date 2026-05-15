@@ -184,11 +184,11 @@ data class CanConnectResponse(
 
 // ===== GOOGLE PLAY BILLING =====
 data class VerifyGooglePlayRequest(
-    @SerializedName(value = "SubscriptionId", alternate = ["subscriptionId"])
+    @SerializedName(value = "subscriptionId", alternate = ["SubscriptionId"])
     val subscriptionId: String,
-    @SerializedName(value = "PurchaseToken", alternate = ["purchaseToken"])
+    @SerializedName(value = "purchaseToken", alternate = ["PurchaseToken"])
     val purchaseToken: String,
-    @SerializedName(value = "TransferSubscription", alternate = ["transferSubscription"])
+    @SerializedName(value = "transferSubscription", alternate = ["TransferSubscription"])
     val transferSubscription: Boolean? = null
 )
 

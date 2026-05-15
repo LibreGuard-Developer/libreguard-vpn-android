@@ -1,4 +1,5 @@
 import org.gradle.api.GradleException
+import org.gradle.api.tasks.PathSensitivity
 import java.util.Base64
 
 fun env(name: String): String? = providers.environmentVariable(name).orNull
@@ -6,6 +7,17 @@ fun env(name: String): String? = providers.environmentVariable(name).orNull
     ?.takeIf { it.isNotEmpty() }
 
 fun envOrDefault(name: String, defaultValue: String): String = env(name) ?: defaultValue
+
+fun envBoolean(name: String, defaultValue: Boolean): Boolean {
+    return when (env(name)?.lowercase()) {
+        null -> defaultValue
+        "1", "true", "yes", "y", "on" -> true
+        "0", "false", "no", "n", "off" -> false
+        else -> throw GradleException(
+            "Environment variable $name must be a boolean value (true/false, 1/0, yes/no, on/off)."
+        )
+    }
+}
 
 fun isPlaceholderAdiFragment(value: String?): Boolean {
     val candidate = value?.trim().orEmpty()
@@ -22,9 +34,15 @@ val googlePlayBackendSubscriptionId = envOrDefault(
     "GOOGLE_PLAY_BACKEND_SUBSCRIPTION_ID",
     "libreguard_vpn"
 )
+val expectedAppSigningSha256 = env("APP_SIGNING_SHA256").orEmpty()
+val appSigningSha256Allowlist = env("APP_SIGNING_SHA256_ALLOWLIST")
+    ?.takeIf { it.isNotBlank() }
+    ?: expectedAppSigningSha256
+val enableReleaseSigningEnforcement = envBoolean("ENABLE_RELEASE_SIGNING_ENFORCEMENT", false)
 val adiRegistrationFragment = env("ADI_REGISTRATION_FRAGMENT")
     ?.takeUnless(::isPlaceholderAdiFragment)
     .orEmpty()
+val adiRegistrationPropertiesEnv = env("ADI_REGISTRATION_PROPERTIES")
 val releaseStoreFileEnv = env("RELEASE_STORE_FILE")
 val releaseStorePasswordEnv = env("RELEASE_STORE_PASSWORD")
 val releaseKeyAliasEnv = env("RELEASE_KEY_ALIAS")
@@ -32,6 +50,8 @@ val releaseKeyPasswordEnv = env("RELEASE_KEY_PASSWORD")
 val googleServicesJsonEnv = env("GOOGLE_SERVICES_JSON")
 val googleServicesJsonB64Env = env("GOOGLE_SERVICES_JSON_B64")
 val googleServicesJsonFile = layout.projectDirectory.file("google-services.json").asFile
+val adiRegistrationPropertiesLocalFile = rootProject.file("adi-registration.properties")
+val generatedAdiRegistrationFile = layout.buildDirectory.file("generated/assets/adi/main/adi-registration.properties")
 
 val generateGoogleServicesJson by tasks.registering {
     inputs.property("googleServicesJson", googleServicesJsonEnv ?: "")
@@ -69,6 +89,33 @@ val generateGoogleServicesJson by tasks.registering {
     }
 }
 
+val generateAdiRegistrationProperties by tasks.registering {
+    inputs.property("adiRegistrationPropertiesEnv", adiRegistrationPropertiesEnv ?: "")
+    inputs.property("adiRegistrationFragment", adiRegistrationFragment)
+    inputs.file(adiRegistrationPropertiesLocalFile)
+        .optional()
+        .withPathSensitivity(PathSensitivity.RELATIVE)
+    outputs.file(generatedAdiRegistrationFile)
+
+    doLast {
+        val localFileContent = if (adiRegistrationPropertiesLocalFile.exists()) {
+            adiRegistrationPropertiesLocalFile.readText(Charsets.UTF_8).trim()
+        } else {
+            ""
+        }
+        val fileContent = when {
+            !adiRegistrationPropertiesEnv.isNullOrBlank() -> adiRegistrationPropertiesEnv.trim()
+            localFileContent.isNotBlank() -> localFileContent
+            adiRegistrationFragment.isNotEmpty() -> adiRegistrationFragment
+            else -> "# Placeholder generated at build time.\n# Set ADI_REGISTRATION_PROPERTIES, or provide /adi-registration.properties locally."
+        }
+
+        val outputFile = generatedAdiRegistrationFile.get().asFile
+        outputFile.parentFile.mkdirs()
+        outputFile.writeText(fileContent + System.lineSeparator(), Charsets.UTF_8)
+    }
+}
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -79,6 +126,10 @@ plugins {
 
 tasks.matching { it.name.matches(Regex("process.+GoogleServices")) }.configureEach {
     dependsOn(generateGoogleServicesJson)
+}
+
+tasks.matching { it.name.matches(Regex("merge.+Assets")) }.configureEach {
+    dependsOn(generateAdiRegistrationProperties)
 }
 
 tasks.matching { it.name == "clean" }.configureEach {
@@ -112,6 +163,13 @@ android {
         buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", "\"$googleWebClientId\"")
         buildConfigField("String", "GOOGLE_ANDROID_CLIENT_ID", "\"$googleAndroidClientId\"")
         buildConfigField("String", "GOOGLE_PLAY_PRODUCT_ID", "\"$googlePlayProductId\"")
+        buildConfigField("String", "APP_SIGNING_SHA256", "\"$expectedAppSigningSha256\"")
+        buildConfigField("String", "APP_SIGNING_SHA256_ALLOWLIST", "\"$appSigningSha256Allowlist\"")
+        buildConfigField(
+            "boolean",
+            "ENABLE_RELEASE_SIGNING_ENFORCEMENT",
+            enableReleaseSigningEnforcement.toString()
+        )
         buildConfigField(
             "String",
             "GOOGLE_PLAY_BACKEND_SUBSCRIPTION_ID",
@@ -121,10 +179,6 @@ android {
         // Select variants from ics-openvpn (library has flavorDimensions: implementation, ovpnimpl)
         missingDimensionStrategy("implementation", "skeleton")
         missingDimensionStrategy("ovpnimpl", "ovpn23")
-
-        if (adiRegistrationFragment.isNotEmpty()) {
-            manifestPlaceholders["adiRegistrationFragment"] = adiRegistrationFragment
-        }
     }
 
     // Google Play App Signing Configuration
@@ -146,17 +200,26 @@ android {
                 logger.warn("⚠️  RELEASE_STORE_FILE environment variable not set. Release signing will fail.")
             }
 
-            if (adiRegistrationFragment.isEmpty()) {
-                logger.warn("⚠️  ADI_REGISTRATION_FRAGMENT environment variable not set or still uses a placeholder.")
+            if (adiRegistrationPropertiesEnv.isNullOrBlank() && !adiRegistrationPropertiesLocalFile.exists() && adiRegistrationFragment.isEmpty()) {
+                logger.warn("⚠️  No ADI registration value supplied. A placeholder asset will be generated.")
             } else {
-                logger.lifecycle("ADI registration fragment loaded from environment variable.")
+                logger.lifecycle("ADI registration asset source configured (environment variable, local file, or fragment).")
+            }
+
+            if (enableReleaseSigningEnforcement) {
+                if (appSigningSha256Allowlist.isBlank()) {
+                    logger.warn("⚠️  ENABLE_RELEASE_SIGNING_ENFORCEMENT is enabled but APP_SIGNING_SHA256_ALLOWLIST is empty. Runtime will fall back to warn-only mode.")
+                } else {
+                    logger.lifecycle("Release signing enforcement enabled with configured signing digest allowlist.")
+                }
             }
         }
     }
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -195,6 +258,10 @@ android {
 
     sourceSets {
         getByName("main") {
+            assets.srcDirs(
+                "src/main/assets",
+                layout.buildDirectory.dir("generated/assets/adi/main").get().asFile
+            )
             jniLibs.srcDirs("src/main/jniLibs")
             // Only compile app code under net/; strongSwan sources come from the submodule
             java.setSrcDirs(listOf("src/main/java/net"))

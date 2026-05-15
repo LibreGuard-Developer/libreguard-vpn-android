@@ -41,9 +41,11 @@ import net.libreguard.vpn.ui.screens.TermsOfServiceScreen
 import net.libreguard.vpn.ui.screens.CardPaymentScreen
 import net.libreguard.vpn.ui.screens.MoneroPaymentScreen
 import net.libreguard.vpn.ui.screens.GooglePlayPaymentScreen
+import net.libreguard.vpn.ui.screens.IntegrityBlockScreen
 import net.libreguard.vpn.ui.screens.DeviceManagementScreen
 import net.libreguard.vpn.ui.screens.ForgotPasswordScreen
 import net.libreguard.vpn.ui.screens.ResetPasswordScreen
+import net.libreguard.vpn.security.AppIntegrityChecker
 import net.libreguard.vpn.ui.theme.ThemePreferences
 import net.libreguard.vpn.ui.theme.ThemeMode
 import net.libreguard.vpn.ui.theme.LibreGuardVPNTheme
@@ -128,6 +130,19 @@ fun AppNavigation(
 ) {
     val navController = rememberNavController()
     val context = LocalContext.current
+    val startupIntegrityReport = remember {
+        AppIntegrityChecker.getLastStartupReport()
+            ?: AppIntegrityChecker.runStartupChecks(context.applicationContext)
+    }
+
+    if (startupIntegrityReport.enforcementDecision.shouldBlock) {
+        IntegrityBlockScreen(
+            modifier = modifier,
+            onCloseApp = { (context as? ComponentActivity)?.finishAffinity() }
+        )
+        return
+    }
+
     var authToken by remember { mutableStateOf<String?>(null) }
     var isCheckingToken by remember { mutableStateOf(true) }
     var pendingEmail by remember { mutableStateOf<String?>(null) }

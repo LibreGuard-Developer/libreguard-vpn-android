@@ -71,4 +71,10 @@
     <string name="reset_password_action">Update password</string>
     <string name="show_password">Show password</string>
     <string name="hide_password">Hide password</string>
+
+    <!-- Integrity enforcement -->
+    <string name="integrity_block_title">App integrity check failed</string>
+    <string name="integrity_block_message">This release could not verify that it was installed from an expected signed build, so startup has been blocked for your protection.</string>
+    <string name="integrity_block_secondary_message">Please reinstall LibreGuard VPN from your trusted distribution source or contact support if this device should be allowed.</string>
+    <string name="integrity_block_close_app">Close app</string>
 </resources>

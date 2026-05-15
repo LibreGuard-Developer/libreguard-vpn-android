@@ -1,21 +1,60 @@
-# Add project specific ProGuard rules here.
-# You can control the set of applied configuration files using the
-# proguardFiles setting in build.gradle.
-#
-# For more details, see
-#   http://developer.android.com/guide/developing/tools/proguard.html
+# LibreGuardVPN release hardening rules.
+# Keep this file narrowly scoped: preserve only runtime contracts that R8 cannot infer
+# (reflection, Gson field names, JNI/native entry points, AIDL/Binder surfaces).
 
-# If your project uses WebView with JS, uncomment the following
-# and specify the fully qualified class name to the JavaScript interface
-# class:
-#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
-#   public *;
-#}
+# Preserve runtime metadata used by Retrofit/Gson/Kotlin generics.
+-keepattributes Signature,*Annotation*,InnerClasses,EnclosingMethod,SourceFile,LineNumberTable
+-renamesourcefileattribute SourceFile
 
-# Uncomment this to preserve the line number information for
-# debugging stack traces.
-#-keepattributes SourceFile,LineNumberTable
+# Improve obfuscation for app-owned code that is safe to rename.
+-adaptclassstrings
+-allowaccessmodification
 
-# If you keep the line number information, uncomment this to
-# hide the original source file name.
-#-renamesourcefileattribute SourceFile
+# Ensure AGP's expected release mapping artifacts are materialized on fresh builds.
+-printseeds build/outputs/mapping/release/seeds.txt
+
+# --- Retrofit / Gson ---------------------------------------------------------
+
+# Retrofit inspects this interface and its annotations at runtime.
+-keep,allowobfuscation interface net.libreguard.vpn.network.ApiService
+
+# Preserve Gson TypeToken metadata used for generic deserialization.
+-keep class com.google.gson.reflect.TypeToken { *; }
+-keep,allowobfuscation,allowshrinking class * extends com.google.gson.reflect.TypeToken
+
+# Preserve JSON field names for network DTOs.
+# Several models rely on raw Kotlin property names instead of explicit @SerializedName.
+-keepclassmembers class net.libreguard.vpn.network.** {
+	<fields>;
+}
+
+# Preserve persisted JSON schema for locally stored connection history.
+-keepclassmembers class net.libreguard.vpn.data.ConnectionRecord {
+	<fields>;
+}
+
+# --- strongSwan reflection / JNI ---------------------------------------------
+
+# Native code in libandroidbridge resolves these classes and members by name.
+-keep class org.strongswan.android.logic.** { *; }
+-keep class org.strongswan.android.utils.Utils { *; }
+
+# App code reflectively invokes strongSwan profile data source methods.
+-keep class org.strongswan.android.data.VpnProfileSource { public *; }
+-keep class org.strongswan.android.data.VpnProfileDataSource { public *; }
+
+# --- OpenVPN JNI / Binder ----------------------------------------------------
+
+# JNI symbol names are tied to this class and its native method names.
+-keep class de.blinkt.openvpn.core.NativeUtils { *; }
+
+# Binder/AIDL interfaces must retain their transaction surface.
+-keep class de.blinkt.openvpn.core.IServiceStatus { *; }
+-keep class de.blinkt.openvpn.core.IStatusCallbacks { *; }
+-keep class de.blinkt.openvpn.core.IOpenVPNServiceInternal { *; }
+-keep class de.blinkt.openvpn.api.** { *; }
+
+# --- Third-party runtime lookups ---------------------------------------------
+
+# Resolved via Class.forName() in BouncyCastleBootstrap.
+-keep class org.bouncycastle.jce.provider.BouncyCastleProvider { *; }
