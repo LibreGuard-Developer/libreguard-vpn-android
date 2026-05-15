@@ -54,4 +54,8 @@ STRONGSWAN_CLEANUP_COMPLETE.md
 
 # Google Play ADI Registration (contains sensitive credentials - never commit)
 /adi-registration.properties
+/app/src/main/assets/adi-registration.properties
+
+# Generated from environment variables at build time
+/app/google-services.json
 

@@ -1,28 +1,71 @@
-import java.util.Properties
+import org.gradle.api.GradleException
+import java.util.Base64
 
-val localProperties = Properties().apply {
-    val f = rootProject.file("local.properties")
-    if (f.exists()) load(f.inputStream())
+fun env(name: String): String? = providers.environmentVariable(name).orNull
+    ?.trim()
+    ?.takeIf { it.isNotEmpty() }
+
+fun envOrDefault(name: String, defaultValue: String): String = env(name) ?: defaultValue
+
+fun isPlaceholderAdiFragment(value: String?): Boolean {
+    val candidate = value?.trim().orEmpty()
+    return candidate.isBlank() ||
+        candidate.startsWith("PASTE") ||
+        candidate == "YOUR_ADI_FRAGMENT_FROM_GOOGLE_PLAY_CONSOLE" ||
+        candidate == "YOUR_ADI_REGISTRATION_FRAGMENT_HERE"
 }
 
-val adiRegistrationProperties = Properties().apply {
-    val assetFile = file("src/main/assets/adi-registration.properties")
-    val rootFile = rootProject.file("adi-registration.properties")
-    val sourceFile = when {
-        assetFile.exists() -> assetFile
-        rootFile.exists() -> rootFile
-        else -> null
-    }
+val googleWebClientId = env("GOOGLE_WEB_CLIENT_ID").orEmpty()
+val googleAndroidClientId = env("GOOGLE_ANDROID_CLIENT_ID").orEmpty()
+val googlePlayProductId = envOrDefault("GOOGLE_PLAY_PRODUCT_ID", "libreguard_vpn")
+val googlePlayBackendSubscriptionId = envOrDefault(
+    "GOOGLE_PLAY_BACKEND_SUBSCRIPTION_ID",
+    "libreguard_vpn"
+)
+val adiRegistrationFragment = env("ADI_REGISTRATION_FRAGMENT")
+    ?.takeUnless(::isPlaceholderAdiFragment)
+    .orEmpty()
+val releaseStoreFileEnv = env("RELEASE_STORE_FILE")
+val releaseStorePasswordEnv = env("RELEASE_STORE_PASSWORD")
+val releaseKeyAliasEnv = env("RELEASE_KEY_ALIAS")
+val releaseKeyPasswordEnv = env("RELEASE_KEY_PASSWORD")
+val googleServicesJsonEnv = env("GOOGLE_SERVICES_JSON")
+val googleServicesJsonB64Env = env("GOOGLE_SERVICES_JSON_B64")
+val googleServicesJsonFile = layout.projectDirectory.file("google-services.json").asFile
 
-    if (sourceFile != null) {
-        val content = sourceFile.readText().trim()
-        if (content.contains("=")) {
-            // It's a properties file format
-            load(sourceFile.inputStream())
-        } else if (content.isNotEmpty()) {
-            // It's a raw fragment file format - put it into the expected key
-            setProperty("adi.registration.fragment", content)
+val generateGoogleServicesJson by tasks.registering {
+    inputs.property("googleServicesJson", googleServicesJsonEnv ?: "")
+    inputs.property("googleServicesJsonB64", googleServicesJsonB64Env ?: "")
+    outputs.file(googleServicesJsonFile)
+
+    doLast {
+        val jsonContent = when {
+            !googleServicesJsonB64Env.isNullOrBlank() -> {
+                try {
+                    String(Base64.getDecoder().decode(googleServicesJsonB64Env), Charsets.UTF_8)
+                } catch (error: IllegalArgumentException) {
+                    throw GradleException(
+                        "GOOGLE_SERVICES_JSON_B64 is not valid Base64.",
+                        error
+                    )
+                }
+            }
+
+            !googleServicesJsonEnv.isNullOrBlank() -> googleServicesJsonEnv
+            else -> throw GradleException(
+                "Missing Firebase configuration. Set GOOGLE_SERVICES_JSON_B64 " +
+                    "(recommended) or GOOGLE_SERVICES_JSON."
+            )
+        }.trim()
+
+        if (!jsonContent.startsWith("{")) {
+            throw GradleException(
+                "The Firebase configuration provided via environment variables is not valid JSON."
+            )
         }
+
+        googleServicesJsonFile.parentFile.mkdirs()
+        googleServicesJsonFile.writeText(jsonContent + System.lineSeparator())
     }
 }
 
@@ -32,6 +75,18 @@ plugins {
     alias(libs.plugins.kotlin.compose)
     id("com.google.gms.google-services")
     id("com.google.firebase.crashlytics")
+}
+
+tasks.matching { it.name.matches(Regex("process.+GoogleServices")) }.configureEach {
+    dependsOn(generateGoogleServicesJson)
+}
+
+tasks.matching { it.name == "clean" }.configureEach {
+    doFirst {
+        if (googleServicesJsonFile.exists()) {
+            googleServicesJsonFile.delete()
+        }
+    }
 }
 
 android {
@@ -54,60 +109,47 @@ android {
             useSupportLibrary = true
         }
 
-        buildConfigField("String", "GOOGLE_WEB_CLIENT_ID",
-            "\"${localProperties.getProperty("google.webClientId", "")}\"")
-        buildConfigField("String", "GOOGLE_ANDROID_CLIENT_ID",
-            "\"${localProperties.getProperty("google.androidClientId", "")}\"")
-        buildConfigField("String", "GOOGLE_PLAY_PRODUCT_ID",
-            "\"${localProperties.getProperty("google.playProductId", "libreguard_vpn_monthly")}\"")
-        buildConfigField("String", "GOOGLE_PLAY_BACKEND_SUBSCRIPTION_ID",
-            "\"${localProperties.getProperty("google.playBackendSubscriptionId", "libreguard_vpn_monthly")}\"")
+        buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", "\"$googleWebClientId\"")
+        buildConfigField("String", "GOOGLE_ANDROID_CLIENT_ID", "\"$googleAndroidClientId\"")
+        buildConfigField("String", "GOOGLE_PLAY_PRODUCT_ID", "\"$googlePlayProductId\"")
+        buildConfigField(
+            "String",
+            "GOOGLE_PLAY_BACKEND_SUBSCRIPTION_ID",
+            "\"$googlePlayBackendSubscriptionId\""
+        )
 
         // Select variants from ics-openvpn (library has flavorDimensions: implementation, ovpnimpl)
         missingDimensionStrategy("implementation", "skeleton")
         missingDimensionStrategy("ovpnimpl", "ovpn23")
 
-        val adiFragmentRaw = adiRegistrationProperties.getProperty("adi.registration.fragment", "").trim()
-        val adiFragment = if (adiFragmentRaw.isBlank() || adiFragmentRaw.startsWith("PASTE") || adiFragmentRaw == "YOUR_ADI_FRAGMENT_FROM_GOOGLE_PLAY_CONSOLE" || adiFragmentRaw == "YOUR_ADI_REGISTRATION_FRAGMENT_HERE") "" else adiFragmentRaw
-        if (adiFragment.isNotEmpty()) {
-            manifestPlaceholders["adiRegistrationFragment"] = adiFragment
+        if (adiRegistrationFragment.isNotEmpty()) {
+            manifestPlaceholders["adiRegistrationFragment"] = adiRegistrationFragment
         }
     }
 
     // Google Play App Signing Configuration
-    // The ADI registration fragment is loaded from adi-registration.properties
-    // which is gitignored for security. See adi-registration.properties.example for setup.
+    // Sensitive values are read from environment variables so they do not live in VCS.
     signingConfigs {
         create("release") {
-            val adiFragmentRaw = adiRegistrationProperties.getProperty("adi.registration.fragment", "").trim()
-            // Treat placeholder values as missing
-            val adiFragment = if (adiFragmentRaw.isBlank() || adiFragmentRaw.startsWith("PASTE") || adiFragmentRaw == "YOUR_ADI_FRAGMENT_FROM_GOOGLE_PLAY_CONSOLE" || adiFragmentRaw == "YOUR_ADI_REGISTRATION_FRAGMENT_HERE") "" else adiFragmentRaw
+            if (releaseStoreFileEnv != null) {
+                val jksFile = file(releaseStoreFileEnv)
+                storeFile = if (jksFile.isAbsolute) jksFile else rootProject.file(releaseStoreFileEnv)
 
-            if (adiFragment.isNotEmpty()) {
-                // Read keystore details from local.properties for open-source safety
-                val releaseStoreFile = localProperties.getProperty("RELEASE_STORE_FILE", "")
-                val releaseStorePassword = localProperties.getProperty("RELEASE_STORE_PASSWORD", "")
-                val releaseKeyAlias = localProperties.getProperty("RELEASE_KEY_ALIAS", "")
-                val releaseKeyPassword = localProperties.getProperty("RELEASE_KEY_PASSWORD", "")
+                storePassword = releaseStorePasswordEnv
+                keyAlias = releaseKeyAliasEnv
+                keyPassword = releaseKeyPasswordEnv
 
-                if (releaseStoreFile.isNotEmpty()) {
-                    val jksFile = file(releaseStoreFile)
-                    storeFile = if (jksFile.isAbsolute) jksFile else rootProject.file(releaseStoreFile)
-
-                    storePassword = releaseStorePassword
-                    keyAlias = releaseKeyAlias
-                    keyPassword = releaseKeyPassword
-
-                    enableV2Signing = true
-                    enableV3Signing = true
-                    enableV4Signing = true
-                } else {
-                    logger.warn("⚠️  RELEASE_STORE_FILE not found in local.properties. Release signing will fail.")
-                }
+                enableV2Signing = true
+                enableV3Signing = true
+                enableV4Signing = true
             } else {
-                // Fallback: if no ADI fragment, will require manual signing
-                logger.warn("⚠️  ADI registration fragment not found or is placeholder in adi-registration.properties")
-                logger.warn("   Please follow the setup instructions in adi-registration.properties.example")
+                logger.warn("⚠️  RELEASE_STORE_FILE environment variable not set. Release signing will fail.")
+            }
+
+            if (adiRegistrationFragment.isEmpty()) {
+                logger.warn("⚠️  ADI_REGISTRATION_FRAGMENT environment variable not set or still uses a placeholder.")
+            } else {
+                logger.lifecycle("ADI registration fragment loaded from environment variable.")
             }
         }
     }

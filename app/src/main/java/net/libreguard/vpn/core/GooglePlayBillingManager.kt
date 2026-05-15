@@ -149,7 +149,7 @@ class GooglePlayBillingManager(private val context: Context) {
 
     private suspend fun loadProductDetails() {
         val productIds = listOf(
-            "libreguard_vpn"
+            BuildConfig.GOOGLE_PLAY_PRODUCT_ID.takeIf { it.isNotBlank() } ?: "libreguard_vpn"
         ).distinct()
 
         val productList = productIds.map { productId ->
