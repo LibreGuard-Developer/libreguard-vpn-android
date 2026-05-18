@@ -1,8 +1,8 @@
 [submodule "ics-openvpn"]
 	path = ics-openvpn
-	url = https://github.com/MareM010/libreguard-ics-openvpn.git
-	branch = libreguard-integration
+	url = https://github.com/LibreGuard-Developer/ics-openvpn-libreguard.git
+	branch = master
 [submodule "strongswan"]
 	path = strongswan
-	url = https://github.com/MareM010/libreguard-strongswan.git
-	branch = libreguard-integration
+	url = https://github.com/LibreGuard-Developer/strongswan-android-libreguard.git
+	branch = master
