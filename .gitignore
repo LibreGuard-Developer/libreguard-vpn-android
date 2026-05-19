@@ -54,3 +54,8 @@ STRONGSWAN_CLEANUP_COMPLETE.md
 # Generated from environment variables at build time
 /app/google-services.json
 
+# Local diagnostic / generated artifacts
+/status_probe.py
+/status_probe_report.txt
+/gradle/gradle-daemon-jvm.properties
+
