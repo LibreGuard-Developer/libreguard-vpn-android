@@ -28,6 +28,15 @@
 	<fields>;
 }
 
+# Gson instantiates these DTOs reflectively. In release builds R8 can otherwise
+# abstractify/merge classes in ways that break reflective construction.
+# Keep the concrete network model classes intact while still allowing the rest of
+# the app to be optimized normally.
+-keep class net.libreguard.vpn.network.** {
+	<fields>;
+	<init>(...);
+}
+
 # Preserve persisted JSON schema for locally stored connection history.
 -keepclassmembers class net.libreguard.vpn.data.ConnectionRecord {
 	<fields>;
@@ -58,3 +67,11 @@
 
 # Resolved via Class.forName() in BouncyCastleBootstrap.
 -keep class org.bouncycastle.jce.provider.BouncyCastleProvider { *; }
+
+# Keep the bundled BouncyCastle implementation intact in release builds.
+# The provider is loaded reflectively and its engine classes are wired internally,
+# so R8 must not strip package-private/provider-internal code used for PKCS#12,
+# TLS, and certificate parsing.
+-keep class org.bouncycastle.** { *; }
+-dontwarn org.bouncycastle.**
+

@@ -51,6 +51,7 @@ val googleServicesJsonEnv = env("GOOGLE_SERVICES_JSON")
 val googleServicesJsonB64Env = env("GOOGLE_SERVICES_JSON_B64")
 val googleServicesJsonFile = layout.projectDirectory.file("google-services.json").asFile
 val adiRegistrationPropertiesLocalFile = rootProject.file("adi-registration.properties")
+val adiRegistrationPropertiesLocalFileExists = adiRegistrationPropertiesLocalFile.exists()
 val generatedAdiRegistrationFile = layout.buildDirectory.file("generated/assets/adi/main/adi-registration.properties")
 
 val generateGoogleServicesJson by tasks.registering {
@@ -92,9 +93,11 @@ val generateGoogleServicesJson by tasks.registering {
 val generateAdiRegistrationProperties by tasks.registering {
     inputs.property("adiRegistrationPropertiesEnv", adiRegistrationPropertiesEnv ?: "")
     inputs.property("adiRegistrationFragment", adiRegistrationFragment)
-    inputs.file(adiRegistrationPropertiesLocalFile)
-        .optional()
-        .withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs.property("adiRegistrationPropertiesLocalFileExists", adiRegistrationPropertiesLocalFileExists)
+    if (adiRegistrationPropertiesLocalFileExists) {
+        inputs.file(adiRegistrationPropertiesLocalFile)
+            .withPathSensitivity(PathSensitivity.RELATIVE)
+    }
     outputs.file(generatedAdiRegistrationFile)
 
     doLast {
@@ -132,6 +135,15 @@ tasks.matching { it.name.matches(Regex("merge.+Assets")) }.configureEach {
     dependsOn(generateAdiRegistrationProperties)
 }
 
+tasks.matching { it.name.matches(Regex("generate.+Lint.*Model")) }.configureEach {
+    dependsOn(generateAdiRegistrationProperties)
+}
+
+tasks.matching { it.name.contains("lintVital", ignoreCase = true) }.configureEach {
+    dependsOn(generateAdiRegistrationProperties)
+}
+
+
 tasks.matching { it.name == "clean" }.configureEach {
     doFirst {
         if (googleServicesJsonFile.exists()) {
@@ -148,8 +160,8 @@ android {
         applicationId = "net.libreguard.vpn"
         minSdk = 29
         targetSdk = 35
-        versionCode = 10840
-        versionName = "1.8.4"
+        versionCode = 10861
+        versionName = "1.8.6"
 
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
