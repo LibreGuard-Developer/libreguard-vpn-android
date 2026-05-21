@@ -16,7 +16,7 @@ import net.libreguard.vpn.viewmodel.VpnViewModel
  * Legal/Support screen overlay types
  */
 enum class LegalScreen {
-    NONE, HELP, PRIVACY, TERMS
+    NONE, HELP, OPEN_SOURCE, PRIVACY, TERMS
 }
 
 /**
@@ -98,6 +98,7 @@ fun MainContainerScreen(
                             onNavigateToTwoFactor = onNavigateToTwoFactor,
                             onNavigateToUpgrade = onNavigateToUpgrade,
                             onNavigateToHelp = { legalScreen = LegalScreen.HELP },
+                            onNavigateToOpenSource = { legalScreen = LegalScreen.OPEN_SOURCE },
                             onNavigateToPrivacy = { legalScreen = LegalScreen.PRIVACY },
                             onNavigateToTerms = { legalScreen = LegalScreen.TERMS },
                             onLogout = onLogout,
@@ -122,6 +123,11 @@ fun MainContainerScreen(
                 when (legalScreen) {
                     LegalScreen.HELP -> {
                         HelpSupportScreen(
+                            onBack = { legalScreen = LegalScreen.NONE }
+                        )
+                    }
+                    LegalScreen.OPEN_SOURCE -> {
+                        OpenSourceLicensesScreen(
                             onBack = { legalScreen = LegalScreen.NONE }
                         )
                     }

@@ -31,6 +31,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import kotlinx.coroutines.delay
 import net.libreguard.vpn.ui.screens.LoginScreen
 import net.libreguard.vpn.ui.screens.MainScreen
+import net.libreguard.vpn.ui.screens.OpenSourceLicensesScreen
 import net.libreguard.vpn.ui.screens.SettingsScreen
 import net.libreguard.vpn.ui.screens.TwoFactorSettingsScreen
 import net.libreguard.vpn.ui.screens.TwoFactorVerificationScreen
@@ -929,6 +930,7 @@ fun AppNavigation(
                     onNavigateBack = { navController.popBackStack() },
                     onNavigateToTwoFactor = { navController.navigate("twoFactorSettings") },
                     onNavigateToUpgrade = { navController.navigate("payment/googleplay") },
+                    onNavigateToOpenSource = { navController.navigate("openSourceLicenses") },
                     onNavigateToPrivacy = { navController.navigate("privacyPolicy") },
                     onNavigateToTerms = { navController.navigate("termsOfService") },
                     onLogout = {
@@ -1021,6 +1023,12 @@ fun AppNavigation(
 
         composable("privacyPolicy") {
             PrivacyPolicyScreen(
+                onBack = { navController.popBackStack() }
+            )
+        }
+
+        composable("openSourceLicenses") {
+            OpenSourceLicensesScreen(
                 onBack = { navController.popBackStack() }
             )
         }

@@ -53,6 +53,18 @@ STRONGSWAN_CLEANUP_COMPLETE.md
 
 # Generated from environment variables at build time
 /app/google-services.json
+/app/google-services-*.json
+
+# Local secret/env files and signing artifacts
+/.env
+/.env.*
+/keystore.properties
+/signing.properties
+/release.properties
+*.jks
+*.keystore
+*.p12
+*.pfx
 
 # Local diagnostic / generated artifacts
 /status_probe.py

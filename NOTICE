@@ -1,0 +1,20 @@
+LibreGuard VPN
+Copyright (C) LibreGuard contributors
+
+This repository includes LibreGuard application code together with bundled or vendored open-source components, including:
+
+- ics-openvpn (`ics-openvpn/`)
+- strongSwan Android/frontend sources (`strongswan/`)
+
+The repository root is distributed under the GNU General Public License v2.0.
+Bundled upstream components retain their own copyright notices, license files,
+and any additional exceptions documented in their respective directories.
+
+See the following files for details:
+
+- `LICENSE`
+- `THIRD_PARTY_LICENSES.md`
+- `ics-openvpn/doc/LICENSE.txt`
+- `strongswan/LICENSE`
+- `strongswan/COPYING`
+

@@ -43,6 +43,7 @@ fun SettingsScreen(
     onNavigateToTwoFactor: () -> Unit,
     onNavigateToUpgrade: () -> Unit,
     onNavigateToHelp: () -> Unit = {},
+    onNavigateToOpenSource: () -> Unit = {},
     onNavigateToPrivacy: () -> Unit = {},
     onNavigateToTerms: () -> Unit = {},
     onLogout: () -> Unit,
@@ -414,6 +415,13 @@ fun SettingsScreen(
                 )
                 HorizontalDivider(color = Border, modifier = Modifier.padding(start = 68.dp))
                 SettingsItemRow(
+                    icon = Icons.Default.Gavel,
+                    title = "Open Source Licenses",
+                    subtitle = "GPLv2, source code, and bundled notices",
+                    onClick = onNavigateToOpenSource
+                )
+                HorizontalDivider(color = Border, modifier = Modifier.padding(start = 68.dp))
+                SettingsItemRow(
                     icon = Icons.Default.Description,
                     title = "Privacy Policy",
                     onClick = onNavigateToPrivacy
@@ -484,6 +492,11 @@ fun SettingsScreen(
                 )
                 Text(
                     text = "Open-source VPN app",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MutedForeground
+                )
+                Text(
+                    text = "Licensed under GPL v2.0",
                     style = MaterialTheme.typography.bodySmall,
                     color = MutedForeground
                 )
