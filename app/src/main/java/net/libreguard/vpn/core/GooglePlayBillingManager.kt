@@ -24,6 +24,12 @@ private const val TAG = "GooglePlayBillingMgr"
  */
 class GooglePlayBillingManager(private val context: Context) {
 
+    private data class BillingErrorDetails(
+        val message: String,
+        val code: Int,
+        val debugMessage: String
+    )
+
     private sealed class BackendVerificationResult {
         data class Success(val currentPeriodEnd: String?) : BackendVerificationResult()
         data class Pending(val message: String) : BackendVerificationResult()
@@ -64,6 +70,8 @@ class GooglePlayBillingManager(private val context: Context) {
     val subscriptionOptions: StateFlow<List<SubscriptionOption>> = _subscriptionOptions
 
     private var _activePurchaseToken: String? = null
+    private var obfuscatedAccountId: String? = null
+    private var obfuscatedProfileId: String? = null
 
     // ── Internal ──────────────────────────────────────────────────────────────
 
@@ -88,12 +96,15 @@ class GooglePlayBillingManager(private val context: Context) {
             }
             BillingClient.BillingResponseCode.ITEM_ALREADY_OWNED -> {
                 Log.i(TAG, "Item already owned — querying existing purchases")
+                _billingState.value = BillingState.PurchasePending(
+                    GooglePlaySecurityUtils.billingMessage(billingResult.responseCode)
+                )
                 scope.launch { queryExistingPurchases() }
             }
             else -> {
-                val msg = "Billing error: ${billingResult.responseCode} — ${billingResult.debugMessage}"
-                Log.e(TAG, msg)
-                _billingState.value = BillingState.Error(msg)
+                val error = createBillingErrorDetails(billingResult)
+                Log.e(TAG, "Purchase update failed: code=${error.code} debug=${error.debugMessage}")
+                _billingState.value = BillingState.Error(error.message)
             }
         }
     }
@@ -143,6 +154,11 @@ class GooglePlayBillingManager(private val context: Context) {
     fun disconnect() {
         billingClient.endConnection()
         scope.cancel()
+    }
+
+    fun setAccountContext(accountId: String?, profileId: String?) {
+        obfuscatedAccountId = GooglePlaySecurityUtils.obfuscateId(accountId)
+        obfuscatedProfileId = GooglePlaySecurityUtils.obfuscateId(profileId)
     }
 
     // ── Product details ───────────────────────────────────────────────────────
@@ -239,7 +255,9 @@ class GooglePlayBillingManager(private val context: Context) {
                 Log.d(TAG, "Loaded ProductDetails and Extracted Offers")
             }
         } else {
-            Log.e(TAG, "queryProductDetails failed: ${result.billingResult.responseCode}")
+            val error = createBillingErrorDetails(result.billingResult)
+            Log.e(TAG, "queryProductDetails failed: code=${error.code} debug=${error.debugMessage}")
+            _billingState.value = BillingState.Error(error.message)
         }
     }
 
@@ -267,6 +285,9 @@ class GooglePlayBillingManager(private val context: Context) {
         val billingFlowParamsBuilder = BillingFlowParams.newBuilder()
             .setProductDetailsParamsList(productDetailsParamsList)
 
+        obfuscatedAccountId?.let(billingFlowParamsBuilder::setObfuscatedAccountId)
+        obfuscatedProfileId?.let(billingFlowParamsBuilder::setObfuscatedProfileId)
+
         // Upgrade/Downgrade: if user already has an active subscription token, we MUST pass it to Google
         if (_activePurchaseToken != null) {
             billingFlowParamsBuilder.setSubscriptionUpdateParams(
@@ -279,8 +300,9 @@ class GooglePlayBillingManager(private val context: Context) {
 
         val result = billingClient.launchBillingFlow(activity, billingFlowParamsBuilder.build())
         if (result.responseCode != BillingClient.BillingResponseCode.OK) {
-            Log.e(TAG, "launchBillingFlow failed: ${result.responseCode}")
-            _billingState.value = BillingState.Error("Failed to launch purchase flow")
+            val error = createBillingErrorDetails(result)
+            Log.e(TAG, "launchBillingFlow failed: code=${error.code} debug=${error.debugMessage}")
+            _billingState.value = BillingState.Error(error.message)
         }
     }
 
@@ -338,7 +360,8 @@ class GooglePlayBillingManager(private val context: Context) {
                     if (ackResult.responseCode == BillingClient.BillingResponseCode.OK) {
                         Log.d(TAG, "Purchase acknowledged with Google Play")
                     } else {
-                        Log.e(TAG, "Acknowledgement failed: ${ackResult.responseCode}")
+                        val ackError = createBillingErrorDetails(ackResult)
+                        Log.e(TAG, "Acknowledgement failed: code=${ackError.code} debug=${ackError.debugMessage}")
                         // Backend is already updated; acknowledgement will be retried on next app open
                     }
                 }
@@ -491,7 +514,9 @@ class GooglePlayBillingManager(private val context: Context) {
                 scope.launch { handlePurchase(purchase) }
             }
         } else {
-            Log.w(TAG, "queryPurchasesAsync failed: ${result.billingResult.responseCode}")
+            val error = createBillingErrorDetails(result.billingResult)
+            Log.w(TAG, "queryPurchasesAsync failed: code=${error.code} debug=${error.debugMessage}")
+            _billingState.value = BillingState.Error(error.message)
         }
     }
 
@@ -520,8 +545,18 @@ class GooglePlayBillingManager(private val context: Context) {
                     handlePurchase(purchase)
                 }
             } else {
-                _billingState.value = BillingState.Error("Failed to query purchases: ${result.billingResult.responseCode}")
+                val error = createBillingErrorDetails(result.billingResult)
+                Log.w(TAG, "restorePurchases query failed: code=${error.code} debug=${error.debugMessage}")
+                _billingState.value = BillingState.Error(error.message)
             }
         }
+    }
+
+    private fun createBillingErrorDetails(billingResult: BillingResult): BillingErrorDetails {
+        return BillingErrorDetails(
+            message = GooglePlaySecurityUtils.billingMessage(billingResult.responseCode),
+            code = billingResult.responseCode,
+            debugMessage = billingResult.debugMessage
+        )
     }
 }

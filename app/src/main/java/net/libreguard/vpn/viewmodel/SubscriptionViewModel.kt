@@ -1,14 +1,18 @@
 package net.libreguard.vpn.viewmodel
 
 import android.app.Application
+import android.content.Context
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import java.nio.charset.StandardCharsets
+import java.util.Base64
 import net.libreguard.vpn.network.RetrofitClient
 import net.libreguard.vpn.network.SubscriptionStatusResponse
 import net.libreguard.vpn.network.MoneroInvoiceResponse
 import net.libreguard.vpn.network.MoneroStatusResponse
 import net.libreguard.vpn.core.GooglePlayBillingManager
+import net.libreguard.vpn.core.GooglePlaySecurityUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -16,7 +20,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import android.content.Context
 
 private const val TAG = "SubscriptionViewModel"
 private const val SUBSCRIPTION_CACHE_TTL_MS = 30 * 1000L // 30 seconds (reduced from 5 minutes for better responsiveness)
@@ -108,12 +111,48 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
      * TokenManager is the single source of truth for Authorization.
      */
     fun setAuthToken(token: String, userId: String? = null) {
-        currentUserId = userId
+        currentUserId = resolveBillingUserId(token, userId)
 
         // Store user ID for cache versioning
-        if (userId != null) {
-            sharedPrefs.edit().putString("subscription_user_id", userId).apply()
+        if (currentUserId != null) {
+            sharedPrefs.edit().putString("subscription_user_id", currentUserId).apply()
         }
+
+        billingManager.setAccountContext(
+            accountId = currentUserId,
+            profileId = runCatching { RetrofitClient.getTokenManager().requireDeviceId() }.getOrNull()
+        )
+    }
+
+    private fun resolveBillingUserId(token: String, explicitUserId: String?): String {
+        explicitUserId?.trim()?.takeIf { it.isNotEmpty() }?.let { return it }
+        extractUserIdFromJwt(token)?.let { return it }
+
+        return "token_${GooglePlaySecurityUtils.obfuscateId(token)?.take(24) ?: token.hashCode()}"
+    }
+
+    private fun extractUserIdFromJwt(token: String): String? {
+        return runCatching {
+            val parts = token.split('.')
+            if (parts.size < 2) return@runCatching null
+
+            val payload = parts[1]
+            val paddingLength = (4 - payload.length % 4) % 4
+            val normalizedPayload = payload + "=".repeat(paddingLength)
+            val decoded = String(
+                Base64.getUrlDecoder().decode(normalizedPayload),
+                StandardCharsets.UTF_8
+            )
+
+            val userFieldPattern = Regex(
+                "\"(?:sub|user_id|userId|id|email|username)\"\\s*:\\s*\"([^\"]+)\""
+            )
+            userFieldPattern.find(decoded)
+                ?.groupValues
+                ?.getOrNull(1)
+                ?.trim()
+                ?.takeIf { it.isNotEmpty() }
+        }.getOrNull()
     }
 
     private fun getAuthHeaderOrNull(): String? {
