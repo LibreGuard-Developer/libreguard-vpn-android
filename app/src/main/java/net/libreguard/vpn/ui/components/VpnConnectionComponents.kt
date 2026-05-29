@@ -1,13 +1,24 @@
 package net.libreguard.vpn.ui.components
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material3.*
@@ -17,8 +28,18 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
 import net.libreguard.vpn.ui.theme.*
 
 /**
@@ -49,13 +70,13 @@ fun getStatusConfig(status: VpnConnectionStatus): VpnStatusConfig {
         VpnConnectionStatus.CONNECTED -> VpnStatusConfig(
             color = StatusConnected,
             text = "Protected",
-            description = "Your connection is secure",
+            description = "Secure tunnel active",
             buttonText = "Disconnect"
         )
         VpnConnectionStatus.CONNECTING -> VpnStatusConfig(
             color = StatusConnecting,
             text = "Connecting",
-            description = "Establishing secure connection...",
+            description = "Establishing secure tunnel...",
             buttonText = "Cancel"
         )
         VpnConnectionStatus.DISCONNECTED -> VpnStatusConfig(
@@ -67,6 +88,90 @@ fun getStatusConfig(status: VpnConnectionStatus): VpnStatusConfig {
     }
 }
 
+@Composable
+private fun rememberConnectionProgress(status: VpnConnectionStatus): Float {
+    val progress = remember { Animatable(0f) }
+
+    LaunchedEffect(status) {
+        when (status) {
+            VpnConnectionStatus.DISCONNECTED -> {
+                progress.animateTo(
+                    targetValue = 0f,
+                    animationSpec = tween(durationMillis = 320, easing = FastOutSlowInEasing)
+                )
+            }
+
+            VpnConnectionStatus.CONNECTING -> {
+                if (progress.value <= 0.01f || progress.value >= 0.96f) {
+                    progress.snapTo(0.06f)
+                }
+
+                if (progress.value < 0.16f) {
+                    progress.animateTo(
+                        targetValue = 0.16f,
+                        animationSpec = tween(durationMillis = 260, easing = LinearOutSlowInEasing)
+                    )
+                }
+
+                while (currentCoroutineContext().isActive) {
+                    val target = (progress.value + (0.92f - progress.value) * 0.24f)
+                        .coerceAtMost(0.92f)
+                    val remaining = (0.92f - progress.value).coerceAtLeast(0.04f)
+
+                    progress.animateTo(
+                        targetValue = target,
+                        animationSpec = tween(
+                            durationMillis = (550 + remaining * 2200).toInt(),
+                            easing = LinearOutSlowInEasing
+                        )
+                    )
+                }
+            }
+
+            VpnConnectionStatus.CONNECTED -> {
+                if (progress.value < 0.82f) {
+                    progress.snapTo(0.82f)
+                }
+                progress.animateTo(
+                    targetValue = 1f,
+                    animationSpec = tween(durationMillis = 620, easing = FastOutSlowInEasing)
+                )
+            }
+        }
+    }
+
+    return progress.value
+}
+
+@Composable
+fun VpnConnectionHero(
+    status: VpnConnectionStatus,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    showProgressBar: Boolean = true
+) {
+    val progress = rememberConnectionProgress(status)
+
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        VpnConnectionShield(
+            status = status,
+            onClick = onClick,
+            progress = progress
+        )
+
+        Spacer(modifier = Modifier.height(20.dp))
+
+        VpnStatusText(
+            status = status,
+            progress = progress,
+            showProgressBar = showProgressBar
+        )
+    }
+}
+
 /**
  * VPN Connection Shield - The main connect/disconnect button
  */
@@ -74,40 +179,65 @@ fun getStatusConfig(status: VpnConnectionStatus): VpnStatusConfig {
 fun VpnConnectionShield(
     status: VpnConnectionStatus,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    progress: Float? = null
 ) {
     val config = getStatusConfig(status)
+    val connectionProgress = progress ?: rememberConnectionProgress(status)
+    val primaryColor = Primary
+    val surfaceColor = CardBackground
 
-    // Animation for breathing effect when connected
-    val infiniteTransition = rememberInfiniteTransition(label = "shieldPulse")
-    val pulseScale by infiniteTransition.animateFloat(
-        initialValue = 1f,
-        targetValue = if (status == VpnConnectionStatus.CONNECTED) 1.02f else 1f,
+    val transition = updateTransition(targetState = status, label = "shieldState")
+    val shieldScale by transition.animateFloat(
+        transitionSpec = {
+            spring(stiffness = Spring.StiffnessMediumLow, dampingRatio = Spring.DampingRatioLowBouncy)
+        },
+        label = "shieldScale"
+    ) { targetStatus ->
+        when (targetStatus) {
+            VpnConnectionStatus.DISCONNECTED -> 0.98f
+            VpnConnectionStatus.CONNECTING -> 1.01f
+            VpnConnectionStatus.CONNECTED -> 1.04f
+        }
+    }
+    val iconScale by transition.animateFloat(
+        transitionSpec = { tween(durationMillis = 420, easing = FastOutSlowInEasing) },
+        label = "iconScale"
+    ) { targetStatus ->
+        when (targetStatus) {
+            VpnConnectionStatus.DISCONNECTED -> 0.96f
+            VpnConnectionStatus.CONNECTING -> 1f
+            VpnConnectionStatus.CONNECTED -> 1.05f
+        }
+    }
+
+    val infiniteTransition = rememberInfiniteTransition(label = "shieldEnergy")
+    val orbitRotation by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
         animationSpec = infiniteRepeatable(
-            animation = tween(2000, easing = EaseInOut),
+            animation = tween(durationMillis = 3200, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "orbitRotation"
+    )
+    val haloPulse by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1800, easing = EaseInOut),
             repeatMode = RepeatMode.Reverse
         ),
-        label = "pulseScale"
+        label = "haloPulse"
     )
-
-    // Animation for connecting ripple
-    val rippleScale by infiniteTransition.animateFloat(
-        initialValue = 1f,
-        targetValue = if (status == VpnConnectionStatus.CONNECTING) 1.2f else 1f,
+    val connectedPulse by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
         animationSpec = infiniteRepeatable(
-            animation = tween(1500, easing = EaseInOut),
-            repeatMode = RepeatMode.Restart
+            animation = tween(durationMillis = 2600, easing = EaseInOut),
+            repeatMode = RepeatMode.Reverse
         ),
-        label = "rippleScale"
-    )
-    val rippleAlpha by infiniteTransition.animateFloat(
-        initialValue = if (status == VpnConnectionStatus.CONNECTING) 0.8f else 0f,
-        targetValue = 0f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1500, easing = EaseInOut),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "rippleAlpha"
+        label = "connectedPulse"
     )
 
     val interactionSource = remember { MutableInteractionSource() }
@@ -118,55 +248,153 @@ fun VpnConnectionShield(
         label = "pressScale"
     )
 
+    val activePulseScale = when (status) {
+        VpnConnectionStatus.CONNECTING -> 1f + haloPulse * 0.015f
+        VpnConnectionStatus.CONNECTED -> 1f + connectedPulse * 0.024f
+        VpnConnectionStatus.DISCONNECTED -> 1f
+    }
+
     Box(
         modifier = modifier
-            .scale(pulseScale * pressScale),
+            .scale(shieldScale * activePulseScale * pressScale),
         contentAlignment = Alignment.Center
     ) {
-        // Ripple effect for connecting state
-        if (status == VpnConnectionStatus.CONNECTING) {
-            Box(
-                modifier = Modifier
-                    .size(160.dp)
-                    .scale(rippleScale)
-                    .clip(CircleShape)
-                    .background(config.color.copy(alpha = rippleAlpha))
-            )
-        }
+        Canvas(modifier = Modifier.size(188.dp)) {
+            val strokeWidth = size.minDimension * 0.055f
+            val ringInset = strokeWidth / 2f + 8f
+            val ringTopLeft = Offset(ringInset, ringInset)
+            val ringSize = Size(size.width - ringInset * 2f, size.height - ringInset * 2f)
+            val ringRadius = size.minDimension * 0.47f
 
-        // Outer glow ring
-        Box(
-            modifier = Modifier
-                .size(160.dp)
-                .clip(CircleShape)
-                .background(config.color.copy(alpha = 0.08f))
-                .shadow(
-                    elevation = 0.dp,
-                    shape = CircleShape,
-                    ambientColor = config.color.copy(alpha = 0.2f),
-                    spotColor = config.color.copy(alpha = 0.2f)
+            drawCircle(
+                color = config.color.copy(
+                    alpha = when (status) {
+                        VpnConnectionStatus.DISCONNECTED -> 0.05f
+                        VpnConnectionStatus.CONNECTING -> 0.08f + haloPulse * 0.08f
+                        VpnConnectionStatus.CONNECTED -> 0.10f + connectedPulse * 0.06f
+                    }
                 ),
-            contentAlignment = Alignment.Center
-        ) {
-            // Inner circle
-            Box(
-                modifier = Modifier
-                    .size(128.dp)
-                    .clip(CircleShape)
-                    .background(config.color.copy(alpha = 0.15f))
-                    .clickable(
-                        interactionSource = interactionSource,
-                        indication = null
-                    ) { onClick() },
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Shield,
-                    contentDescription = config.text,
-                    modifier = Modifier.size(64.dp),
-                    tint = config.color
+                radius = ringRadius
+            )
+
+            if (status == VpnConnectionStatus.CONNECTING) {
+                drawCircle(
+                    color = config.color.copy(alpha = (1f - haloPulse) * 0.10f),
+                    radius = size.minDimension * (0.46f + haloPulse * 0.09f)
                 )
             }
+
+            drawArc(
+                color = config.color.copy(alpha = 0.13f),
+                startAngle = 0f,
+                sweepAngle = 360f,
+                useCenter = false,
+                topLeft = ringTopLeft,
+                size = ringSize,
+                style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
+            )
+
+            val progressSweep = (360f * connectionProgress).coerceIn(0f, 360f)
+            if (progressSweep > 1f) {
+                drawArc(
+                    brush = Brush.sweepGradient(
+                        listOf(
+                            primaryColor.copy(alpha = 0.18f),
+                            config.color.copy(alpha = 0.95f),
+                            primaryColor.copy(alpha = 0.78f),
+                            config.color.copy(alpha = 0.95f),
+                            primaryColor.copy(alpha = 0.18f)
+                        )
+                    ),
+                    startAngle = -90f,
+                    sweepAngle = progressSweep,
+                    useCenter = false,
+                    topLeft = ringTopLeft,
+                    size = ringSize,
+                    style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
+                )
+            }
+
+            if (status == VpnConnectionStatus.CONNECTING) {
+                rotate(orbitRotation) {
+                    drawArc(
+                        brush = Brush.sweepGradient(
+                            listOf(
+                                Color.Transparent,
+                                primaryColor.copy(alpha = 0.12f),
+                                config.color.copy(alpha = 0.92f),
+                                primaryColor.copy(alpha = 0.48f),
+                                Color.Transparent
+                            )
+                        ),
+                        startAngle = -110f,
+                        sweepAngle = 92f,
+                        useCenter = false,
+                        topLeft = ringTopLeft,
+                        size = ringSize,
+                        style = Stroke(width = strokeWidth * 0.9f, cap = StrokeCap.Round)
+                    )
+                }
+            }
+        }
+
+        Box(
+            modifier = Modifier
+                .size(154.dp)
+                .clip(CircleShape)
+                .background(
+                    brush = Brush.radialGradient(
+                        listOf(
+                            config.color.copy(
+                                alpha = when (status) {
+                                    VpnConnectionStatus.DISCONNECTED -> 0.04f
+                                    VpnConnectionStatus.CONNECTING -> 0.12f
+                                    VpnConnectionStatus.CONNECTED -> 0.16f
+                                }
+                            ),
+                            config.color.copy(alpha = 0.03f),
+                            Color.Transparent
+                        )
+                    )
+                )
+        )
+
+        Box(
+            modifier = Modifier
+                .size(128.dp)
+                .shadow(
+                    elevation = if (status == VpnConnectionStatus.CONNECTED) 18.dp else 10.dp,
+                    shape = CircleShape,
+                    ambientColor = config.color.copy(alpha = 0.22f),
+                    spotColor = config.color.copy(alpha = 0.22f)
+                )
+                .clip(CircleShape)
+                .background(
+                    brush = Brush.verticalGradient(
+                        listOf(
+                            surfaceColor.copy(alpha = 0.98f),
+                            config.color.copy(alpha = 0.16f),
+                            surfaceColor.copy(alpha = 0.98f)
+                        )
+                    )
+                )
+                .clickable(
+                    interactionSource = interactionSource,
+                    indication = null
+                ) { onClick() },
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = Icons.Default.Shield,
+                contentDescription = config.text,
+                modifier = Modifier
+                    .size(64.dp)
+                    .graphicsLayer {
+                        scaleX = iconScale
+                        scaleY = iconScale
+                    },
+                tint = config.color
+            )
         }
     }
 }
@@ -177,37 +405,176 @@ fun VpnConnectionShield(
 @Composable
 fun VpnStatusText(
     status: VpnConnectionStatus,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    progress: Float? = null,
+    showProgressBar: Boolean = true
 ) {
-    val config = getStatusConfig(status)
-
-    // Animate text scale when connecting
-    val infiniteTransition = rememberInfiniteTransition(label = "textPulse")
-    val textScale by infiniteTransition.animateFloat(
-        initialValue = 1f,
-        targetValue = if (status == VpnConnectionStatus.CONNECTING) 1.05f else 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1000, easing = EaseInOut),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "textScale"
+    val connectionProgress = progress ?: rememberConnectionProgress(status)
+    val titleColor by animateColorAsState(
+        targetValue = getStatusConfig(status).color,
+        animationSpec = tween(durationMillis = 350, easing = FastOutSlowInEasing),
+        label = "titleColor"
     )
+    val transition = updateTransition(targetState = status, label = "statusTextState")
+    val textScale by transition.animateFloat(
+        transitionSpec = { spring(stiffness = Spring.StiffnessLow, dampingRatio = Spring.DampingRatioNoBouncy) },
+        label = "textScale"
+    ) { targetStatus ->
+        when (targetStatus) {
+            VpnConnectionStatus.CONNECTING -> 1.02f
+            VpnConnectionStatus.CONNECTED -> 1.01f
+            VpnConnectionStatus.DISCONNECTED -> 1f
+        }
+    }
+    val shouldShowProgress = showProgressBar &&
+        (status == VpnConnectionStatus.CONNECTING ||
+            (status == VpnConnectionStatus.CONNECTED && connectionProgress < 0.999f))
 
     Column(
         modifier = modifier.scale(textScale),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text(
-            text = config.text,
-            style = MaterialTheme.typography.headlineMedium,
-            color = config.color
+        AnimatedContent(
+            targetState = status,
+            transitionSpec = {
+                (fadeIn(animationSpec = tween(320, delayMillis = 80)) +
+                    scaleIn(initialScale = 0.97f, animationSpec = tween(320, delayMillis = 80))) togetherWith
+                    (fadeOut(animationSpec = tween(160)) +
+                        scaleOut(targetScale = 0.98f, animationSpec = tween(160)))
+            },
+            label = "statusCopy"
+        ) { targetStatus ->
+            val config = getStatusConfig(targetStatus)
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(
+                    text = config.text,
+                    style = MaterialTheme.typography.headlineMedium,
+                    color = titleColor
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = config.description,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MutedForeground
+                )
+            }
+        }
+
+        AnimatedVisibility(
+            visible = shouldShowProgress,
+            enter = fadeIn(animationSpec = tween(220)) + expandVertically(expandFrom = Alignment.Top),
+            exit = fadeOut(animationSpec = tween(180)) + shrinkVertically(shrinkTowards = Alignment.Top)
+        ) {
+            Column(
+                modifier = Modifier.padding(top = 14.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                VpnConnectionProgressBar(
+                    progress = connectionProgress,
+                    status = status,
+                    modifier = Modifier
+                        .width(224.dp)
+                        .height(10.dp)
+                )
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                Text(
+                    text = if (status == VpnConnectionStatus.CONNECTED) {
+                        "Tunnel established"
+                    } else {
+                        "Securing tunnel"
+                    },
+                    style = MaterialTheme.typography.labelMedium,
+                    color = titleColor.copy(alpha = 0.9f)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun VpnConnectionProgressBar(
+    progress: Float,
+    status: VpnConnectionStatus,
+    modifier: Modifier = Modifier
+) {
+    val barColor = when (status) {
+        VpnConnectionStatus.CONNECTED -> StatusConnected
+        VpnConnectionStatus.CONNECTING -> StatusConnecting
+        VpnConnectionStatus.DISCONNECTED -> StatusDisconnected
+    }
+    val primaryColor = Primary
+    val shimmerTransition = rememberInfiniteTransition(label = "progressShimmer")
+    val shimmer by shimmerTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1300, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "shimmer"
+    )
+
+    Canvas(
+        modifier = modifier
+            .clip(RoundedCornerShape(percent = 50))
+    ) {
+        val radius = size.height / 2f
+        val progressWidth = (size.width * progress.coerceIn(0f, 1f)).coerceAtLeast(0f)
+
+        drawRoundRect(
+            color = barColor.copy(alpha = 0.12f),
+            cornerRadius = CornerRadius(radius, radius)
         )
-        Spacer(modifier = Modifier.height(4.dp))
-        Text(
-            text = config.description,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MutedForeground
+
+        if (progressWidth <= 0f) return@Canvas
+
+        drawRoundRect(
+            color = barColor.copy(alpha = 0.24f),
+            size = Size(progressWidth, size.height),
+            cornerRadius = CornerRadius(radius, radius)
         )
+
+        drawRoundRect(
+            brush = Brush.horizontalGradient(
+                colors = listOf(
+                    primaryColor.copy(alpha = 0.88f),
+                    barColor,
+                    Color.White.copy(alpha = if (status == VpnConnectionStatus.CONNECTED) 0.76f else 0.48f)
+                ),
+                startX = 0f,
+                endX = progressWidth.coerceAtLeast(1f)
+            ),
+            size = Size(progressWidth, size.height),
+            cornerRadius = CornerRadius(radius, radius)
+        )
+
+        drawCircle(
+            color = barColor.copy(alpha = if (status == VpnConnectionStatus.CONNECTED) 0.30f else 0.24f),
+            radius = size.height * 1.05f,
+            center = Offset(progressWidth.coerceAtLeast(radius), size.height / 2f)
+        )
+
+        if (status == VpnConnectionStatus.CONNECTING && progressWidth > size.height) {
+            val shimmerWidth = size.width * 0.22f
+            val shimmerStart = (progressWidth + shimmerWidth) * shimmer - shimmerWidth
+
+            drawRoundRect(
+                brush = Brush.horizontalGradient(
+                    colors = listOf(
+                        Color.Transparent,
+                        Color.White.copy(alpha = 0.40f),
+                        Color.Transparent
+                    ),
+                    startX = shimmerStart,
+                    endX = shimmerStart + shimmerWidth
+                ),
+                topLeft = Offset(shimmerStart, 0f),
+                size = Size(shimmerWidth, size.height),
+                cornerRadius = CornerRadius(radius, radius)
+            )
+        }
     }
 }
 
@@ -221,12 +588,11 @@ fun VpnConnectButton(
     modifier: Modifier = Modifier
 ) {
     val config = getStatusConfig(status)
-    val enabled = status != VpnConnectionStatus.CONNECTING
 
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
     val scale by animateFloatAsState(
-        targetValue = if (isPressed && enabled) 0.95f else 1f,
+        targetValue = if (isPressed) 0.95f else 1f,
         animationSpec = tween(100),
         label = "buttonScale"
     )
@@ -237,7 +603,7 @@ fun VpnConnectButton(
             .scale(scale)
             .height(56.dp)
             .padding(horizontal = 48.dp),
-        enabled = enabled,
+        enabled = true,
         shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
         colors = ButtonDefaults.buttonColors(
             containerColor = Primary,

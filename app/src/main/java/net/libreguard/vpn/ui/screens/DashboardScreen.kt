@@ -1,6 +1,5 @@
 package net.libreguard.vpn.ui.screens
 
-import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -17,6 +16,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import net.libreguard.vpn.ui.components.LogoWithGradient
+import net.libreguard.vpn.ui.components.VpnConnectionHero
+import net.libreguard.vpn.ui.components.VpnConnectionStatus
+import net.libreguard.vpn.ui.components.getStatusConfig
 import net.libreguard.vpn.ui.theme.*
 import net.libreguard.vpn.util.getFlagEmoji
 import net.libreguard.vpn.viewmodel.VpnViewModel
@@ -92,15 +94,23 @@ fun DashboardScreen(
     }
 
     val connectionStatus = when {
-        isConnecting -> ConnectionStatus.CONNECTING
-        isConnected -> ConnectionStatus.CONNECTED
-        else -> ConnectionStatus.DISCONNECTED
+        isConnecting -> VpnConnectionStatus.CONNECTING
+        isConnected -> VpnConnectionStatus.CONNECTED
+        else -> VpnConnectionStatus.DISCONNECTED
     }
 
-    val statusConfig = getConnectionStatusConfig(connectionStatus)
-
-    // Animation transition
-    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
+    val statusConfig = getStatusConfig(connectionStatus)
+    val onConnectionToggle = {
+        if (isConnected || isConnecting) {
+            viewModel.disconnect()
+        } else if (isQuickConnectMode) {
+            viewModel.quickConnect()
+        } else if (selectedServer != null) {
+            viewModel.connectToVpn()
+        } else {
+            onNavigateToServers()
+        }
+    }
 
     // Calculate usage percentages - don't add sessionData as totalBytesUsed (from server) already includes it
     val totalDataUsed = monthlyData
@@ -352,92 +362,17 @@ fun DashboardScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
-            // Status Indicator Circle
-            val shieldSize = when {
-                isConnected -> 140.dp
-                isConnecting -> 140.dp
-                else -> 150.dp
-            }
-            val innerShieldSize = 112.dp
-            val iconSize = 64.dp
-
-            Box(
-                modifier = Modifier
-                    .size(shieldSize),
-                contentAlignment = Alignment.Center
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(shieldSize)
-                        .clip(CircleShape)
-                        .background(statusConfig.color.copy(alpha = 0.15f))
-                )
-                Box(
-                    modifier = Modifier
-                        .size(innerShieldSize)
-                        .clip(CircleShape)
-                        .background(statusConfig.color.copy(alpha = 0.25f)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(Icons.Default.Shield, null, tint = statusConfig.color, modifier = Modifier.size(iconSize))
-                }
-
-                if (isConnecting) {
-                    val animatedAlpha by infiniteTransition.animateFloat(
-                        initialValue = 0.8f, targetValue = 0f,
-                        animationSpec = infiniteRepeatable(tween(1500, easing = EaseInOut), RepeatMode.Restart),
-                        label = "ringAlpha"
-                    )
-                    val animatedScale by infiniteTransition.animateFloat(
-                        initialValue = 1f, targetValue = 1.2f,
-                        animationSpec = infiniteRepeatable(tween(1500, easing = EaseInOut), RepeatMode.Restart),
-                        label = "ringScale"
-                    )
-                    Box(
-                        modifier = Modifier
-                            .size((shieldSize.value * animatedScale).dp)
-                            .clip(CircleShape)
-                            .background(statusConfig.color.copy(alpha = animatedAlpha * 0.3f))
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(20.dp))
-
-            // Status text
-            Text(
-                text = statusConfig.text,
-                style = MaterialTheme.typography.headlineMedium,
-                color = statusConfig.color
-            )
-            Spacer(modifier = Modifier.height(6.dp))
-            Text(
-                text = statusConfig.description,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MutedForeground
+            VpnConnectionHero(
+                status = connectionStatus,
+                onClick = onConnectionToggle,
+                showProgressBar = true
             )
 
-            Spacer(modifier = Modifier.height(14.dp))
+            Spacer(modifier = Modifier.height(18.dp))
 
             // Connect/Disconnect button (design: big rounded)
             Button(
-                onClick = {
-                    if (isConnected || isConnecting) {
-                        viewModel.disconnect()
-                    } else {
-                        if (isQuickConnectMode) {
-                            // Quick Connect mode: auto-select and connect
-                            viewModel.quickConnect()
-                        } else {
-                            // Manual mode: connect to selected server or navigate to select one
-                            if (selectedServer != null) {
-                                viewModel.connectToVpn()
-                            } else {
-                                onNavigateToServers()
-                            }
-                        }
-                    }
-                },
+                onClick = onConnectionToggle,
                 enabled = isConnected || isConnecting || isQuickConnectMode || selectedServer != null,
                 modifier = Modifier
                     .height(if (isConnected) 48.dp else 56.dp)
@@ -745,42 +680,6 @@ private fun Float.toFixed(decimals: Int): String {
     return String.format(Locale.US, "%.${decimals}f", this)
 }
 
-enum class ConnectionStatus {
-    DISCONNECTED,
-    CONNECTING,
-    CONNECTED
-}
-
-data class StatusConfig(
-    val color: androidx.compose.ui.graphics.Color,
-    val text: String,
-    val description: String,
-    val buttonText: String
-)
-
-@Composable
-fun getConnectionStatusConfig(status: ConnectionStatus): StatusConfig {
-    return when (status) {
-        ConnectionStatus.CONNECTED -> StatusConfig(
-            color = StatusConnected,
-            text = "Protected",
-            description = "Your connection is secure",
-            buttonText = "Disconnect"
-        )
-        ConnectionStatus.CONNECTING -> StatusConfig(
-            color = StatusConnecting,
-            text = "Connecting",
-            description = "Establishing secure connection...",
-            buttonText = "Cancel"
-        )
-        ConnectionStatus.DISCONNECTED -> StatusConfig(
-            color = StatusDisconnected,
-            text = "Not Protected",
-            description = "Your connection is not secure",
-            buttonText = "Connect"
-        )
-    }
-}
 
 
 /**
