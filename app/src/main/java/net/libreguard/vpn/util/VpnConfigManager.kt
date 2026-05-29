@@ -9,6 +9,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.strongswan.android.data.VpnProfile
 import org.strongswan.android.data.VpnType
+import org.strongswan.android.logic.TrustedCertificateManager
 import org.strongswan.android.security.LocalCertificateStore
 import org.strongswan.android.security.LocalCertificateKeyStoreManager
 import java.io.File
@@ -22,6 +23,7 @@ import java.io.ByteArrayInputStream
 import java.io.FileOutputStream
 import android.content.SharedPreferences
 import android.database.sqlite.SQLiteDatabase
+import net.libreguard.vpn.R
 import net.libreguard.vpn.util.CrashlyticsReporter
 
 class VpnConfigManager(private val context: Context) {
@@ -236,16 +238,16 @@ class VpnConfigManager(private val context: Context) {
                     // Leave profile.certificateAlias as NULL - accept any valid server cert
                     profile.certificateAlias = null
 
-                    // Proactively install ISRG Root X1 from the Android system trust store
+                    // Proactively seed Let's Encrypt trust anchors into the store strongSwan actually reads
                     try {
-                        val installed = installSystemRootBySubjectCN(
-                            subjectCN = "ISRG Root X1",
-                            expectedOrg = "Internet Security Research Group",
-                            filename = "isrg_root_x1.crt"
-                        )
-                        Log.i(tag, if (installed) "✓ Installed ISRG Root X1 into strongSwan cacerts" else "ISRG Root X1 already present or not found in system store")
+                        val installedAliases = ensureLetsEncryptCompatibilityTrustAnchors()
+                        if (installedAliases.isNotEmpty()) {
+                            Log.i(tag, "✓ Seeded Let's Encrypt compatibility trust anchors: $installedAliases")
+                        } else {
+                            Log.i(tag, "No additional Let's Encrypt trust anchors were installed from AndroidCAStore")
+                        }
                     } catch (e: Exception) {
-                        Log.w(tag, "Failed to ensure ISRG Root X1 in cacerts: ${e.message}")
+                        Log.w(tag, "Failed to ensure Let's Encrypt compatibility roots: ${e.message}")
                     }
                 }
             }
@@ -307,79 +309,38 @@ class VpnConfigManager(private val context: Context) {
             Log.i(tag, "=== LET'S ENCRYPT CA CERTIFICATE IMPORT ===")
             Log.d(tag, "CA cert Base64 length: ${certBase64.length}")
 
-            val cleanBase64 = cleanBase64String(certBase64)
-            val certBytes = tryMultipleBase64Decoding(cleanBase64)
-
-            if (certBytes == null) {
-                Log.e(tag, "Failed to decode Let's Encrypt CA certificate")
+            val parsedCertificates = parseCertificateBundle(certBase64)
+            if (parsedCertificates.isEmpty()) {
+                Log.e(tag, "Failed to parse Let's Encrypt CA certificate bundle")
                 return null
             }
 
-            val cert = parseServerCertificate(certBytes)
+            parsedCertificates.forEachIndexed { index, cert ->
+                Log.i(tag, "Let's Encrypt certificate[$index] details:")
+                Log.i(tag, "  Subject: ${cert.subjectDN}")
+                Log.i(tag, "  Issuer: ${cert.issuerDN}")
+                Log.i(tag, "  Valid from: ${cert.notBefore}")
+                Log.i(tag, "  Valid until: ${cert.notAfter}")
+                Log.d(tag, "  Is self-signed (root CA): ${cert.subjectDN == cert.issuerDN}")
+            }
 
-            if (cert == null) {
-                Log.e(tag, "Failed to parse Let's Encrypt CA certificate")
+            val caCertificates = parsedCertificates.filter {
+                try {
+                    it.basicConstraints >= 0
+                } catch (_: Exception) {
+                    false
+                }
+            }
+            if (caCertificates.isEmpty()) {
+                Log.e(tag, "Certificate bundle did not contain any CA certificates to trust")
                 return null
             }
 
-            // Log certificate details
-            Log.i(tag, "Let's Encrypt CA Certificate Details:")
-            Log.i(tag, "  Subject: ${cert.subjectDN}")
-            Log.i(tag, "  Issuer: ${cert.issuerDN}")
-            Log.i(tag, "  Valid from: ${cert.notBefore}")
-            Log.i(tag, "  Valid until: ${cert.notAfter}")
-
-            // Check if it's a root CA
-            val isSelfSigned = cert.subjectDN == cert.issuerDN
-            Log.d(tag, "  Is self-signed (root CA): $isSelfSigned")
-
-            // Generate alias based on certificate subject
-            val subjectCN = try {
-                cert.subjectDN.name.split(",")
-                    .firstOrNull { it.trim().startsWith("CN=") }
-                    ?.substringAfter("CN=")
-                    ?.trim()
-                    ?.replace(" ", "_")
-                    ?.replace("-", "_")
-                    ?.lowercase()
-                    ?: "letsencrypt_ca"
-            } catch (e: Exception) {
-                "letsencrypt_ca"
-            }
-
-            val alias = "ca_${subjectCN}_${System.currentTimeMillis()}"
-            Log.d(tag, "Generated CA alias: $alias")
-
-            // Create PEM format
-            val certPem = "-----BEGIN CERTIFICATE-----\n" +
-                    Base64.encodeToString(cert.encoded, Base64.NO_WRAP).chunked(64).joinToString("\n") +
-                    "\n-----END CERTIFICATE-----\n"
-
-            // Save to config directory (backup)
-            val certFile = File(configDir, "$alias.crt")
-            certFile.writeText(certPem)
-            Log.d(tag, "Saved CA cert to config dir: ${certFile.absolutePath}")
-
-            // CRITICAL: Save to strongSwan's cacerts directory
-            val caCertFile = File(cacertsDir, "$alias.crt")
-            caCertFile.writeText(certPem)
-            Log.i(tag, "✓ Saved CA cert to strongSwan cacerts: ${caCertFile.absolutePath}")
-
-            // Also save with standard name
-            val standardCaCertFile = File(cacertsDir, "letsencrypt_ca.crt")
-            standardCaCertFile.writeText(certPem)
-            Log.i(tag, "✓ Saved CA cert as letsencrypt_ca.crt")
-
-            // Verify file creation
-            if (caCertFile.exists() && caCertFile.length() > 0) {
-                Log.i(tag, "✓✓✓ Let's Encrypt CA certificate installed (${caCertFile.length()} bytes)")
-            } else {
-                Log.e(tag, "✗✗✗ CA certificate file verification failed!")
-                return null
-            }
+            val alias = installCertificatesIntoLocalStore(caCertificates, "letsencrypt_ca")
+                ?: return null
 
             Log.i(tag, "=== LET'S ENCRYPT CA CERTIFICATE IMPORT COMPLETE ===")
-            Log.i(tag, "✓✓✓ Server certificates signed by Let's Encrypt will be trusted")
+            Log.i(tag, "✓✓✓ Server certificates signed by Let's Encrypt will be trusted via alias=$alias")
 
             alias
         } catch (e: Exception) {
@@ -742,6 +703,69 @@ class VpnConfigManager(private val context: Context) {
         return null
     }
 
+    private fun parseCertificateBundle(rawCertificateData: String): List<X509Certificate> {
+        val certificates = mutableListOf<X509Certificate>()
+        val trimmed = rawCertificateData.trim()
+
+        if (trimmed.contains("-----BEGIN CERTIFICATE-----")) {
+            try {
+                val factory = CertificateFactory.getInstance("X.509")
+                val generated = factory.generateCertificates(ByteArrayInputStream(trimmed.toByteArray()))
+                generated.forEach { cert ->
+                    (cert as? X509Certificate)?.let { certificates.add(it) }
+                }
+                if (certificates.isNotEmpty()) {
+                    return certificates
+                }
+            } catch (e: Exception) {
+                Log.w(tag, "Failed to parse PEM certificate bundle directly: ${e.message}")
+            }
+        }
+
+        val cleanBase64 = cleanBase64String(rawCertificateData)
+        val certBytes = tryMultipleBase64Decoding(cleanBase64) ?: return emptyList()
+        return listOfNotNull(parseServerCertificate(certBytes))
+    }
+
+    private fun installCertificatesIntoLocalStore(certs: List<X509Certificate>, backupPrefix: String): String? {
+        val certificateStore = LocalCertificateStore()
+        val preferredCertificate = certs.firstOrNull { it.subjectX500Principal == it.issuerX500Principal } ?: certs.lastOrNull()
+        var preferredAlias: String? = null
+
+        certs.forEachIndexed { index, cert ->
+            val alias = certificateStore.getCertificateAlias(cert)
+            if (alias.isNullOrBlank()) {
+                Log.e(tag, "Failed to derive LocalCertificateStore alias for ${cert.subjectX500Principal.name}")
+                return@forEachIndexed
+            }
+
+            val alreadyPresent = certificateStore.containsAlias(alias)
+            if (!alreadyPresent && !certificateStore.addCertificate(cert)) {
+                Log.e(tag, "Failed to add CA certificate to LocalCertificateStore: ${cert.subjectX500Principal.name}")
+                return@forEachIndexed
+            }
+
+            persistCertificateBackups(cert, alias, backupPrefix, index)
+            Log.i(
+                tag,
+                if (alreadyPresent) {
+                    "CA certificate already present in LocalCertificateStore: $alias (${cert.subjectX500Principal.name})"
+                } else {
+                    "Installed CA certificate into LocalCertificateStore: $alias (${cert.subjectX500Principal.name})"
+                }
+            )
+
+            if (cert == preferredCertificate) {
+                preferredAlias = alias
+            }
+        }
+
+        if (!preferredAlias.isNullOrBlank()) {
+            refreshTrustedCertificateCache()
+        }
+        return preferredAlias
+    }
+
     private fun parseCertWithDefaultFactory(certBytes: ByteArray): X509Certificate? {
         return try {
             val factory = CertificateFactory.getInstance("X.509")
@@ -1055,16 +1079,74 @@ class VpnConfigManager(private val context: Context) {
     }
 
     /**
-     * Install a system CA certificate (from AndroidCAStore) into strongSwan cacerts by matching subject CN and O.
-     * Returns true if installed or updated; false if already present or not found.
+     * Seed Let's Encrypt trust anchors into LocalCertificateStore so strongSwan can
+     * validate both the traditional ISRG Root X1 path and newer Root YE path.
      */
-    private fun installSystemRootBySubjectCN(subjectCN: String, expectedOrg: String? = null, filename: String): Boolean {
-        try {
-            val outFile = File(cacertsDir, filename)
-            if (outFile.exists() && outFile.length() > 0) {
-                // Already installed
-                return false
+    private fun ensureLetsEncryptCompatibilityTrustAnchors(): List<String> {
+        val aliases = mutableListOf<String>()
+        listOf(
+            Triple("ISRG Root X1", "Internet Security Research Group", "isrg_root_x1.crt"),
+            Triple("Root YE", "ISRG", "root_ye.crt")
+        ).forEach { (subjectCN, expectedOrg, filename) ->
+            val alias = installSystemRootBySubjectCN(subjectCN, expectedOrg, filename)
+                ?: if (subjectCN == "Root YE") {
+                    installBundledLetsEncryptRoot(
+                        expectedSubjectCN = subjectCN,
+                        expectedOrg = expectedOrg,
+                        filename = filename,
+                        resourceId = R.raw.root_ye
+                    )
+                } else {
+                    null
+                }
+            alias?.let { aliases.add(it) }
+        }
+        if (aliases.isNotEmpty()) {
+            refreshTrustedCertificateCache()
+        }
+        return aliases.distinct()
+    }
+
+    private fun installBundledLetsEncryptRoot(
+        expectedSubjectCN: String,
+        expectedOrg: String,
+        filename: String,
+        resourceId: Int
+    ): String? {
+        return try {
+            val pem = context.resources.openRawResource(resourceId).bufferedReader().use { it.readText() }
+            val matchingCertificate = parseCertificateBundle(pem).firstOrNull { cert ->
+                val subject = cert.subjectX500Principal.name
+                val issuer = cert.issuerX500Principal.name
+                val cn = subject.split(',').firstOrNull { it.trim().startsWith("CN=") }?.substringAfter("CN=")?.trim()
+                val org = subject.split(',').firstOrNull { it.trim().startsWith("O=") }?.substringAfter("O=")?.trim()
+                val isSelfSigned = subject == issuer
+                val isCA = try { cert.basicConstraints >= 0 } catch (_: Exception) { false }
+                isSelfSigned && isCA && cn == expectedSubjectCN && org == expectedOrg
             }
+
+            if (matchingCertificate == null) {
+                Log.e(tag, "Bundled Let's Encrypt root did not match expected subject: CN=$expectedSubjectCN, O=$expectedOrg")
+                return null
+            }
+
+            val alias = installCertificatesIntoLocalStore(listOf(matchingCertificate), filename.removeSuffix(".crt"))
+            if (alias != null) {
+                Log.i(tag, "Installed bundled Let's Encrypt trust anchor '$expectedSubjectCN' as $alias")
+            }
+            alias
+        } catch (e: Exception) {
+            Log.e(tag, "Failed to install bundled Let's Encrypt root '$expectedSubjectCN': ${e.message}", e)
+            null
+        }
+    }
+
+    /**
+     * Install a system CA certificate (from AndroidCAStore) into LocalCertificateStore by matching subject CN and O.
+     * Returns the LocalCertificateStore alias if the certificate is available.
+     */
+    private fun installSystemRootBySubjectCN(subjectCN: String, expectedOrg: String? = null, filename: String): String? {
+        try {
             val ks = KeyStore.getInstance("AndroidCAStore")
             ks.load(null)
             val aliases = ks.aliases()
@@ -1078,17 +1160,62 @@ class VpnConfigManager(private val context: Context) {
                 val isSelfSigned = subject == issuer
                 val isCA = try { cert.basicConstraints >= 0 } catch (_: Exception) { false }
                 if (isSelfSigned && isCA && cn == subjectCN && (expectedOrg == null || org == expectedOrg)) {
-                    val pem = buildPem(cert.encoded)
-                    outFile.writeText(pem)
-                    Log.d(tag, "Installed system root '$subjectCN' from AndroidCAStore alias=$alias to ${outFile.absolutePath}")
-                    return true
+                    val certificateStore = LocalCertificateStore()
+                    val localAlias = certificateStore.getCertificateAlias(cert)
+                    if (localAlias.isNullOrBlank()) {
+                        Log.e(tag, "Unable to derive LocalCertificateStore alias for system root '$subjectCN'")
+                        return null
+                    }
+
+                    val alreadyPresent = certificateStore.containsAlias(localAlias)
+                    if (!alreadyPresent && !certificateStore.addCertificate(cert)) {
+                        Log.e(tag, "Failed to add system root '$subjectCN' to LocalCertificateStore")
+                        return null
+                    }
+
+                    persistCertificateBackups(cert, localAlias, filename.removeSuffix(".crt"), 0, explicitFilename = filename)
+                    Log.d(
+                        tag,
+                        if (alreadyPresent) {
+                            "System root '$subjectCN' already present in LocalCertificateStore as $localAlias"
+                        } else {
+                            "Installed system root '$subjectCN' from AndroidCAStore alias=$alias into LocalCertificateStore as $localAlias"
+                        }
+                    )
+                    return localAlias
                 }
             }
             Log.w(tag, "System CA not found: CN=$subjectCN, O=$expectedOrg")
-            return false
+            return null
         } catch (e: Exception) {
             Log.e(tag, "Failed installing system root CN=$subjectCN: ${e.message}", e)
-            return false
+            return null
+        }
+    }
+
+    private fun persistCertificateBackups(
+        cert: X509Certificate,
+        alias: String,
+        backupPrefix: String,
+        index: Int,
+        explicitFilename: String? = null
+    ) {
+        try {
+            val fileName = explicitFilename ?: "${backupPrefix}_${index}_${alias.replace(':', '_')}.crt"
+            val pem = buildPem(cert.encoded)
+            File(configDir, fileName).writeText(pem)
+            File(cacertsDir, fileName).writeText(pem)
+        } catch (e: Exception) {
+            Log.w(tag, "Failed to persist certificate backup for alias=$alias: ${e.message}")
+        }
+    }
+
+    private fun refreshTrustedCertificateCache() {
+        try {
+            TrustedCertificateManager.getInstance().reset().load()
+            Log.d(tag, "Reloaded strongSwan trusted certificate cache")
+        } catch (e: Exception) {
+            Log.w(tag, "Failed to refresh trusted certificate cache: ${e.message}")
         }
     }
 

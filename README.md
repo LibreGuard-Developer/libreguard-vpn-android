@@ -71,6 +71,7 @@ Local-only files such as `local.properties`, `app/google-services.json`, and `ad
 - Source repository: https://github.com/LibreGuard-Developer/libreguard-vpn-android
 - License notices: see `THIRD_PARTY_LICENSES.md`
 - Bundled upstream code keeps its own copyright notices and license exceptions
+- `app/src/main/res/raw/root_ye.pem` is an intentionally bundled public CA root certificate used as a compatibility trust anchor for Android devices whose system trust store does not yet include that root; it is public certificate material, not a private key or app secret
 
 ## License
 

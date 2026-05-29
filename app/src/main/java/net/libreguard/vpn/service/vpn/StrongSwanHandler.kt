@@ -535,6 +535,9 @@ class StrongSwanHandler(
                 } else {
                     // Merge critical fields
                     existingProfile.password = profile.password
+                    if (!profile.certificateAlias.isNullOrBlank()) {
+                        existingProfile.certificateAlias = profile.certificateAlias
+                    }
                     existingProfile.userCertificateAlias = profile.userCertificateAlias
                     existingProfile.vpnType = profile.vpnType
                     existingProfile.gateway = profile.gateway
@@ -552,15 +555,15 @@ class StrongSwanHandler(
                 }
 
                 // Verify key fields after database save
-                val savedProfile = try {
-                    dataSource.getVpnProfile(profile.getUUID().toString())
+                val savedProfileExists = try {
+                    dataSource.getVpnProfile(profile.getUUID().toString()) != null
                 } catch (_: Throwable) {
                     try {
                         val gm = dataSource.javaClass.getMethod("getVpnProfile", java.util.UUID::class.java)
-                        gm.invoke(dataSource, profile.getUUID()) as? VpnProfile
-                    } catch (_: Throwable) { null }
+                        (gm.invoke(dataSource, profile.getUUID()) as? VpnProfile) != null
+                    } catch (_: Throwable) { false }
                 }
-                Log.d(tag, "Saved profile verified")
+                Log.d(tag, "Saved profile verified: $savedProfileExists")
 
                 try { dsObj.close() } catch (_: Throwable) {}
 
@@ -585,7 +588,7 @@ class StrongSwanHandler(
                             _state.value = ConnectionState.Error("Client certificate/key not accessible (local store). Re-import certificate or grant access.")
                             return@withContext false
                         }
-                        Log.d(tag, "[CertFlow] Pre-flight Local OK: hasCert=$hasCert hasKey=${key != null}")
+                        Log.d(tag, "[CertFlow] Pre-flight Local OK: hasCert=$hasCert hasKey=true")
                      } else {
                         val chain = KeyChain.getCertificateChain(appContext, alias)
                         val key = try { KeyChain.getPrivateKey(appContext, alias) } catch (e: KeyChainException) { null }
@@ -593,7 +596,7 @@ class StrongSwanHandler(
                             _state.value = ConnectionState.Error("Client certificate/key not accessible. Re-select certificate and grant access.")
                             return@withContext false
                         }
-                        Log.d(tag, "[CertFlow] Pre-flight KeyChain OK: chain=${chain.size} hasKey=${key != null}")
+                        Log.d(tag, "[CertFlow] Pre-flight KeyChain OK: chain=${chain.size} hasKey=true")
                      }
                  } catch (e: Exception) {
                      Log.w(tag, "KeyChain preflight failed: ${e.message}")
