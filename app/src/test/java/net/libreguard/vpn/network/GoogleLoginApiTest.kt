@@ -7,6 +7,7 @@ import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import retrofit2.Retrofit
@@ -47,6 +48,49 @@ class GoogleLoginApiTest {
         assertEquals("user@example.com", body.email)
         assertEquals("uid-1", body.userId)
         assertEquals("Google", body.provider)
+    }
+
+    @Test
+    fun `loginWithGoogle sends app version in request body`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200).setBody("{}"))
+
+        val response = api.loginWithGoogle(
+            GoogleLoginRequest(
+                idToken = "dummy-id-token",
+                deviceId = "device-123",
+                appVersion = "1.2.3",
+                devicePublicKey = "base64-or-pem",
+                devicePublicKeyId = "optional",
+                devicePublicKeyAlgorithm = "RSA-OAEP-256"
+            )
+        )
+
+        assertEquals(200, response.code())
+        val request = server.takeRequest()
+        val body = request.body.readUtf8()
+
+        assertEquals("POST", request.method)
+        assertEquals("/api/login/google", request.path)
+        assertTrue(body.contains("\"idToken\":\"dummy-id-token\""))
+        assertTrue(body.contains("\"DeviceId\":\"device-123\""))
+        assertTrue(body.contains("\"AppVersion\":\"1.2.3\""))
+    }
+
+    @Test
+    fun `loginWithGoogle surfaces app version enforcement failures`() = runBlocking {
+        val json = """{"message":"This app version is not allowed to access the API.","errorCode":"APP_VERSION_BLOCKED","appVersion":"1.2.3","enforcementEnabled":true}"""
+        server.enqueue(MockResponse().setResponseCode(403).setBody(json))
+
+        val response = api.loginWithGoogle(
+            GoogleLoginRequest(
+                idToken = "dummy-id-token",
+                deviceId = "device-123",
+                appVersion = "1.2.3"
+            )
+        )
+
+        assertEquals(403, response.code())
+        assertEquals(json, response.errorBody()!!.string())
     }
 
     @Test

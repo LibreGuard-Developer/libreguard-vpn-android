@@ -1,7 +1,6 @@
 package net.libreguard.vpn.ui.screens
 
 import android.content.Intent
-import android.net.Uri
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -21,8 +20,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.core.net.toUri
 import net.libreguard.vpn.ui.components.ScreenHeader
 import net.libreguard.vpn.ui.theme.*
+import net.libreguard.vpn.util.getInstalledAppVersionCode
+import net.libreguard.vpn.util.getInstalledAppVersionName
 
 /**
  * Help & Support Screen
@@ -33,11 +35,13 @@ fun HelpSupportScreen(
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
+    val appVersionName = remember(context) { context.getInstalledAppVersionName() }
+    val appVersionCode = remember(context) { context.getInstalledAppVersionCode() }
     val scrollState = rememberScrollState()
 
     fun openEmail() {
         val intent = Intent(Intent.ACTION_SENDTO).apply {
-            data = Uri.parse("mailto:support@libreguard.net")
+            data = "mailto:support@libreguard.net".toUri()
         }
         context.startActivity(Intent.createChooser(intent, "Send Email"))
     }
@@ -182,7 +186,7 @@ fun HelpSupportScreen(
                     verticalAlignment = Alignment.Top
                 ) {
                     Icon(
-                        imageVector = Icons.Default.Chat,
+                        imageVector = Icons.Default.SupportAgent,
                         contentDescription = null,
                         tint = MutedForeground,
                         modifier = Modifier.size(20.dp)
@@ -211,7 +215,7 @@ fun HelpSupportScreen(
                                 color = Primary
                             )
                             Icon(
-                                imageVector = Icons.Default.OpenInNew,
+                                imageVector = Icons.Default.ChevronRight,
                                 contentDescription = null,
                                 tint = Primary,
                                 modifier = Modifier.size(14.dp)
@@ -229,12 +233,12 @@ fun HelpSupportScreen(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
-                    text = "LibreGuard v${net.libreguard.vpn.BuildConfig.VERSION_NAME}",
+                    text = "LibreGuard v$appVersionName",
                     style = MaterialTheme.typography.bodySmall,
                     color = MutedForeground
                 )
                 Text(
-                    text = "Build ${net.libreguard.vpn.BuildConfig.VERSION_CODE}",
+                    text = "Build $appVersionCode",
                     style = MaterialTheme.typography.bodySmall,
                     color = MutedForeground
                 )
@@ -266,7 +270,7 @@ private fun FAQItem(
                 verticalAlignment = Alignment.Top
             ) {
                 Icon(
-                    imageVector = Icons.Default.Help,
+                    imageVector = Icons.Default.Info,
                     contentDescription = null,
                     tint = Primary,
                     modifier = Modifier.size(20.dp)

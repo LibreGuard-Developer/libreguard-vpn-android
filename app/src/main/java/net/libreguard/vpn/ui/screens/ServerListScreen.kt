@@ -25,6 +25,9 @@ import net.libreguard.vpn.network.RemoteVpnServer
 import net.libreguard.vpn.ui.components.ProBadge
 import net.libreguard.vpn.ui.components.ScreenHeader
 import net.libreguard.vpn.ui.theme.*
+import net.libreguard.vpn.util.getFlagEmoji
+import net.libreguard.vpn.util.getPrimaryServerLabel
+import net.libreguard.vpn.util.getSecondaryServerLabel
 import net.libreguard.vpn.viewmodel.VpnProtocol
 import net.libreguard.vpn.viewmodel.VpnViewModel
 
@@ -65,6 +68,7 @@ fun ServerListScreen(
             servers
         } else {
             servers.filter { server ->
+                server.city.contains(searchQuery, ignoreCase = true) ||
                 server.serverName.contains(searchQuery, ignoreCase = true) ||
                 server.country.contains(searchQuery, ignoreCase = true)
             }
@@ -447,10 +451,10 @@ private fun ServerCard(
 
                 Spacer(modifier = Modifier.width(12.dp))
 
-                // Server info - city and country + server name
+                // Server info - city and server name
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = server.serverName,
+                        text = getPrimaryServerLabel(server),
                         style = MaterialTheme.typography.titleSmall,
                         color = if (isSelected) Primary else Foreground,
                         maxLines = 1,
@@ -461,7 +465,7 @@ private fun ServerCard(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = server.country,
+                            text = getSecondaryServerLabel(server),
                             style = MaterialTheme.typography.bodySmall,
                             color = MutedForeground,
                             maxLines = 1,
@@ -582,28 +586,3 @@ private fun getLoadColor(load: Int): Color {
     }
 }
 
-private fun getFlagEmoji(country: String): String {
-    return when (country.lowercase()) {
-        "usa", "united states" -> "🇺🇸"
-        "uk", "united kingdom" -> "🇬🇧"
-        "japan" -> "🇯🇵"
-        "germany" -> "🇩🇪"
-        "netherlands" -> "🇳🇱"
-        "canada" -> "🇨🇦"
-        "france" -> "🇫🇷"
-        "australia" -> "🇦🇺"
-        "singapore" -> "🇸🇬"
-        "switzerland" -> "🇨🇭"
-        "sweden" -> "🇸🇪"
-        "norway" -> "🇳🇴"
-        "italy" -> "🇮🇹"
-        "spain" -> "🇪🇸"
-        "brazil" -> "🇧🇷"
-        "india" -> "🇮🇳"
-        "south korea", "korea" -> "🇰🇷"
-        "hong kong" -> "🇭🇰"
-        "ireland" -> "🇮🇪"
-        "poland" -> "🇵🇱"
-        else -> "🏳️"
-    }
-}

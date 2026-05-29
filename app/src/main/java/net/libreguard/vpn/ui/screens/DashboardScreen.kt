@@ -16,14 +16,10 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import net.libreguard.vpn.ui.components.LogoWithGradient
 import net.libreguard.vpn.ui.theme.*
+import net.libreguard.vpn.util.getFlagEmoji
 import net.libreguard.vpn.viewmodel.VpnViewModel
-import org.json.JSONObject
-import java.net.HttpURLConnection
-import java.net.URL
 import java.util.Locale
 
 /**
@@ -786,34 +782,6 @@ fun getConnectionStatusConfig(status: ConnectionStatus): StatusConfig {
     }
 }
 
-/**
- * Get flag emoji from country name
- */
-private fun getFlagEmoji(country: String): String {
-    return when (country.lowercase()) {
-        "usa", "united states" -> "🇺🇸"
-        "uk", "united kingdom" -> "🇬🇧"
-        "japan" -> "🇯🇵"
-        "germany" -> "🇩🇪"
-        "netherlands" -> "🇳🇱"
-        "canada" -> "🇨🇦"
-        "france" -> "🇫🇷"
-        "australia" -> "🇦🇺"
-        "singapore" -> "🇸🇬"
-        "switzerland" -> "🇨🇭"
-        "sweden" -> "🇸🇪"
-        "norway" -> "🇳🇴"
-        "italy" -> "🇮🇹"
-        "spain" -> "🇪🇸"
-        "brazil" -> "🇧🇷"
-        "india" -> "🇮🇳"
-        "south korea", "korea" -> "🇰🇷"
-        "hong kong" -> "🇭🇰"
-        "ireland" -> "🇮🇪"
-        "poland" -> "🇵🇱"
-        else -> "🏳️"
-    }
-}
 
 /**
  * Format ISO 8601 date string to "MMM DD, YYYY" format
