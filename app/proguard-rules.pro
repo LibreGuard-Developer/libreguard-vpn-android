@@ -48,6 +48,22 @@
 -keep class org.strongswan.android.logic.** { *; }
 -keep class org.strongswan.android.utils.Utils { *; }
 
+# Java Security instantiates the strongSwan local certificate KeyStore via the
+# provider's registered SPI class. In release builds R8 may otherwise change
+# constructor/access semantics and break KeyStore.getInstance("LocalCertificateStore").
+-keep class org.strongswan.android.security.LocalCertificateKeyStoreProvider {
+	public <init>();
+	*;
+}
+-keep class org.strongswan.android.security.LocalCertificateKeyStoreSpi {
+	public <init>();
+	*;
+}
+-keep class org.strongswan.android.security.LocalCertificateStore {
+	public <init>();
+	*;
+}
+
 # App code reflectively invokes strongSwan profile data source methods.
 -keep class org.strongswan.android.data.VpnProfileSource { public *; }
 -keep class org.strongswan.android.data.VpnProfileDataSource { public *; }
