@@ -46,6 +46,10 @@ class OpenVpnHandler(
     private val appContext: Context
 ) : VpnProtocolHandler {
 
+    private companion object {
+        const val STARTUP_NOT_CONNECTED_GRACE_MS = 5_000L
+    }
+
     private val tag = "OpenVpnHandler"
 
     private val _state = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected)
@@ -413,6 +417,19 @@ class OpenVpnHandler(
         }
     }
 
+    private fun markConnecting(now: Long, prevState: String) {
+        if (connectingSinceMs == 0L || prevState == "CONNECTED") {
+            connectingSinceMs = now
+        }
+        _state.value = ConnectionState.Connecting
+    }
+
+    private fun isStartupConnectInProgress(now: Long): Boolean {
+        if (hadConnected || connectStartAt <= 0L) return false
+        val elapsed = now - connectStartAt
+        return connectingActive || elapsed <= STARTUP_NOT_CONNECTED_GRACE_MS
+    }
+
     private fun handleStateUpdate(stateRaw: String, logmessage: String, level: IcsConnectionStatus) {
         val now = System.currentTimeMillis()
         lastStatusUpdateAt = now
@@ -431,16 +448,12 @@ class OpenVpnHandler(
                 connectingSinceMs = 0L
                 _state.value = ConnectionState.Connected
             }
-            "CONNECTING", "WAIT", "RESOLVE", "TCP_CONNECT", "GET_CONFIG", "ASSIGN_IP", "ADD_ROUTES", "AUTH", "AUTH_PENDING", "USER_INPUT" -> {
-                // Start/connect timer if not already set (especially important after a prior CONNECTED)
-                if (connectingSinceMs == 0L || prevState == "CONNECTED") connectingSinceMs = now
-                _state.value = ConnectionState.Connecting
+            "VPN_GENERATE_CONFIG", "CONNECTING", "WAIT", "RESOLVE", "TCP_CONNECT", "GET_CONFIG", "ASSIGN_IP", "ADD_ROUTES", "AUTH", "AUTH_PENDING", "USER_INPUT" -> {
+                markConnecting(now, prevState)
             }
             "RECONNECTING", "CONNECTRETRY" -> {
-                _state.value = ConnectionState.Connecting
+                markConnecting(now, prevState)
                 if (reconnectStartAt == 0L) reconnectStartAt = now
-                // Start/connect timer for reconnect
-                if (connectingSinceMs == 0L || prevState == "CONNECTED") connectingSinceMs = now
                 if (state == "CONNECTRETRY") connectRetryCount.incrementAndGet()
                 if (logmessage.contains("server-pushed-connection-reset", ignoreCase = true)) connectRetryCount.incrementAndGet()
 
@@ -477,13 +490,20 @@ class OpenVpnHandler(
             }
             "DISCONNECTED", "NOPROCESS" -> {
                 val elapsed = if (connectStartAt > 0) now - connectStartAt else 0L
-                connectingActive = false
-                connectingSinceMs = 0L
                 if (hadConnected) {
+                    connectingActive = false
+                    connectingSinceMs = 0L
                     _state.value = ConnectionState.Disconnected
+                } else if (isStartupConnectInProgress(now)) {
+                    markConnecting(now, prevState)
+                    Log.d(tag, "Treating startup state=$state as Connecting during OpenVPN bootstrap (elapsed=${elapsed}ms)")
                 } else if (elapsed > 2000L) {
+                    connectingActive = false
+                    connectingSinceMs = 0L
                     _state.value = ConnectionState.Error("OpenVPN process not running")
                 } else {
+                    connectingActive = false
+                    connectingSinceMs = 0L
                     _state.value = ConnectionState.Disconnected
                 }
             }

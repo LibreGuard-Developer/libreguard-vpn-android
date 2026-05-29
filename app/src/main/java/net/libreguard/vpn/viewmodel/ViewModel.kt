@@ -2863,6 +2863,10 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                             _errorMessage.value = "Cancelling connection..."
                         }
                         is ConnectionState.Disconnected -> {
+                            if (handler is OpenVpnHandler && _isConnecting.value && !_isConnected.value) {
+                                Log.d(TAG, "Ignoring transient OpenVPN disconnected state while connection is still starting")
+                                return@collect
+                            }
                             val wasConnected = _isConnected.value
                             // If previously connected, stop monitoring and clear persisted state
                             if (wasConnected) {
