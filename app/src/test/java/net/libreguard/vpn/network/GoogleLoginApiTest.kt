@@ -51,6 +51,30 @@ class GoogleLoginApiTest {
     }
 
     @Test
+    fun `loginWithGoogle deserializes pending login token when two factor is required`() = runBlocking {
+        val json = """
+            {
+              "requiresTwoFactor": true,
+              "pendingLoginToken": "pending-login-token",
+              "email": "user@example.com",
+              "userId": "uid-1",
+              "provider": "Google"
+            }
+        """.trimIndent()
+        server.enqueue(MockResponse().setResponseCode(200).setBody(json))
+
+        val response = api.loginWithGoogle(GoogleLoginRequest(idToken = "dummy-id-token"))
+
+        assertEquals(true, response.isSuccessful)
+        val body = response.body()
+        assertNotNull(body)
+        assertEquals(true, body!!.requiresTwoFactor)
+        assertEquals("pending-login-token", body.pendingLoginToken)
+        assertEquals("user@example.com", body.email)
+        assertEquals("uid-1", body.userId)
+    }
+
+    @Test
     fun `loginWithGoogle sends app version in request body`() = runBlocking {
         server.enqueue(MockResponse().setResponseCode(200).setBody("{}"))
 
@@ -72,8 +96,58 @@ class GoogleLoginApiTest {
         assertEquals("POST", request.method)
         assertEquals("/api/login/google", request.path)
         assertTrue(body.contains("\"idToken\":\"dummy-id-token\""))
-        assertTrue(body.contains("\"DeviceId\":\"device-123\""))
-        assertTrue(body.contains("\"AppVersion\":\"1.2.3\""))
+        assertTrue(body.contains("\"deviceId\":\"device-123\""))
+        assertTrue(body.contains("\"appVersion\":\"1.2.3\""))
+    }
+
+    @Test
+    fun `verify2fa sends pending login token in request body`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200).setBody("{}"))
+
+        val response = api.verify2fa(
+            Verify2faRequest(
+                email = "user@example.com",
+                twoFactorCode = "123456",
+                pendingLoginToken = "pending-login-token",
+                deviceId = "device-123",
+                appVersion = "1.2.3"
+            )
+        )
+
+        assertEquals(200, response.code())
+        val request = server.takeRequest()
+        val body = request.body.readUtf8()
+
+        assertEquals("POST", request.method)
+        assertEquals("/api/login/verify-2fa", request.path)
+        assertTrue(body.contains("\"pendingLoginToken\":\"pending-login-token\""))
+        assertTrue(body.contains("\"deviceId\":\"device-123\""))
+        assertTrue(body.contains("\"appVersion\":\"1.2.3\""))
+    }
+
+    @Test
+    fun `verifyRecoveryCode sends pending login token in request body`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200).setBody("{}"))
+
+        val response = api.verifyRecoveryCode(
+            VerifyRecoveryRequest(
+                email = "user@example.com",
+                recoveryCode = "ABCD-EFGH-IJKL",
+                pendingLoginToken = "pending-login-token",
+                deviceId = "device-123",
+                appVersion = "1.2.3"
+            )
+        )
+
+        assertEquals(200, response.code())
+        val request = server.takeRequest()
+        val body = request.body.readUtf8()
+
+        assertEquals("POST", request.method)
+        assertEquals("/api/login/verify-recovery-code", request.path)
+        assertTrue(body.contains("\"pendingLoginToken\":\"pending-login-token\""))
+        assertTrue(body.contains("\"deviceId\":\"device-123\""))
+        assertTrue(body.contains("\"appVersion\":\"1.2.3\""))
     }
 
     @Test

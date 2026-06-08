@@ -27,6 +27,7 @@ import net.libreguard.vpn.util.DeviceKeyManager
 @Composable
 fun TwoFactorVerificationScreen(
     email: String,
+    pendingLoginToken: String,
     onVerificationSuccess: (String) -> Unit,
     onBackToLogin: () -> Unit
 ) {
@@ -152,10 +153,15 @@ fun TwoFactorVerificationScreen(
                             val appVersion = tokenManager.getAppVersion()
 
                             if (showRecoveryCodeInput) {
+                                if (pendingLoginToken.isBlank()) {
+                                    errorMessage = "Missing pending login token. Please sign in again."
+                                    return@launch
+                                }
                                 val response = RetrofitClient.instance.verifyRecoveryCode(
                                     VerifyRecoveryRequest(
                                         email = email,
                                         recoveryCode = recoveryCode,
+                                        pendingLoginToken = pendingLoginToken,
                                         deviceId = deviceId,
                                         appVersion = appVersion,
                                         devicePublicKey = DeviceKeyManager.exportPublicKeyBase64(),
@@ -181,10 +187,15 @@ fun TwoFactorVerificationScreen(
                                     errorMessage = "Invalid recovery code"
                                 }
                             } else {
+                                if (pendingLoginToken.isBlank()) {
+                                    errorMessage = "Missing pending login token. Please sign in again."
+                                    return@launch
+                                }
                                 val response = RetrofitClient.instance.verify2fa(
                                     Verify2faRequest(
                                         email = email,
                                         twoFactorCode = code,
+                                        pendingLoginToken = pendingLoginToken,
                                         deviceId = deviceId,
                                         appVersion = appVersion,
                                         devicePublicKey = DeviceKeyManager.exportPublicKeyBase64(),
@@ -358,6 +369,7 @@ fun TwoFactorVerificationScreen(
 fun PreviewTwoFactorVerificationScreenNew() {
     TwoFactorVerificationScreen(
         email = "test@example.com",
+        pendingLoginToken = "pending-login-token",
         onVerificationSuccess = { },
         onBackToLogin = { }
     )

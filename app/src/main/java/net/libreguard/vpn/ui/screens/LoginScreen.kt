@@ -72,7 +72,7 @@ fun LoginScreen(
     onNavigateToUpgrade: () -> Unit = {},
     onNavigateToDeviceManagement: () -> Unit = {},
     onLoginSuccess: (String) -> Unit,
-    onRequires2FA: (String) -> Unit,
+    onRequires2FA: (String, String) -> Unit,
     onNavigateToForgotPassword: () -> Unit = {},
     onNavigateToRegister: () -> Unit,
     onNavigateToEmailVerification: (email: String, userId: String?) -> Unit
@@ -88,7 +88,6 @@ fun LoginScreen(
     var showPasswordDialogForDeviceManagement by remember { mutableStateOf(false) }
     var passwordForDeviceManagement by remember { mutableStateOf("") }
     var emailForDeviceManagement by remember { mutableStateOf("") }
-    var googleUserEmail by remember { mutableStateOf<String?>(null) }
     var lastKnownEmail by remember { mutableStateOf("") }
     var googleIdToken by remember { mutableStateOf<String?>(null) }
     var isFetchingDevicesForManagement by remember { mutableStateOf(false) }
@@ -236,6 +235,18 @@ fun LoginScreen(
             tokenManager.saveDeviceMetadata(auth.activeDevices, auth.maxDevices)
         }
         return true
+    }
+
+    fun handleRequiresTwoFactor(emailValue: String?, pendingLoginToken: String?, sourceLabel: String) {
+        if (emailValue.isNullOrBlank()) {
+            errorMessage = "Two-factor authentication requires a verified email address."
+            return
+        }
+        if (pendingLoginToken.isNullOrBlank()) {
+            errorMessage = "$sourceLabel is missing the pending login token. Please sign in again."
+            return
+        }
+        onRequires2FA(emailValue, pendingLoginToken)
     }
 
     fun handleDeviceLimitError(errorBody: String?, emailFromLogin: String? = null) {
@@ -392,12 +403,88 @@ fun LoginScreen(
             deviceLimitError?.email?.isNotBlank() == true -> deviceLimitError?.email!!
             else -> null
         }
+        val googleToken = googleIdToken?.takeIf { it.isNotBlank() }
 
-        android.util.Log.d("LoginScreen", "fetchDevicesForManagement: emailToUse exists=${!emailToUse.isNullOrBlank()}, email exists=${email.isNotBlank()}, lastKnownEmail exists=${lastKnownEmail.isNotBlank()}, deviceLimitError.email exists=${deviceLimitError?.email?.isNotBlank()}, password.length=${password.length}")
+        android.util.Log.d(
+            "LoginScreen",
+            "fetchDevicesForManagement: emailToUse exists=${!emailToUse.isNullOrBlank()}, email exists=${email.isNotBlank()}, lastKnownEmail exists=${lastKnownEmail.isNotBlank()}, deviceLimitError.email exists=${deviceLimitError?.email?.isNotBlank()}, googleToken exists=${!googleToken.isNullOrBlank()}, password.length=${password.length}"
+        )
 
         if (emailToUse.isNullOrBlank()) {
             android.util.Log.e("LoginScreen", "fetchDevicesForManagement: EMAIL IS BLANK - aborting")
             fetchDevicesError = "Enter email above first"
+            return
+        }
+        if (!googleToken.isNullOrBlank()) {
+            fetchDevicesError = null
+            coroutineScope.launch {
+                isFetchingDevicesForManagement = true
+                try {
+                    val probeDeviceId = "probe_${System.currentTimeMillis()}"
+                    android.util.Log.d("LoginScreen", "fetchDevicesForManagement: Using Google probe deviceId to get 409 with devices list")
+
+                    val resp = RetrofitClient.instance.loginWithGoogle(
+                        GoogleLoginRequest(
+                            idToken = googleToken,
+                            deviceId = probeDeviceId,
+                            appVersion = appVersion,
+                            devicePublicKey = DeviceKeyManager.exportPublicKeyBase64(),
+                            devicePublicKeyId = DeviceKeyManager.publicKeyId(),
+                            devicePublicKeyAlgorithm = DeviceKeyManager.algorithm()
+                        )
+                    )
+                    val errorBody = resp.errorBody()?.string()
+                    android.util.Log.d("LoginScreen", "fetchDevicesForManagement Google response: code=${resp.code()}")
+
+                    when (resp.code()) {
+                        409 -> {
+                            lastKnownEmail = emailToUse
+                            handleDeviceLimitError(errorBody, emailToUse)
+                            if (!deviceLimitError?.devices.isNullOrEmpty()) {
+                                showDevicePickerDialog = true
+                            } else {
+                                fetchDevicesError = "Could not load device list"
+                            }
+                        }
+                        200 -> {
+                            val auth = resp.body()
+                            if (auth != null && persistAuthResponse(
+                                    AuthResponse(
+                                        token = auth.token,
+                                        refreshToken = auth.refreshToken,
+                                        message = auth.message,
+                                        requiresTwoFactor = auth.requiresTwoFactor,
+                                        pendingLoginToken = auth.pendingLoginToken,
+                                        email = auth.email,
+                                        userId = auth.userId,
+                                        deviceId = auth.deviceId,
+                                        activeDevices = auth.activeDevices,
+                                        maxDevices = auth.maxDevices,
+                                        planType = auth.planType
+                                    )
+                                )
+                            ) {
+                                deviceLimitError = null
+                                errorMessage = null
+                                onLoginSuccess(auth.token ?: "")
+                            } else {
+                                fetchDevicesError = "Device limit cleared, but login response was incomplete."
+                            }
+                        }
+                        401 -> {
+                            fetchDevicesError = "Google token expired. Please sign in again."
+                        }
+                        else -> {
+                            fetchDevicesError = "Failed to fetch devices (${resp.code()})"
+                        }
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.e("LoginScreen", "fetchDevicesForManagement Google error", e)
+                    fetchDevicesError = "Network error: ${e.localizedMessage}"
+                } finally {
+                    isFetchingDevicesForManagement = false
+                }
+            }
             return
         }
         if (password.isBlank()) {
@@ -561,14 +648,15 @@ fun LoginScreen(
                 if (resp.isSuccessful) {
                     val body: GoogleLoginResponse? = resp.body()
                     if (body != null) {
-                        if (body.requiresTwoFactor && body.email != null) {
-                            onRequires2FA(body.email)
+                        if (body.requiresTwoFactor) {
+                            handleRequiresTwoFactor(body.email, body.pendingLoginToken, "Google sign-in")
                         } else if (body.token != null && persistAuthResponse(
                             AuthResponse(
                                 token = body.token,
                                 refreshToken = body.refreshToken,
                                 message = null,
                                 requiresTwoFactor = false,
+                                pendingLoginToken = body.pendingLoginToken,
                                 email = body.email,
                                 userId = body.userId,
                                 deviceId = body.deviceId,
@@ -588,8 +676,7 @@ fun LoginScreen(
                 } else {
                     when (resp.code()) {
                         409 -> {
-                            // Store Google user's email and idToken for device management
-                            googleUserEmail = account?.email
+                            // Store Google idToken for pre-auth device management
                             googleIdToken = idToken
                             handleDeviceLimitError(errorBody, account?.email)
                             // DO NOT auto-show device picker - let user click "Manage Devices" button
@@ -774,7 +861,7 @@ fun LoginScreen(
                             if (response.isSuccessful) {
                                 val authResponse = response.body()
                                 if (authResponse?.requiresTwoFactor == true) {
-                                    onRequires2FA(email)
+                                    handleRequiresTwoFactor(authResponse.email ?: email, authResponse.pendingLoginToken, "Login")
                                 } else {
                                     // CHECK FOR DEVICE LIMIT EXCEEDED IN SUCCESSFUL RESPONSE
                                     // Backend returns 200 with activeDevices > maxDevices
@@ -1180,6 +1267,8 @@ fun LoginScreen(
                             Text(
                                 text = if (!deviceLimitError?.devices.isNullOrEmpty()) {
                                     "Click Manage Devices to select a device to remove."
+                                } else if (!googleIdToken.isNullOrBlank()) {
+                                    "Click Manage Devices to refresh your device list with Google Sign-In."
                                 } else {
                                     "Enter your password to manage devices and remove one to free up space."
                                 },
@@ -1376,6 +1465,8 @@ fun LoginScreen(
                             Text(
                                 text = if (!devicesArray.isNullOrEmpty()) {
                                     "Click Manage Devices to select a device to remove."
+                                } else if (!googleIdToken.isNullOrBlank()) {
+                                    "Click Manage Devices to refresh your device list with Google Sign-In."
                                 } else {
                                     "Enter your password to manage devices and remove one to free up space."
                                 },
@@ -1590,7 +1681,7 @@ fun LoginScreen(
         )
     }
 
-    // Password Dialog for Device Management (for Google users)
+    // Password Dialog for Device Management (password-based accounts)
     if (showPasswordDialogForDeviceManagement) {
         var isPasswordDialogLoading by remember { mutableStateOf(false) }
         var passwordDialogError by remember { mutableStateOf<String?>(null) }
@@ -1659,7 +1750,6 @@ fun LoginScreen(
                                 email.isNotBlank() -> email
                                 lastKnownEmail.isNotBlank() -> lastKnownEmail
                                 deviceLimitError?.email?.isNotBlank() == true -> deviceLimitError?.email!!
-                                googleUserEmail?.isNotBlank() == true -> googleUserEmail!!
                                 else -> ""
                             }
                             val capturedPassword = passwordForDeviceManagement
@@ -2023,7 +2113,7 @@ fun PreviewLoginScreenUI() {
         onDismissForcedLogoutReason = { },
         onNavigateToUpgrade = { },
         onLoginSuccess = { },
-        onRequires2FA = { },
+        onRequires2FA = { _, _ -> },
         onNavigateToRegister = { },
         onNavigateToEmailVerification = { _: String, _: String? -> }
     )

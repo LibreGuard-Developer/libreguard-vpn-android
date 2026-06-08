@@ -146,7 +146,8 @@ fun AppNavigation(
 
     var authToken by remember { mutableStateOf<String?>(null) }
     var isCheckingToken by remember { mutableStateOf(true) }
-    var pendingEmail by remember { mutableStateOf<String?>(null) }
+    var pendingEmail by rememberSaveable { mutableStateOf<String?>(null) }
+    var pendingLoginToken by rememberSaveable { mutableStateOf<String?>(null) }
     var loginPrefilledEmail by rememberSaveable { mutableStateOf<String?>(null) }
     var resetEmail by rememberSaveable { mutableStateOf<String?>(null) }
     var resetToken by rememberSaveable { mutableStateOf<String?>(null) }
@@ -631,6 +632,8 @@ fun AppNavigation(
                     onLoginSuccess = { token ->
                         authToken = token
                         loginPrefilledEmail = null
+                        pendingEmail = null
+                        pendingLoginToken = null
                         resetEmail = null
                         resetToken = null
                         // Clear registration state on successful login
@@ -645,8 +648,9 @@ fun AppNavigation(
                             launchSingleTop = true
                         }
                     },
-                    onRequires2FA = { email ->
+                    onRequires2FA = { email, token ->
                         pendingEmail = email
+                        pendingLoginToken = token
                         navController.navigate("twoFactor")
                     },
                     onNavigateToForgotPassword = {
@@ -839,12 +843,14 @@ fun AppNavigation(
                 }
                 // Show empty box while redirecting
                 Box(modifier = Modifier.fillMaxSize())
-            } else if (pendingEmail != null) {
+            } else if (pendingEmail != null && pendingLoginToken != null) {
                 TwoFactorVerificationScreen(
                     email = pendingEmail!!,
+                    pendingLoginToken = pendingLoginToken!!,
                     onVerificationSuccess = { token ->
                         authToken = token
                         pendingEmail = null
+                        pendingLoginToken = null
                         // Clear registration state on successful 2FA login
                         regUserId = null
                         regEmail = null
@@ -859,6 +865,7 @@ fun AppNavigation(
                     },
                     onBackToLogin = {
                         pendingEmail = null
+                        pendingLoginToken = null
                         navController.navigate("login") {
                             popUpTo(0) { inclusive = true }
                             launchSingleTop = true
@@ -868,6 +875,8 @@ fun AppNavigation(
             } else {
                 // No pending email and not authenticated - redirect to login
                 LaunchedEffect(Unit) {
+                    pendingEmail = null
+                    pendingLoginToken = null
                     navController.navigate("login") {
                         popUpTo(0) { inclusive = true }
                         launchSingleTop = true

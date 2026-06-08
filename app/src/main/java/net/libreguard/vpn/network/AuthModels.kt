@@ -4,13 +4,13 @@ import com.google.gson.annotations.SerializedName
 
 // Updated to match the C# LoginModel with device binding
 data class AuthRequest(
-    @SerializedName("Email") // Use SerializedName to ensure the JSON key is "Email"
+    @SerializedName("email")
     val email: String,
-    @SerializedName("Password") // Match the C# model property name
+    @SerializedName("password")
     val password: String,
-    @SerializedName("DeviceId") // Device ID for enforcing device limits - use PascalCase to match backend
+    @SerializedName("deviceId")
     val deviceId: String? = null,
-    @SerializedName("AppVersion")
+    @SerializedName("appVersion")
     val appVersion: String? = null,
     @SerializedName("devicePublicKey")
     val devicePublicKey: String? = null,
@@ -30,6 +30,8 @@ data class AuthResponse(
     val message: String?, // Message might not be present in a success response
     @SerializedName("requiresTwoFactor")
     val requiresTwoFactor: Boolean = false,
+    @SerializedName("pendingLoginToken")
+    val pendingLoginToken: String? = null,
     @SerializedName("email")
     val email: String? = null,
     @SerializedName("userId")
@@ -49,9 +51,9 @@ data class AuthResponse(
 data class GoogleLoginRequest(
     @SerializedName("idToken")
     val idToken: String,
-    @SerializedName("DeviceId")
+    @SerializedName("deviceId")
     val deviceId: String? = null,
-    @SerializedName("AppVersion")
+    @SerializedName("appVersion")
     val appVersion: String? = null,
     @SerializedName("devicePublicKey")
     val devicePublicKey: String? = null,
@@ -64,6 +66,7 @@ data class GoogleLoginRequest(
 // Response from POST /api/login/google { token, email, userId, provider }
 data class GoogleLoginResponse(
     @SerializedName("requiresTwoFactor") val requiresTwoFactor: Boolean = false,
+    @SerializedName("pendingLoginToken") val pendingLoginToken: String? = null,
     @SerializedName("token") val token: String? = null,
     @SerializedName("refreshToken") val refreshToken: String? = null,
     @SerializedName("email") val email: String? = null,
@@ -78,11 +81,11 @@ data class GoogleLoginResponse(
 
 // Refresh Token Request (device-bound)
 data class RefreshTokenRequest(
-    @SerializedName("RefreshToken")
+    @SerializedName("refreshToken")
     val refreshToken: String,
-    @SerializedName("DeviceId")
+    @SerializedName("deviceId")
     val deviceId: String,
-    @SerializedName("AppVersion")
+    @SerializedName("appVersion")
     val appVersion: String? = null,
     @SerializedName("devicePublicKey")
     val devicePublicKey: String? = null,
@@ -98,9 +101,11 @@ data class Verify2faRequest(
     val email: String,
     @SerializedName("twoFactorCode")
     val twoFactorCode: String,
-    @SerializedName("DeviceId")
+    @SerializedName("pendingLoginToken")
+    val pendingLoginToken: String,
+    @SerializedName("deviceId")
     val deviceId: String,
-    @SerializedName("AppVersion")
+    @SerializedName("appVersion")
     val appVersion: String? = null,
     @SerializedName("devicePublicKey")
     val devicePublicKey: String? = null,
@@ -128,9 +133,11 @@ data class VerifyRecoveryRequest(
     val email: String,
     @SerializedName("recoveryCode")
     val recoveryCode: String,
-    @SerializedName("DeviceId")
+    @SerializedName("pendingLoginToken")
+    val pendingLoginToken: String,
+    @SerializedName("deviceId")
     val deviceId: String,
-    @SerializedName("AppVersion")
+    @SerializedName("appVersion")
     val appVersion: String? = null,
     @SerializedName("devicePublicKey")
     val devicePublicKey: String? = null,
