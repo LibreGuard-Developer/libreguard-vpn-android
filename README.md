@@ -7,6 +7,10 @@
     <a href="https://www.gnu.org/licenses/old-licenses/gpl-2.0.en.html">
       <img src="https://img.shields.io/badge/License-GPL%20v2-blue.svg" alt="License: GPL v2" />
     </a>
+    <!-- Google Play badge next to the license badge -->
+    <a href="https://play.google.com/store/apps/details?id=net.libreguard.vpn" style="margin-left:8px;">
+      <img src="https://play.google.com/intl/en_us/badges/static/images/badges/en_badge_web_generic.png" alt="Get it on Google Play" height="20" />
+    </a>
   </p>
 
   <p>LibreGuard VPN is an Android VPN client that combines LibreGuard app code with bundled OpenVPN and strongSwan components.</p>
