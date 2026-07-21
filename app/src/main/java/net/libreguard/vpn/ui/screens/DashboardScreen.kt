@@ -354,13 +354,15 @@ fun DashboardScreen(
             }
         }
 
-        // Main center section (matches design: "flex-1 flex flex-col items-center justify-center")
+        // Keep the connected-state content anchored below the protection row. Centering this
+        // variable-height section can push the bottom of the bandwidth card off-screen.
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .weight(1f),
+                .weight(1f)
+                .padding(top = 12.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
+            verticalArrangement = Arrangement.Top
         ) {
             VpnConnectionHero(
                 status = connectionStatus,
@@ -368,7 +370,7 @@ fun DashboardScreen(
                 showProgressBar = true
             )
 
-            Spacer(modifier = Modifier.height(18.dp))
+            Spacer(modifier = Modifier.height(10.dp))
 
             // Connect/Disconnect button (design: big rounded)
             Button(
@@ -385,7 +387,7 @@ fun DashboardScreen(
 
             // Connected-only stats block (kept in the weighted center section so it doesn't leave bottom whitespace)
             if (isConnected) {
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(8.dp))
 
                 // Connection stats row
                 Row(
@@ -399,7 +401,7 @@ fun DashboardScreen(
                     StatItemCompact(icon = Icons.Default.Language, value = selectedServer?.country ?: "-", label = "Location")
                 }
 
-                Spacer(modifier = Modifier.height(14.dp))
+                Spacer(modifier = Modifier.height(8.dp))
 
                 // Bandwidth card
                 Surface(

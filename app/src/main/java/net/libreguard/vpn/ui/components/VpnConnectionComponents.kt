@@ -162,7 +162,8 @@ fun VpnConnectionHero(
             progress = progress
         )
 
-        Spacer(modifier = Modifier.height(20.dp))
+        // Keep the status copy close enough to the hero that connected-state cards retain room.
+        Spacer(modifier = Modifier.height(12.dp))
 
         VpnStatusText(
             status = status,
