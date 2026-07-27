@@ -186,9 +186,13 @@ class OpenVpnHandler(
                     }
                 }
 
+            // Apply policy on every connection, including cached profiles. Any
+            // normalization failure aborts instead of restoring public DNS.
+            val normalizedConfig = InternalDnsPolicy.normalizeOpenVpnConfig(cfg)
+
             // Parse .ovpn into VpnProfile via ICS parser
             val parser = ConfigParser()
-            parser.parseConfig(StringReader(cfg))
+            parser.parseConfig(StringReader(normalizedConfig))
             val profile = parser.convertProfile() ?: run {
                 Log.e(tag, "Failed to convert config to VpnProfile")
                 _state.value = ConnectionState.Error("Invalid OpenVPN profile")
@@ -198,6 +202,9 @@ class OpenVpnHandler(
 
             // Give profile a readable name
             profile.mName = "LibreGuard OpenVPN"
+            profile.mOverrideDNS = true
+            profile.mDNS1 = InternalDnsPolicy.REGULAR_RESOLVER
+            profile.mDNS2 = ""
 
             // Save as temporary profile to avoid polluting profile list
             ProfileManager.setTemporaryProfile(context, profile)

@@ -106,11 +106,17 @@ class AuthInterceptor(
                 // ignore parse errors and fallback to keyword detection
             }
 
-            // Check if this is a DEVICE_LIMIT_EXCEEDED error - DO NOT logout, broadcast device limit event instead
+            // Entitlement responses must preserve authentication.
             try {
                 if (!responseBodyString.isNullOrBlank()) {
                     val jo = JSONObject(responseBodyString)
                     val errorCode = jo.optString("errorCode", "")
+                    if (errorCode.equals("PRO_REQUIRED", ignoreCase = true)) {
+                        reason = jo.optString("message", "An active Pro subscription is required")
+                        Log.w(TAG, "Received 403 with PRO_REQUIRED")
+                        broadcastUpgradeRequired(reason, "dns_ad_blocking", null, "Pro")
+                        return response
+                    }
                     if (errorCode.equals("DEVICE_LIMIT_EXCEEDED", ignoreCase = true)) {
                         Log.w(TAG, "Received 403 with DEVICE_LIMIT_EXCEEDED")
                         broadcastDeviceLimitExceeded(responseBodyString, token)

@@ -7,6 +7,7 @@ import retrofit2.http.DELETE
 import retrofit2.http.GET
 import retrofit2.http.Header
 import retrofit2.http.POST
+import retrofit2.http.PUT
 import retrofit2.http.Streaming
 import retrofit2.http.Path
 
@@ -256,6 +257,18 @@ interface ApiService {
     suspend fun getSubscriptionStatus(
         @Header("Authorization") authorization: String
     ): Response<SubscriptionStatusResponse>
+
+    // ===== ACCOUNT-WIDE DNS SETTINGS =====
+    @GET("api/dns/settings")
+    suspend fun getDnsSettings(
+        @Header("Authorization") authorization: String
+    ): Response<DnsSettingsResponse>
+
+    @PUT("api/dns/settings")
+    suspend fun updateDnsSettings(
+        @Header("Authorization") authorization: String,
+        @Body request: UpdateDnsSettingsRequest
+    ): Response<DnsSettingsResponse>
 
     @POST("api/subscription/register-device")
     suspend fun registerDevice(
