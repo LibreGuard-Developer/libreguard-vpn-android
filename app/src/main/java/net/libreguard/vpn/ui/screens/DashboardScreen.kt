@@ -11,6 +11,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -394,11 +395,25 @@ fun DashboardScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 10.dp),
-                    horizontalArrangement = Arrangement.SpaceEvenly
                 ) {
-                    StatItemCompact(icon = Icons.Default.Schedule, value = connectionTime, label = "Duration")
-                    StatItemCompact(icon = Icons.Default.Speed, value = "${downloadSpeed.toFixed(1)} Mbps", label = "Speed")
-                    StatItemCompact(icon = Icons.Default.Language, value = selectedServer?.country ?: "-", label = "Location")
+                    StatItemCompact(
+                        modifier = Modifier.weight(1f),
+                        icon = Icons.Default.Schedule,
+                        value = connectionTime,
+                        label = "Duration"
+                    )
+                    StatItemCompact(
+                        modifier = Modifier.weight(1f),
+                        icon = Icons.Default.Speed,
+                        value = "${downloadSpeed.toFixed(1)} Mbps",
+                        label = "Speed"
+                    )
+                    StatItemCompact(
+                        modifier = Modifier.weight(1f),
+                        icon = Icons.Default.Language,
+                        value = selectedServer?.country ?: "-",
+                        label = "Location"
+                    )
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))
@@ -413,13 +428,26 @@ fun DashboardScreen(
                     border = ButtonDefaults.outlinedButtonBorder(enabled = true)
                 ) {
                     Column(modifier = Modifier.padding(12.dp)) {
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text("Bandwidth Usage", style = MaterialTheme.typography.labelLarge, color = Foreground)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Bandwidth Usage",
+                                modifier = Modifier.weight(1f),
+                                style = MaterialTheme.typography.labelLarge,
+                                color = Foreground,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
                             Text(
                                 if (isUnlimited) "Unlimited"
                                 else "${totalPercentage.toFixed(1)}% of ${dataUsageInfo.formattedLimit}",
                                 style = MaterialTheme.typography.labelSmall,
-                                color = if (isOverLimit) Destructive else MutedForeground
+                                color = if (isOverLimit) Destructive else MutedForeground,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
 
@@ -456,35 +484,86 @@ fun DashboardScreen(
                         } // End of !isUnlimited block
 
                         // Legend - use server-formatted values
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                modifier = Modifier.weight(1f),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
                                 Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(if (isOverLimit) Destructive.copy(alpha = 0.6f) else MutedForeground.copy(alpha = 0.4f)))
-                                Text("Monthly total", style = MaterialTheme.typography.labelSmall, color = MutedForeground)
+                                Text(
+                                    text = "Monthly total",
+                                    modifier = Modifier.weight(1f),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MutedForeground,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
                             }
+                            Spacer(modifier = Modifier.width(8.dp))
                             Text(
                                 text = dataUsageInfo.formattedTotal,
                                 style = MaterialTheme.typography.labelSmall,
-                                color = if (isOverLimit) Destructive else Foreground
+                                color = if (isOverLimit) Destructive else Foreground,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
                         Spacer(modifier = Modifier.height(4.dp))
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                modifier = Modifier.weight(1f),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
                                 Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(Primary))
-                                Text("This session", style = MaterialTheme.typography.labelSmall, color = MutedForeground)
+                                Text(
+                                    text = "This session",
+                                    modifier = Modifier.weight(1f),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MutedForeground,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
                             }
-                            Text("${sessionData.toFixed(1)} MB", style = MaterialTheme.typography.labelSmall, color = Primary)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "${sessionData.toFixed(1)} MB",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Primary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
                         }
 
                         // Show remaining data for free users
                         if (!isUnlimited) {
                             Spacer(modifier = Modifier.height(4.dp))
-                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text("Remaining", style = MaterialTheme.typography.labelSmall, color = MutedForeground)
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "Remaining",
+                                    modifier = Modifier.weight(1f),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MutedForeground,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
                                 Text(
                                     text = if (isOverLimit) "0 B" else dataUsageInfo.formattedRemaining,
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = if (isOverLimit) Destructive else Foreground
+                                    color = if (isOverLimit) Destructive else Foreground,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                             }
                         }
@@ -505,6 +584,10 @@ fun DashboardScreen(
                         }
                     }
                 }
+
+                // Keep the card separated from the bottom navigation by the same
+                // spacing used between the stats row and the card.
+                Spacer(modifier = Modifier.height(8.dp))
             }
         }
 
@@ -665,12 +748,32 @@ private fun ProtectionIndicator(text: String) {
 private fun StatItemCompact(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     value: String,
-    label: String
+    label: String,
+    modifier: Modifier = Modifier
 ) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
         Icon(icon, null, tint = MutedForeground, modifier = Modifier.size(16.dp))
-        Text(text = value, style = MaterialTheme.typography.labelMedium, color = Foreground)
-        Text(text = label, style = MaterialTheme.typography.labelSmall, color = MutedForeground)
+        Text(
+            text = value,
+            modifier = Modifier.fillMaxWidth(),
+            style = MaterialTheme.typography.labelMedium,
+            color = Foreground,
+            textAlign = TextAlign.Center,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        Text(
+            text = label,
+            modifier = Modifier.fillMaxWidth(),
+            style = MaterialTheme.typography.labelSmall,
+            color = MutedForeground,
+            textAlign = TextAlign.Center,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
     }
 }
 
