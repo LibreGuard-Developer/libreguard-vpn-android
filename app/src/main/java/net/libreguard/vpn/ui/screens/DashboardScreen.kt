@@ -1,9 +1,18 @@
 package net.libreguard.vpn.ui.screens
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -11,11 +20,17 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import net.libreguard.vpn.service.data.DataUsageInfo
 import net.libreguard.vpn.ui.components.LogoWithGradient
 import net.libreguard.vpn.ui.components.VpnConnectionHero
 import net.libreguard.vpn.ui.components.VpnConnectionStatus
@@ -27,7 +42,7 @@ import java.util.Locale
 
 /**
  * Dashboard Screen - Main connection screen
- * EXACTLY matching Dashboard.tsx design - NON-SCROLLABLE compact layout
+ * Dashboard connection screen with adaptive spacing and a bounded scroll fallback.
  */
 @Composable
 fun DashboardScreen(
@@ -121,6 +136,7 @@ fun DashboardScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .animateContentSize(animationSpec = tween(durationMillis = 280))
             .background(Background)
             .padding(horizontal = LibreGuardDimens.screenHorizontalPadding)
             .padding(top = LibreGuardDimens.screenTopPadding, bottom = 0.dp)
@@ -172,7 +188,11 @@ fun DashboardScreen(
         }
 
         // IP Address Display (when connected) - Compact
-        if (isConnected) {
+        AnimatedVisibility(
+            visible = isConnected,
+            enter = fadeIn(tween(220)) + expandVertically(expandFrom = Alignment.Top),
+            exit = fadeOut(tween(180)) + shrinkVertically(shrinkTowards = Alignment.Top)
+        ) {
             Spacer(modifier = Modifier.height(8.dp))
             Surface(
                 modifier = Modifier.fillMaxWidth(),
@@ -214,9 +234,11 @@ fun DashboardScreen(
 
         // Unified Quick Connect / Manual Server Selection Button (when disconnected)
         // Only show if: in Quick Connect mode OR (in manual mode AND have a server selected)
-        if (!isConnected && !isConnecting && (isQuickConnectMode || selectedServer
-
-                    != null)) {
+        AnimatedVisibility(
+            visible = !isConnected && !isConnecting && (isQuickConnectMode || selectedServer != null),
+            enter = fadeIn(tween(220)) + expandVertically(expandFrom = Alignment.Top),
+            exit = fadeOut(tween(180)) + shrinkVertically(shrinkTowards = Alignment.Top)
+        ) {
             Spacer(modifier = Modifier.height(10.dp))
 
             // Single unified button that shows Quick Connect or manually selected server
@@ -355,245 +377,38 @@ fun DashboardScreen(
             }
         }
 
-        // Keep the connected-state content anchored below the protection row. Centering this
-        // variable-height section can push the bottom of the bandwidth card off-screen.
-        Column(
+        AdaptiveConnectionViewport(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
                 .padding(top = 12.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Top
-        ) {
-            VpnConnectionHero(
-                status = connectionStatus,
-                onClick = onConnectionToggle,
-                showProgressBar = true
-            )
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            // Connect/Disconnect button (design: big rounded)
-            Button(
-                onClick = onConnectionToggle,
-                enabled = isConnected || isConnecting || isQuickConnectMode || selectedServer != null,
-                modifier = Modifier
-                    .height(if (isConnected) 48.dp else 56.dp)
-                    .padding(horizontal = 18.dp),
-                shape = RoundedCornerShape(16.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Primary, contentColor = PrimaryForeground)
-            ) {
-                Text(text = statusConfig.buttonText, style = MaterialTheme.typography.titleMedium)
-            }
-
-            // Connected-only stats block (kept in the weighted center section so it doesn't leave bottom whitespace)
-            if (isConnected) {
-                Spacer(modifier = Modifier.height(8.dp))
-
-                // Connection stats row
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 10.dp),
-                ) {
-                    StatItemCompact(
-                        modifier = Modifier.weight(1f),
-                        icon = Icons.Default.Schedule,
-                        value = connectionTime,
-                        label = "Duration"
-                    )
-                    StatItemCompact(
-                        modifier = Modifier.weight(1f),
-                        icon = Icons.Default.Speed,
-                        value = "${downloadSpeed.toFixed(1)} Mbps",
-                        label = "Speed"
-                    )
-                    StatItemCompact(
-                        modifier = Modifier.weight(1f),
-                        icon = Icons.Default.Language,
-                        value = selectedServer?.country ?: "-",
-                        label = "Location"
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                // Bandwidth card
-                Surface(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 10.dp),
-                    shape = RoundedCornerShape(12.dp),
-                    color = CardBackground,
-                    border = ButtonDefaults.outlinedButtonBorder(enabled = true)
-                ) {
-                    Column(modifier = Modifier.padding(12.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = "Bandwidth Usage",
-                                modifier = Modifier.weight(1f),
-                                style = MaterialTheme.typography.labelLarge,
-                                color = Foreground,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                if (isUnlimited) "Unlimited"
-                                else "${totalPercentage.toFixed(1)}% of ${dataUsageInfo.formattedLimit}",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = if (isOverLimit) Destructive else MutedForeground,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        // Multi-layer bar (monthly = gray, session = primary) - hide for unlimited
-                        if (!isUnlimited) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(8.dp)
-                                    .clip(RoundedCornerShape(4.dp))
-                                    .background(Secondary.copy(alpha = 0.3f))
-                            ) {
-                                // Monthly
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxHeight()
-                                        .fillMaxWidth((monthlyPercentage / 100f).coerceIn(0f, 1f))
-                                        .clip(RoundedCornerShape(4.dp))
-                                        .background(if (isOverLimit) Destructive.copy(alpha = 0.6f) else MutedForeground.copy(alpha = 0.4f))
-                            )
-                            // Session
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxHeight()
-                                    .fillMaxWidth(((sessionData / monthlyLimit)).toFloat().coerceIn(0f, 1f))
-                                    .clip(RoundedCornerShape(4.dp))
-                                    .background(Primary)
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.height(8.dp))
-                        } // End of !isUnlimited block
-
-                        // Legend - use server-formatted values
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Row(
-                                modifier = Modifier.weight(1f),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(if (isOverLimit) Destructive.copy(alpha = 0.6f) else MutedForeground.copy(alpha = 0.4f)))
-                                Text(
-                                    text = "Monthly total",
-                                    modifier = Modifier.weight(1f),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MutedForeground,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = dataUsageInfo.formattedTotal,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = if (isOverLimit) Destructive else Foreground,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Row(
-                                modifier = Modifier.weight(1f),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(Primary))
-                                Text(
-                                    text = "This session",
-                                    modifier = Modifier.weight(1f),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MutedForeground,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = "${sessionData.toFixed(1)} MB",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = Primary,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-
-                        // Show remaining data for free users
-                        if (!isUnlimited) {
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = "Remaining",
-                                    modifier = Modifier.weight(1f),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MutedForeground,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    text = if (isOverLimit) "0 B" else dataUsageInfo.formattedRemaining,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = if (isOverLimit) Destructive else Foreground,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(8.dp))
-                        HorizontalDivider(color = Border)
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceAround) {
-                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.ArrowDownward, null, tint = MutedForeground, modifier = Modifier.size(14.dp))
-                                Text("${downloadSpeed.toFixed(1)} Mbps", style = MaterialTheme.typography.bodySmall, color = Foreground)
-                            }
-                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.ArrowUpward, null, tint = MutedForeground, modifier = Modifier.size(14.dp))
-                                Text("${uploadSpeed.toFixed(1)} Mbps", style = MaterialTheme.typography.bodySmall, color = Foreground)
-                            }
-                        }
-                    }
-                }
-
-                // Keep the card separated from the bottom navigation by the same
-                // spacing used between the stats row and the card.
-                Spacer(modifier = Modifier.height(8.dp))
-            }
-        }
+            status = connectionStatus,
+            statusButtonText = statusConfig.buttonText,
+            onConnectionToggle = onConnectionToggle,
+            isConnected = isConnected,
+            isConnecting = isConnecting,
+            isQuickConnectMode = isQuickConnectMode,
+            hasSelectedServer = selectedServer != null,
+            connectionTime = connectionTime,
+            downloadSpeed = downloadSpeed,
+            uploadSpeed = uploadSpeed,
+            location = selectedServer?.country ?: "-",
+            dataUsageInfo = dataUsageInfo,
+            isUnlimited = isUnlimited,
+            isOverLimit = isOverLimit,
+            sessionData = sessionData,
+            monthlyLimit = monthlyLimit,
+            monthlyPercentage = monthlyPercentage,
+            totalPercentage = totalPercentage
+        )
 
         // Data Usage Card - Fixed at Bottom (Free Plan Only, when disconnected)
         // Matches design-reference: Dashboard.tsx Data Usage Card at bottom
-        if (!isPro && !isConnected && !isConnecting) {
+        AnimatedVisibility(
+            visible = !isPro && !isConnected && !isConnecting,
+            enter = fadeIn(tween(220)) + expandVertically(expandFrom = Alignment.Bottom),
+            exit = fadeOut(tween(180)) + shrinkVertically(shrinkTowards = Alignment.Bottom)
+        ) {
             Spacer(modifier = Modifier.height(8.dp))
 
             // Cache values to prevent flickering on tab switches
@@ -730,6 +545,397 @@ fun DashboardScreen(
                             )
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+internal fun AdaptiveConnectionViewport(
+    modifier: Modifier,
+    status: VpnConnectionStatus,
+    statusButtonText: String,
+    onConnectionToggle: () -> Unit,
+    isConnected: Boolean,
+    isConnecting: Boolean,
+    isQuickConnectMode: Boolean,
+    hasSelectedServer: Boolean,
+    connectionTime: String,
+    downloadSpeed: Double,
+    uploadSpeed: Double,
+    location: String,
+    dataUsageInfo: DataUsageInfo,
+    isUnlimited: Boolean,
+    isOverLimit: Boolean,
+    sessionData: Double,
+    monthlyLimit: Double,
+    monthlyPercentage: Float,
+    totalPercentage: Float
+) {
+    val scrollState = rememberScrollState()
+
+    BoxWithConstraints(
+        modifier = modifier.testTag("dashboard_connection_viewport")
+    ) {
+        val density = LocalDensity.current
+        val viewportHeightPx = with(density) {
+            if (maxHeight == Dp.Infinity) 0 else maxHeight.roundToPx()
+        }
+
+        Layout(
+            modifier = Modifier
+                .fillMaxWidth()
+                .fillMaxHeight()
+                .animateContentSize(animationSpec = tween(durationMillis = 280))
+                .verticalScroll(scrollState)
+                .testTag("dashboard_connection_scroll"),
+            content = {
+                VpnConnectionHero(
+                    status = status,
+                    onClick = onConnectionToggle,
+                    showProgressBar = true
+                )
+
+                Button(
+                    onClick = onConnectionToggle,
+                    enabled = isConnected || isConnecting || isQuickConnectMode || hasSelectedServer,
+                    modifier = Modifier
+                        .height(if (isConnected) 48.dp else 56.dp)
+                        .padding(horizontal = 18.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Primary,
+                        contentColor = PrimaryForeground
+                    )
+                ) {
+                    Text(text = statusButtonText, style = MaterialTheme.typography.titleMedium)
+                }
+
+                AnimatedVisibility(
+                    visible = isConnected,
+                    enter = fadeIn(tween(220)) + expandVertically(expandFrom = Alignment.Top),
+                    exit = fadeOut(tween(180)) + shrinkVertically(shrinkTowards = Alignment.Top)
+                ) {
+                    ConnectionStatsRow(
+                        connectionTime = connectionTime,
+                        downloadSpeed = downloadSpeed,
+                        location = location
+                    )
+                }
+
+                AnimatedVisibility(
+                    visible = isConnected,
+                    enter = fadeIn(tween(240)) + expandVertically(expandFrom = Alignment.Top),
+                    exit = fadeOut(tween(180)) + shrinkVertically(shrinkTowards = Alignment.Top)
+                ) {
+                    BandwidthUsageCard(
+                        dataUsageInfo = dataUsageInfo,
+                        isUnlimited = isUnlimited,
+                        isOverLimit = isOverLimit,
+                        sessionData = sessionData,
+                        monthlyLimit = monthlyLimit,
+                        monthlyPercentage = monthlyPercentage,
+                        totalPercentage = totalPercentage,
+                        downloadSpeed = downloadSpeed,
+                        uploadSpeed = uploadSpeed
+                    )
+                }
+            }
+        ) { measurables, constraints ->
+            val layoutWidth = constraints.maxWidth
+            val childConstraints = constraints.copy(
+                minWidth = 0,
+                maxWidth = layoutWidth,
+                minHeight = 0,
+                maxHeight = Constraints.Infinity
+            )
+            val placeables = measurables
+                .map { it.measure(childConstraints) }
+                .filter { it.height > 0 }
+
+            val minimumGapPx = with(density) { 8.dp.roundToPx() }
+            val spaceCount = placeables.size + 1
+            val contentHeight = placeables.sumOf { it.height }
+            val minimumLayoutHeight = contentHeight + minimumGapPx * spaceCount
+            val layoutHeight = maxOf(viewportHeightPx, minimumLayoutHeight)
+            val extraSpace = (layoutHeight - minimumLayoutHeight).coerceAtLeast(0)
+            val adaptiveGapPx = minimumGapPx + if (spaceCount > 0) {
+                extraSpace / spaceCount
+            } else {
+                0
+            }
+
+            layout(width = layoutWidth, height = layoutHeight) {
+                var y = adaptiveGapPx
+                placeables.forEach { placeable ->
+                    val x = ((layoutWidth - placeable.width) / 2).coerceAtLeast(0)
+                    placeable.placeRelative(x, y)
+                    y += placeable.height + adaptiveGapPx
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ConnectionStatsRow(
+    connectionTime: String,
+    downloadSpeed: Double,
+    location: String
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 10.dp)
+            .testTag("connection_stats"),
+    ) {
+        StatItemCompact(
+            modifier = Modifier.weight(1f),
+            icon = Icons.Default.Schedule,
+            value = connectionTime,
+            label = "Duration"
+        )
+        StatItemCompact(
+            modifier = Modifier.weight(1f),
+            icon = Icons.Default.Speed,
+            value = "${downloadSpeed.toFixed(1)} Mbps",
+            label = "Speed"
+        )
+        StatItemCompact(
+            modifier = Modifier.weight(1f),
+            icon = Icons.Default.Language,
+            value = location,
+            label = "Location"
+        )
+    }
+}
+
+@Composable
+private fun BandwidthUsageCard(
+    dataUsageInfo: DataUsageInfo,
+    isUnlimited: Boolean,
+    isOverLimit: Boolean,
+    sessionData: Double,
+    monthlyLimit: Double,
+    monthlyPercentage: Float,
+    totalPercentage: Float,
+    downloadSpeed: Double,
+    uploadSpeed: Double
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 10.dp)
+            .testTag("bandwidth_usage_card"),
+        shape = RoundedCornerShape(12.dp),
+        color = CardBackground,
+        border = ButtonDefaults.outlinedButtonBorder(enabled = true)
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Bandwidth Usage",
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = Foreground,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    if (isUnlimited) "Unlimited"
+                    else "${totalPercentage.toFixed(1)}% of ${dataUsageInfo.formattedLimit}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (isOverLimit) Destructive else MutedForeground,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            if (!isUnlimited) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(8.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(Secondary.copy(alpha = 0.3f))
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .fillMaxWidth((monthlyPercentage / 100f).coerceIn(0f, 1f))
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(
+                                if (isOverLimit) Destructive.copy(alpha = 0.6f)
+                                else MutedForeground.copy(alpha = 0.4f)
+                            )
+                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .fillMaxWidth(
+                                if (monthlyLimit > 0) {
+                                    (sessionData / monthlyLimit).toFloat().coerceIn(0f, 1f)
+                                } else {
+                                    0f
+                                }
+                            )
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(Primary)
+                    )
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    modifier = Modifier.weight(1f),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .clip(CircleShape)
+                            .background(
+                                if (isOverLimit) Destructive.copy(alpha = 0.6f)
+                                else MutedForeground.copy(alpha = 0.4f)
+                            )
+                    )
+                    Text(
+                        text = "Monthly total",
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MutedForeground,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = dataUsageInfo.formattedTotal,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (isOverLimit) Destructive else Foreground,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    modifier = Modifier.weight(1f),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .clip(CircleShape)
+                            .background(Primary)
+                    )
+                    Text(
+                        text = "This session",
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MutedForeground,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "${sessionData.toFixed(1)} MB",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Primary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            if (!isUnlimited) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("bandwidth_remaining"),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Remaining",
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MutedForeground,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = if (isOverLimit) "0 B" else dataUsageInfo.formattedRemaining,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (isOverLimit) Destructive else Foreground,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+            HorizontalDivider(color = Border)
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("bandwidth_realtime_speeds"),
+                horizontalArrangement = Arrangement.SpaceAround
+            ) {
+                Row(
+                    modifier = Modifier.testTag("bandwidth_download_speed"),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        Icons.Default.ArrowDownward,
+                        null,
+                        tint = MutedForeground,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Text(
+                        "${downloadSpeed.toFixed(1)} Mbps",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Foreground
+                    )
+                }
+                Row(
+                    modifier = Modifier.testTag("bandwidth_upload_speed"),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        Icons.Default.ArrowUpward,
+                        null,
+                        tint = MutedForeground,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Text(
+                        "${uploadSpeed.toFixed(1)} Mbps",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Foreground
+                    )
                 }
             }
         }
