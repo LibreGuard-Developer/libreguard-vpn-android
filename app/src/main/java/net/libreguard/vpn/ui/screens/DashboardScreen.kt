@@ -37,6 +37,7 @@ import net.libreguard.vpn.ui.components.VpnConnectionStatus
 import net.libreguard.vpn.ui.components.getStatusConfig
 import net.libreguard.vpn.ui.theme.*
 import net.libreguard.vpn.util.getFlagEmoji
+import net.libreguard.vpn.viewmodel.VpnProtocol
 import net.libreguard.vpn.viewmodel.VpnViewModel
 import java.util.Locale
 
@@ -56,6 +57,11 @@ fun DashboardScreen(
     val isConnected by viewModel.isConnected.collectAsState()
     val isConnecting by viewModel.isConnecting.collectAsState()
     val selectedServer by viewModel.selectedServer.collectAsState()
+    val selectedProtocol by viewModel.selectedProtocol.collectAsState()
+    val activeProtocolLabel = when (selectedProtocol) {
+        VpnProtocol.IKEV2_IPSEC -> "IKEv2/IPSec"
+        else -> selectedProtocol.displayName
+    }
     val isPro by viewModel.isPro.collectAsState()
     val isQuickConnectMode by viewModel.isQuickConnectMode.collectAsState()
 
@@ -229,6 +235,8 @@ fun DashboardScreen(
                 horizontalArrangement = Arrangement.SpaceEvenly
             ) {
                 ProtectionIndicator(text = "WebRTC")
+                ProtectionIndicator(text = activeProtocolLabel)
+                ProtectionIndicator(text = "DNS")
             }
         }
 
