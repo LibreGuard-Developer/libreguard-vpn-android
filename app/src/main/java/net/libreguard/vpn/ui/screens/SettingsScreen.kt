@@ -18,9 +18,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.launch
 import net.libreguard.vpn.BuildConfig
 import net.libreguard.vpn.network.RetrofitClient
@@ -31,6 +35,7 @@ import net.libreguard.vpn.ui.components.SectionHeader
 import net.libreguard.vpn.ui.theme.*
 import net.libreguard.vpn.util.CrashlyticsReporter
 import net.libreguard.vpn.viewmodel.SubscriptionViewModel
+import net.libreguard.vpn.viewmodel.DnsPreferenceUiState
 import org.json.JSONObject
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -60,6 +65,8 @@ fun SettingsScreen(
 
     // Observe selected protocol (default protocol)
     val selectedProtocol by viewModel.selectedProtocol.collectAsState()
+
+    val dnsPreference by viewModel.dnsPreference.collectAsState()
 
     var showLogoutDialog by remember { mutableStateOf(false) }
     var showDisable2faDialog by remember { mutableStateOf(false) }
@@ -99,6 +106,18 @@ fun SettingsScreen(
             }
         }
         subscriptionViewModel.fetchSubscriptionStatus()
+        viewModel.refreshDnsPreference(force = true)
+    }
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, token) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME && !token.isNullOrBlank()) {
+                viewModel.refreshDnsPreference()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     val subscriptionStatus by subscriptionViewModel.subscriptionStatus.collectAsState()
@@ -391,6 +410,18 @@ fun SettingsScreen(
 
             Spacer(modifier = Modifier.height(LibreGuardDimens.sectionSpacing))
 
+            // DNS & Privacy Section
+            SectionHeader(title = "DNS & Privacy", modifier = Modifier.padding(horizontal = LibreGuardDimens.screenHorizontalPadding))
+
+            DnsPrivacySettingsCard(
+                state = dnsPreference,
+                onToggleAdBlocking = viewModel::setDnsAdBlocking,
+                onNavigateToUpgrade = onNavigateToUpgrade,
+                modifier = Modifier.padding(horizontal = LibreGuardDimens.screenHorizontalPadding)
+            )
+
+            Spacer(modifier = Modifier.height(LibreGuardDimens.sectionSpacing))
+
             // Preferences Section
             SectionHeader(title = "Preferences", modifier = Modifier.padding(horizontal = LibreGuardDimens.screenHorizontalPadding))
 
@@ -638,6 +669,110 @@ fun SettingsScreen(
 
 }
 
+@Composable
+internal fun DnsPrivacySettingsCard(
+    state: DnsPreferenceUiState,
+    onToggleAdBlocking: (Boolean) -> Unit,
+    onNavigateToUpgrade: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val locked = state.isLoaded && !state.canUseAdBlocking && !state.requestedEnabled
+    val canToggle = state.isLoaded && !state.isLoading && !state.isSaving &&
+        (state.canUseAdBlocking || state.requestedEnabled)
+    val subtitle = when {
+        state.isSaving -> "Saving this account-wide preference…"
+        state.isLoading || !state.isLoaded -> "Checking your account setting…"
+        state.requestedEnabled && !state.canUseAdBlocking ->
+            "Paused — your saved preference needs an active Pro plan"
+        state.requestedEnabled && state.effectiveEnabled ->
+            "Active for this account and all your devices"
+        state.requestedEnabled ->
+            "Saved, but filtering is currently unavailable; private DNS remains active"
+        state.canUseAdBlocking ->
+            "Filter many ad and tracker domains across all your devices"
+        else -> "Available with Pro across all your devices"
+    }
+
+    SettingsCard(modifier = modifier) {
+        SettingsInfoRow(
+            icon = Icons.Default.Dns,
+            title = "Private DNS",
+            subtitle = "LibreGuard DNS is used automatically for every VPN connection"
+        )
+        HorizontalDivider(color = Border, modifier = Modifier.padding(start = 68.dp))
+        Box {
+            SettingsToggleRow(
+                icon = Icons.Default.Block,
+                title = "DNS Ad Blocking",
+                subtitle = subtitle,
+                checked = state.requestedEnabled,
+                enabled = canToggle,
+                onCheckedChange = onToggleAdBlocking,
+                onRowClick = if (locked) onNavigateToUpgrade else null,
+                modifier = Modifier.testTag("dns_ad_blocking_row"),
+                switchModifier = Modifier.testTag("dns_ad_blocking_switch")
+            )
+            if (state.isLoaded && !state.canUseAdBlocking) {
+                ProBadge(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .offset(x = (-16).dp, y = 16.dp)
+                )
+            }
+        }
+        state.confirmationMessage?.let { message ->
+            Text(
+                text = message,
+                style = MaterialTheme.typography.bodySmall,
+                color = Primary,
+                modifier = Modifier.padding(start = 68.dp, end = 16.dp, bottom = 16.dp)
+            )
+        }
+        state.errorMessage?.let { message ->
+            Text(
+                text = message,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.padding(start = 68.dp, end = 16.dp, bottom = 16.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun SettingsInfoRow(
+    icon: ImageVector,
+    title: String,
+    subtitle: String
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(16.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(40.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(Primary.copy(alpha = 0.1f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = Primary,
+                modifier = Modifier.size(20.dp)
+            )
+        }
+        Spacer(modifier = Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(text = title, style = MaterialTheme.typography.titleSmall, color = Foreground)
+            Text(text = subtitle, style = MaterialTheme.typography.bodySmall, color = MutedForeground)
+        }
+    }
+}
+
 
 @Composable
 private fun SettingsCard(
@@ -714,10 +849,12 @@ private fun SettingsToggleRow(
     checked: Boolean,
     enabled: Boolean = true,
     onCheckedChange: (Boolean) -> Unit,
-    onRowClick: (() -> Unit)? = null
+    onRowClick: (() -> Unit)? = null,
+    modifier: Modifier = Modifier,
+    switchModifier: Modifier = Modifier
 ) {
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .then(
                 if (onRowClick != null) {
@@ -759,6 +896,7 @@ private fun SettingsToggleRow(
             )
         }
         Switch(
+            modifier = switchModifier,
             checked = checked,
             onCheckedChange = if (enabled) onCheckedChange else null,
             enabled = enabled,

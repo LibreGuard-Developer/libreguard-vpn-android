@@ -24,6 +24,7 @@ import java.io.FileOutputStream
 import android.content.SharedPreferences
 import android.database.sqlite.SQLiteDatabase
 import net.libreguard.vpn.R
+import net.libreguard.vpn.service.vpn.InternalDnsPolicy
 import net.libreguard.vpn.util.CrashlyticsReporter
 
 class VpnConfigManager(private val context: Context) {
@@ -235,7 +236,8 @@ class VpnConfigManager(private val context: Context) {
                     Log.i(tag, "=== HYBRID MODE DETECTED ===")
                     Log.i(tag, "No CA cert in config - server uses publicly trusted certificate (Let's Encrypt)")
                     Log.i(tag, "Client cert will be used for authentication only")
-                    // Leave profile.certificateAlias as NULL - accept any valid server cert
+                    // Leave the alias NULL so any chain to a trusted root is allowed;
+                    // strongSwan server-certificate validation remains enabled.
                     profile.certificateAlias = null
 
                     // Proactively seed Let's Encrypt trust anchors into the store strongSwan actually reads
@@ -244,7 +246,7 @@ class VpnConfigManager(private val context: Context) {
                         if (installedAliases.isNotEmpty()) {
                             Log.i(tag, "✓ Seeded Let's Encrypt compatibility trust anchors: $installedAliases")
                         } else {
-                            Log.i(tag, "No additional Let's Encrypt trust anchors were installed from AndroidCAStore")
+                            Log.i(tag, "No Let's Encrypt compatibility trust anchors were available for installation")
                         }
                     } catch (e: Exception) {
                         Log.w(tag, "Failed to ensure Let's Encrypt compatibility roots: ${e.message}")
@@ -252,9 +254,10 @@ class VpnConfigManager(private val context: Context) {
                 }
             }
 
-            json.optJSONArray("dns-servers")?.let { arr ->
-                profile.dnsServers = jsonArrayToSpaceSeparated(arr)
-            }
+            // Client policy is authoritative over downloaded and pushed DNS.
+            profile.dnsServers = InternalDnsPolicy.authoritativeIkev2DnsServers(
+                json.optJSONArray("dns-servers")?.let(::jsonArrayToSpaceSeparated)
+            )
 
             json.optJSONObject("split-tunneling")?.let { st ->
                 var flags = 0
@@ -1080,31 +1083,54 @@ class VpnConfigManager(private val context: Context) {
 
     /**
      * Seed Let's Encrypt trust anchors into LocalCertificateStore so strongSwan can
-     * validate both the traditional ISRG Root X1 path and newer Root YE path.
+     * validate the traditional ISRG Root X1 path and newer Root YE/Root YR paths.
      */
+    private data class LetsEncryptCompatibilityTrustAnchor(
+        val subjectCN: String,
+        val expectedOrg: String,
+        val filename: String,
+        val bundledResourceId: Int? = null
+    )
+
     private fun ensureLetsEncryptCompatibilityTrustAnchors(): List<String> {
-        val aliases = mutableListOf<String>()
+        val aliases = linkedSetOf<String>()
         listOf(
-            Triple("ISRG Root X1", "Internet Security Research Group", "isrg_root_x1.crt"),
-            Triple("Root YE", "ISRG", "root_ye.crt")
-        ).forEach { (subjectCN, expectedOrg, filename) ->
-            val alias = installSystemRootBySubjectCN(subjectCN, expectedOrg, filename)
-                ?: if (subjectCN == "Root YE") {
-                    installBundledLetsEncryptRoot(
-                        expectedSubjectCN = subjectCN,
-                        expectedOrg = expectedOrg,
-                        filename = filename,
-                        resourceId = R.raw.root_ye
-                    )
-                } else {
-                    null
-                }
-            alias?.let { aliases.add(it) }
+            LetsEncryptCompatibilityTrustAnchor(
+                subjectCN = "ISRG Root X1",
+                expectedOrg = "Internet Security Research Group",
+                filename = "isrg_root_x1.crt"
+            ),
+            LetsEncryptCompatibilityTrustAnchor(
+                subjectCN = "Root YE",
+                expectedOrg = "ISRG",
+                filename = "root_ye.crt",
+                bundledResourceId = R.raw.root_ye
+            ),
+            LetsEncryptCompatibilityTrustAnchor(
+                subjectCN = "Root YR",
+                expectedOrg = "ISRG",
+                filename = "root_yr.crt",
+                bundledResourceId = R.raw.root_yr
+            )
+        ).forEach { trustAnchor ->
+            val alias = installSystemRootBySubjectCN(
+                trustAnchor.subjectCN,
+                trustAnchor.expectedOrg,
+                trustAnchor.filename
+            ) ?: trustAnchor.bundledResourceId?.let { resourceId ->
+                installBundledLetsEncryptRoot(
+                    expectedSubjectCN = trustAnchor.subjectCN,
+                    expectedOrg = trustAnchor.expectedOrg,
+                    filename = trustAnchor.filename,
+                    resourceId = resourceId
+                )
+            }
+            alias?.let(aliases::add)
         }
         if (aliases.isNotEmpty()) {
             refreshTrustedCertificateCache()
         }
-        return aliases.distinct()
+        return aliases.toList()
     }
 
     private fun installBundledLetsEncryptRoot(

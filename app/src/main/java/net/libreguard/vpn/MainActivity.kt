@@ -24,6 +24,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
@@ -220,6 +223,19 @@ fun AppNavigation(
 
     // ViewModel reference for VPN disconnect on logout - shared across all composables
     val vpnViewModel: VpnViewModel = viewModel()
+
+    // Keep account-wide DNS eligibility/effectiveness current after returning to
+    // the app. The ViewModel ignores this until an authenticated account exists.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, vpnViewModel) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                vpnViewModel.refreshDnsPreference()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     // Launcher for the system VPN consent dialog (VpnService.prepare intent)
     val vpnConsentLauncher = rememberLauncherForActivityResult(

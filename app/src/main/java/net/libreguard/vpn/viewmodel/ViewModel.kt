@@ -55,6 +55,9 @@ import net.libreguard.vpn.network.OpenVpnDownloadRequest
 import okhttp3.ResponseBody
 import kotlinx.coroutines.isActive
 import net.libreguard.vpn.network.CertificateRequest
+import net.libreguard.vpn.network.DnsSettingsErrorResponse
+import net.libreguard.vpn.network.DnsSettingsResponse
+import net.libreguard.vpn.network.UpdateDnsSettingsRequest
 import net.libreguard.vpn.util.VpnConfigManager
 import net.libreguard.vpn.util.TokenRefreshResult
 
@@ -68,6 +71,55 @@ enum class VpnProtocol(val displayName: String, val apiName: String) {
     IKEV2_IPSEC("IKEV2/IPSec", "IKEV2"),
     OPENVPN("OpenVPN", "OPENVPN"),
     WIREGUARD("WireGuard", "WIREGUARD")
+}
+
+data class DnsPreferenceUiState(
+    val isLoaded: Boolean = false,
+    val isLoading: Boolean = false,
+    val isSaving: Boolean = false,
+    val requestedEnabled: Boolean = false,
+    val canUseAdBlocking: Boolean = false,
+    val effectiveEnabled: Boolean = false,
+    val effectiveMode: String = "regular",
+    val propagationSeconds: Int = 15,
+    val confirmationMessage: String? = null,
+    val errorMessage: String? = null
+)
+
+internal fun DnsPreferenceUiState.withConfirmedSettings(
+    settings: DnsSettingsResponse,
+    confirmationMessage: String? = null,
+    errorMessage: String? = null
+): DnsPreferenceUiState = copy(
+    isLoaded = true,
+    isLoading = false,
+    isSaving = false,
+    requestedEnabled = settings.requestedEnabled,
+    canUseAdBlocking = settings.canUseAdBlocking,
+    effectiveEnabled = settings.effectiveEnabled,
+    effectiveMode = settings.effectiveMode,
+    propagationSeconds = settings.propagationSeconds.coerceAtLeast(0),
+    confirmationMessage = confirmationMessage,
+    errorMessage = errorMessage
+)
+
+internal fun DnsPreferenceUiState.withDnsRequestFailure(message: String): DnsPreferenceUiState = copy(
+    isLoading = false,
+    isSaving = false,
+    confirmationMessage = null,
+    errorMessage = message
+)
+
+internal class DnsRequestGate {
+    private var generation = 0L
+
+    fun begin(): Long = ++generation
+
+    fun invalidate() {
+        generation += 1L
+    }
+
+    fun isCurrent(requestGeneration: Long): Boolean = requestGeneration == generation
 }
 
 class VpnViewModel(application: Application) : AndroidViewModel(application) {
@@ -146,6 +198,11 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     // instead of maintaining separate cached state in VpnViewModel
     private val subscriptionViewModel by lazy { SubscriptionViewModel(getApplication()) }
     val isPro: StateFlow<Boolean> get() = subscriptionViewModel.isPro
+
+    private val _dnsPreference = MutableStateFlow(DnsPreferenceUiState())
+    val dnsPreference: StateFlow<DnsPreferenceUiState> = _dnsPreference
+    private var dnsPreferenceJob: Job? = null
+    private val dnsRequestGate = DnsRequestGate()
 
     private var authToken: String? = null
     private var currentUserId: String? = null
@@ -779,6 +836,10 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun logout() {
         viewModelScope.launch {
+            dnsPreferenceJob?.cancel()
+            dnsRequestGate.invalidate()
+            _dnsPreference.value = DnsPreferenceUiState()
+
             // Stop background token validation
             tokenValidationManager?.stopBackgroundValidation()
 
@@ -1078,6 +1139,12 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         // Check if this is a NEW login vs just a re-render with the same token
         val isNewLogin = authToken != token
 
+        if (isNewLogin) {
+            dnsPreferenceJob?.cancel()
+            dnsRequestGate.invalidate()
+            _dnsPreference.value = DnsPreferenceUiState()
+        }
+
         authToken = token
         // Save token immediately for persistence
         sharedPrefs.edit().putString("auth_token", token).apply()
@@ -1150,6 +1217,8 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to fetch subscription status")
             }
+
+            refreshDnsPreference(force = true)
 
             // CRITICAL: Reload user-specific settings AFTER subscription status is known
             // This ensures Pro-only features are enforced correctly
@@ -1347,11 +1416,157 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     private fun observeSubscriptionState() {
         subscriptionStateObserverJob?.cancel()
         subscriptionStateObserverJob = viewModelScope.launch {
+            var previousIsPro: Boolean? = null
             subscriptionViewModel.isPro.collect { isPro ->
                 ensureProtocolMatchesSubscription(isPro)
+                if (previousIsPro != null && previousIsPro != isPro && !authToken.isNullOrBlank()) {
+                    refreshDnsPreference(force = true)
+                }
+                previousIsPro = isPro
             }
         }
     }
+
+    /** Refreshes the backend-authoritative, account-wide DNS preference. */
+    fun refreshDnsPreference(force: Boolean = false) {
+        val previous = _dnsPreference.value
+        if (previous.isSaving || (!force && previous.isLoading)) return
+        if (authToken.isNullOrBlank()) return
+
+        dnsPreferenceJob?.cancel()
+        val generation = dnsRequestGate.begin()
+        dnsPreferenceJob = viewModelScope.launch {
+            _dnsPreference.value = previous.copy(
+                isLoading = true,
+                isSaving = false,
+                confirmationMessage = null,
+                errorMessage = null
+            )
+
+            try {
+                val authorization = currentDnsAuthorization()
+                    ?: throw IllegalStateException("Your session has expired. Please sign in again.")
+                val response = RetrofitClient.instance.getDnsSettings(authorization)
+                if (!dnsRequestGate.isCurrent(generation)) return@launch
+
+                val settings = response.body()
+                if (response.isSuccessful && settings != null) {
+                    _dnsPreference.value = previous.withConfirmedSettings(settings)
+                } else {
+                    _dnsPreference.value = previous.withDnsRequestFailure(
+                        dnsErrorMessage(response.errorBody()?.string())
+                            ?: "Could not refresh DNS settings. Your last confirmed setting is unchanged."
+                    )
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (dnsRequestGate.isCurrent(generation)) {
+                    _dnsPreference.value = previous.withDnsRequestFailure(
+                        "Could not refresh DNS settings. Your last confirmed setting is unchanged."
+                    )
+                }
+            }
+        }
+    }
+
+    /** Saves the preference only after a confirmed backend response. */
+    fun setDnsAdBlocking(enabled: Boolean) {
+        val previous = _dnsPreference.value
+        if (!previous.isLoaded || previous.isLoading || previous.isSaving) return
+        if (enabled == previous.requestedEnabled) return
+
+        if (enabled && !previous.canUseAdBlocking) {
+            viewModelScope.launch {
+                _upgradeEvents.emit(
+                    mapOf(
+                        "reason" to "DNS ad blocking requires Pro",
+                        "resource_type" to "dns_ad_blocking",
+                        "resource_id" to null,
+                        "required_tier" to "Pro"
+                    )
+                )
+            }
+            return
+        }
+
+        // A saved-on preference remains switchable off after a downgrade.
+        if (!enabled && !previous.requestedEnabled) return
+
+        dnsPreferenceJob?.cancel()
+        val generation = dnsRequestGate.begin()
+        dnsPreferenceJob = viewModelScope.launch {
+            _dnsPreference.value = previous.copy(
+                isLoading = false,
+                isSaving = true,
+                confirmationMessage = null,
+                errorMessage = null
+            )
+
+            try {
+                val authorization = currentDnsAuthorization()
+                    ?: throw IllegalStateException("Your session has expired. Please sign in again.")
+                val response = RetrofitClient.instance.updateDnsSettings(
+                    authorization,
+                    UpdateDnsSettingsRequest(adBlockingEnabled = enabled)
+                )
+                if (!dnsRequestGate.isCurrent(generation)) return@launch
+
+                val settings = response.body()
+                if (response.isSuccessful && settings != null) {
+                    val seconds = settings.propagationSeconds.coerceAtLeast(0)
+                    _dnsPreference.value = previous.withConfirmedSettings(
+                        settings,
+                        confirmationMessage = "Saved. Applies across your devices within about $seconds seconds."
+                    )
+                    return@launch
+                }
+
+                val error = parseDnsSettingsError(response.errorBody()?.string())
+                val snapshot = error?.settings
+                _dnsPreference.value = if (snapshot != null) {
+                    previous.withConfirmedSettings(snapshot, errorMessage = error.message)
+                } else {
+                    previous.withDnsRequestFailure(
+                        error?.message ?: "Could not save DNS settings. Your last confirmed setting is unchanged."
+                    )
+                }
+
+                if (error?.errorCode.equals("PRO_REQUIRED", ignoreCase = true)) {
+                    _upgradeEvents.emit(
+                        mapOf(
+                            "reason" to (error?.message ?: "DNS ad blocking requires Pro"),
+                            "resource_type" to "dns_ad_blocking",
+                            "resource_id" to null,
+                            "required_tier" to "Pro"
+                        )
+                    )
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (dnsRequestGate.isCurrent(generation)) {
+                    _dnsPreference.value = previous.withDnsRequestFailure(
+                        "Could not save DNS settings. Your last confirmed setting is unchanged."
+                    )
+                }
+            }
+        }
+    }
+
+    private suspend fun currentDnsAuthorization(): String? {
+        val tokenManager = RetrofitClient.getTokenManager()
+        if (!tokenManager.refreshTokenIfNeeded(RetrofitClient.authApiService)) return null
+        return tokenManager.getAccessToken()?.let { "Bearer $it" }
+    }
+
+    private fun parseDnsSettingsError(errorBody: String?): DnsSettingsErrorResponse? {
+        if (errorBody.isNullOrBlank()) return null
+        return runCatching { Gson().fromJson(errorBody, DnsSettingsErrorResponse::class.java) }.getOrNull()
+    }
+
+    private fun dnsErrorMessage(errorBody: String?): String? =
+        parseDnsSettingsError(errorBody)?.message
 
     /**
      * Quick Connect - Automatically select and connect to the best available server

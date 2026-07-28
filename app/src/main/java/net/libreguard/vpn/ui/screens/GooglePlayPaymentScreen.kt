@@ -155,9 +155,8 @@ fun GooglePlayPaymentScreen(
                         "Unlimited data",
                         "Kill Switch",
                         "Custom VPN configuration",
-                        "Ad Blocking",
-                        "Split Tunneling",
-                        "Custom DNS servers"
+                        "Account-wide DNS-domain filtering",
+                        "Split Tunneling"
                     ).forEach { feature ->
                         Row(
                             modifier = Modifier.padding(vertical = 3.dp),
