@@ -154,7 +154,12 @@ fun HelpSupportScreen(
 
                 FAQItem(
                     question = "What's the difference between Free and Pro?",
-                    answer = "Free plan includes 5GB monthly data with basic features. Pro plan offers unlimited bandwidth, faster servers, OpenVPN protocol, VPN usage outside this app, and much more!"
+                    answer = "Free plan includes 5GB monthly data with basic features. Pro plan offers unlimited bandwidth, faster servers, OpenVPN protocol, VPN usage outside this app, DNS-based ad blocking, and much more!"
+                )
+
+                FAQItem(
+                    question = "Why does LibreGuard use DNS over the VPN tunnel?",
+                    answer = "DNS requests travel through the VPN tunnel instead of going to your ISP or a separate public resolver. This helps prevent DNS leaks, keeps lookups private, and lets filtering work consistently across networks."
                 )
 
                 FAQItem(

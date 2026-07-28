@@ -1108,6 +1108,7 @@ private fun UpgradeCard(
                 "Unlimited bandwidth",
                 "Priority servers",
                 "OpenVPN support",
+                "DNS-based ad blocking",
                 "Manual VPN configuration export",
                 "Email support",
                 "Auto-connect",
