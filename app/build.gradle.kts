@@ -1,5 +1,6 @@
 import org.gradle.api.GradleException
 import org.gradle.api.tasks.PathSensitivity
+import com.google.firebase.crashlytics.buildtools.gradle.CrashlyticsExtension
 import java.util.Base64
 
 fun env(name: String): String? = providers.environmentVariable(name).orNull
@@ -139,6 +140,10 @@ tasks.matching { it.name.matches(Regex("generate.+Lint.*Model")) }.configureEach
     dependsOn(generateAdiRegistrationProperties)
 }
 
+tasks.matching { it.name.startsWith("lintAnalyze", ignoreCase = true) }.configureEach {
+    dependsOn(generateAdiRegistrationProperties)
+}
+
 tasks.matching { it.name.contains("lintVital", ignoreCase = true) }.configureEach {
     dependsOn(generateAdiRegistrationProperties)
 }
@@ -159,7 +164,7 @@ android {
     defaultConfig {
         applicationId = "net.libreguard.vpn"
         minSdk = 29
-        targetSdk = 35
+        targetSdk = 36
         versionCode = 20010
         versionName = "2.0.1"
 
@@ -238,6 +243,10 @@ android {
             )
             // Apply signing configuration for Google Play App Signing
             signingConfig = signingConfigs.getByName("release")
+            configure<CrashlyticsExtension> {
+                // Production releases must upload the R8 mapping for readable Crashlytics reports.
+                mappingFileUploadEnabled = true
+            }
         }
     }
 
