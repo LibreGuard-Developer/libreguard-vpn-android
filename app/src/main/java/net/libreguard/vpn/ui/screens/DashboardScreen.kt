@@ -11,8 +11,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -20,6 +18,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
@@ -40,6 +39,7 @@ import net.libreguard.vpn.util.getFlagEmoji
 import net.libreguard.vpn.viewmodel.VpnProtocol
 import net.libreguard.vpn.viewmodel.VpnViewModel
 import java.util.Locale
+import kotlin.math.roundToInt
 
 /**
  * Dashboard Screen - Main connection screen
@@ -201,42 +201,53 @@ fun DashboardScreen(
         ) {
             Spacer(modifier = Modifier.height(8.dp))
             Surface(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("connection_metadata_card"),
                 shape = RoundedCornerShape(10.dp),
                 color = CardBackground,
                 border = ButtonDefaults.outlinedButtonBorder(enabled = true)
             ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(10.dp),
-                    horizontalArrangement = Arrangement.SpaceEvenly
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("Your IP", style = MaterialTheme.typography.labelSmall, color = MutedForeground)
-                        Text(
-                            text = userIP,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MutedForeground.copy(alpha = 0.5f),
-                            textDecoration = TextDecoration.LineThrough
-                        )
+                Column {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceEvenly
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("Your IP", style = MaterialTheme.typography.labelSmall, color = MutedForeground)
+                            Text(
+                                text = userIP,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MutedForeground.copy(alpha = 0.5f),
+                                textDecoration = TextDecoration.LineThrough
+                            )
+                        }
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("VPN IP", style = MaterialTheme.typography.labelSmall, color = MutedForeground)
+                            Text(text = vpnIP, style = MaterialTheme.typography.bodySmall, color = Primary)
+                        }
                     }
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("VPN IP", style = MaterialTheme.typography.labelSmall, color = MutedForeground)
-                        Text(text = vpnIP, style = MaterialTheme.typography.bodySmall, color = Primary)
+
+                    HorizontalDivider(
+                        modifier = Modifier.padding(horizontal = 10.dp),
+                        color = Border
+                    )
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp, vertical = 7.dp)
+                            .testTag("connection_protection_indicators"),
+                        horizontalArrangement = Arrangement.SpaceEvenly,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        ProtectionIndicator(text = "WebRTC")
+                        ProtectionIndicator(text = activeProtocolLabel)
+                        ProtectionIndicator(text = "DNS")
                     }
                 }
-            }
-
-            // Protection indicators - compact row
-            Spacer(modifier = Modifier.height(6.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly
-            ) {
-                ProtectionIndicator(text = "WebRTC")
-                ProtectionIndicator(text = activeProtocolLabel)
-                ProtectionIndicator(text = "DNS")
             }
         }
 
@@ -581,12 +592,11 @@ internal fun AdaptiveConnectionViewport(
     monthlyPercentage: Float,
     totalPercentage: Float
 ) {
-    val scrollState = rememberScrollState()
-
     BoxWithConstraints(
         modifier = modifier.testTag("dashboard_connection_viewport")
     ) {
         val density = LocalDensity.current
+        val compact = isConnected
         val viewportHeightPx = with(density) {
             if (maxHeight == Dp.Infinity) 0 else maxHeight.roundToPx()
         }
@@ -596,20 +606,20 @@ internal fun AdaptiveConnectionViewport(
                 .fillMaxWidth()
                 .fillMaxHeight()
                 .animateContentSize(animationSpec = tween(durationMillis = 280))
-                .verticalScroll(scrollState)
-                .testTag("dashboard_connection_scroll"),
+                .testTag("dashboard_connection_fit"),
             content = {
                 VpnConnectionHero(
                     status = status,
                     onClick = onConnectionToggle,
-                    showProgressBar = true
+                    showProgressBar = true,
+                    compact = compact
                 )
 
                 Button(
                     onClick = onConnectionToggle,
                     enabled = isConnected || isConnecting || isQuickConnectMode || hasSelectedServer,
                     modifier = Modifier
-                        .height(if (isConnected) 48.dp else 56.dp)
+                        .height(if (compact) 44.dp else 56.dp)
                         .padding(horizontal = 18.dp),
                     shape = RoundedCornerShape(16.dp),
                     colors = ButtonDefaults.buttonColors(
@@ -628,7 +638,8 @@ internal fun AdaptiveConnectionViewport(
                     ConnectionStatsRow(
                         connectionTime = connectionTime,
                         downloadSpeed = downloadSpeed,
-                        location = location
+                        location = location,
+                        compact = compact
                     )
                 }
 
@@ -646,7 +657,8 @@ internal fun AdaptiveConnectionViewport(
                         monthlyPercentage = monthlyPercentage,
                         totalPercentage = totalPercentage,
                         downloadSpeed = downloadSpeed,
-                        uploadSpeed = uploadSpeed
+                        uploadSpeed = uploadSpeed,
+                        compact = compact
                     )
                 }
             }
@@ -662,14 +674,24 @@ internal fun AdaptiveConnectionViewport(
                 .map { it.measure(childConstraints) }
                 .filter { it.height > 0 }
 
-            val minimumGapPx = with(density) { 8.dp.roundToPx() }
+            val minimumGapPx = with(density) {
+                (if (compact) 5.dp else 8.dp).roundToPx()
+            }
             val spaceCount = placeables.size + 1
             val contentHeight = placeables.sumOf { it.height }
             val minimumLayoutHeight = contentHeight + minimumGapPx * spaceCount
-            val layoutHeight = maxOf(viewportHeightPx, minimumLayoutHeight)
-            val extraSpace = (layoutHeight - minimumLayoutHeight).coerceAtLeast(0)
-            val adaptiveGapPx = minimumGapPx + if (spaceCount > 0) {
-                extraSpace / spaceCount
+            val layoutHeight = if (viewportHeightPx > 0) viewportHeightPx else minimumLayoutHeight
+            val fitScale = if (layoutHeight > 0 && minimumLayoutHeight > layoutHeight) {
+                layoutHeight.toFloat() / minimumLayoutHeight.toFloat()
+            } else {
+                1f
+            }
+            val scaledContentHeight = placeables.sumOf {
+                (it.height * fitScale).roundToInt()
+            }
+            val adaptiveGapPx = if (spaceCount > 0) {
+                ((layoutHeight - scaledContentHeight).coerceAtLeast(0) / spaceCount)
+                    .coerceAtLeast(if (fitScale < 1f) 0 else minimumGapPx)
             } else {
                 0
             }
@@ -678,8 +700,12 @@ internal fun AdaptiveConnectionViewport(
                 var y = adaptiveGapPx
                 placeables.forEach { placeable ->
                     val x = ((layoutWidth - placeable.width) / 2).coerceAtLeast(0)
-                    placeable.placeRelative(x, y)
-                    y += placeable.height + adaptiveGapPx
+                    placeable.placeRelativeWithLayer(x, y) {
+                        scaleX = fitScale
+                        scaleY = fitScale
+                        transformOrigin = TransformOrigin(0.5f, 0f)
+                    }
+                    y += (placeable.height * fitScale).roundToInt() + adaptiveGapPx
                 }
             }
         }
@@ -690,7 +716,8 @@ internal fun AdaptiveConnectionViewport(
 private fun ConnectionStatsRow(
     connectionTime: String,
     downloadSpeed: Double,
-    location: String
+    location: String,
+    compact: Boolean
 ) {
     Row(
         modifier = Modifier
@@ -702,19 +729,22 @@ private fun ConnectionStatsRow(
             modifier = Modifier.weight(1f),
             icon = Icons.Default.Schedule,
             value = connectionTime,
-            label = "Duration"
+            label = "Duration",
+            compact = compact
         )
         StatItemCompact(
             modifier = Modifier.weight(1f),
             icon = Icons.Default.Speed,
             value = "${downloadSpeed.toFixed(1)} Mbps",
-            label = "Speed"
+            label = "Speed",
+            compact = compact
         )
         StatItemCompact(
             modifier = Modifier.weight(1f),
             icon = Icons.Default.Language,
             value = location,
-            label = "Location"
+            label = "Location",
+            compact = compact
         )
     }
 }
@@ -729,8 +759,13 @@ private fun BandwidthUsageCard(
     monthlyPercentage: Float,
     totalPercentage: Float,
     downloadSpeed: Double,
-    uploadSpeed: Double
+    uploadSpeed: Double,
+    compact: Boolean
 ) {
+    val cardPadding = if (compact) 10.dp else 12.dp
+    val sectionSpacing = if (compact) 6.dp else 8.dp
+    val rowSpacing = if (compact) 3.dp else 4.dp
+
     Surface(
         modifier = Modifier
             .fillMaxWidth()
@@ -740,7 +775,7 @@ private fun BandwidthUsageCard(
         color = CardBackground,
         border = ButtonDefaults.outlinedButtonBorder(enabled = true)
     ) {
-        Column(modifier = Modifier.padding(12.dp)) {
+        Column(modifier = Modifier.padding(cardPadding)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
@@ -764,7 +799,7 @@ private fun BandwidthUsageCard(
                 )
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(sectionSpacing))
 
             if (!isUnlimited) {
                 Box(
@@ -798,7 +833,7 @@ private fun BandwidthUsageCard(
                             .background(Primary)
                     )
                 }
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(sectionSpacing))
             }
 
             Row(
@@ -838,7 +873,7 @@ private fun BandwidthUsageCard(
                 )
             }
 
-            Spacer(modifier = Modifier.height(4.dp))
+            Spacer(modifier = Modifier.height(rowSpacing))
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -875,7 +910,7 @@ private fun BandwidthUsageCard(
             }
 
             if (!isUnlimited) {
-                Spacer(modifier = Modifier.height(4.dp))
+                Spacer(modifier = Modifier.height(rowSpacing))
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -901,9 +936,9 @@ private fun BandwidthUsageCard(
                 }
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(sectionSpacing))
             HorizontalDivider(color = Border)
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(sectionSpacing))
 
             Row(
                 modifier = Modifier
@@ -963,13 +998,19 @@ private fun StatItemCompact(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     value: String,
     label: String,
+    compact: Boolean,
     modifier: Modifier = Modifier
 ) {
     Column(
         modifier = modifier,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Icon(icon, null, tint = MutedForeground, modifier = Modifier.size(16.dp))
+        Icon(
+            icon,
+            null,
+            tint = MutedForeground,
+            modifier = Modifier.size(if (compact) 14.dp else 16.dp)
+        )
         Text(
             text = value,
             modifier = Modifier.fillMaxWidth(),

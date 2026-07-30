@@ -9,12 +9,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithText
-import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.unit.dp
 import net.libreguard.vpn.service.data.DataUsageInfo
 import net.libreguard.vpn.ui.components.VpnConnectionStatus
@@ -59,16 +57,27 @@ class DashboardAdaptiveLayoutTest {
     }
 
     @Test
-    fun compactConnectedLayoutScrollsToTheBottomOfBandwidthCard() {
+    fun compactConnectedLayoutFitsTheEntireBandwidthCardWithoutScrolling() {
         show(height = 420.dp, isUnlimited = false)
 
-        composeRule
-            .onNodeWithTag("dashboard_connection_scroll")
-            .performScrollToNode(hasTestTag("bandwidth_upload_speed"))
-
+        composeRule.onAllNodesWithTag("dashboard_connection_scroll").assertCountEquals(0)
+        composeRule.onNodeWithTag("dashboard_connection_fit").assertIsDisplayed()
         composeRule.onNodeWithTag("bandwidth_remaining").assertIsDisplayed()
         composeRule.onNodeWithTag("bandwidth_download_speed").assertIsDisplayed()
         composeRule.onNodeWithTag("bandwidth_upload_speed").assertIsDisplayed()
+
+        val speedsBottom = composeRule
+            .onNodeWithTag("bandwidth_realtime_speeds")
+            .fetchSemanticsNode()
+            .boundsInRoot
+            .bottom
+        val viewportBottom = composeRule
+            .onNodeWithTag("dashboard_connection_viewport")
+            .fetchSemanticsNode()
+            .boundsInRoot
+            .bottom
+
+        assertTrue("Compact content must stay above the viewport bottom", speedsBottom <= viewportBottom)
     }
 
     @Test

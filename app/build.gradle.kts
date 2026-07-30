@@ -160,13 +160,14 @@ tasks.matching { it.name == "clean" }.configureEach {
 android {
     namespace = "net.libreguard.vpn"
     compileSdk = 36
+    ndkVersion = "28.0.13004108"
 
     defaultConfig {
         applicationId = "net.libreguard.vpn"
         minSdk = 29
         targetSdk = 36
-        versionCode = 20010
-        versionName = "2.0.1"
+        versionCode = 20030
+        versionName = "2.0.3"
 
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
@@ -237,6 +238,9 @@ android {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
+            ndk {
+                debugSymbolLevel = "FULL"
+            }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

@@ -148,7 +148,8 @@ fun VpnConnectionHero(
     status: VpnConnectionStatus,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    showProgressBar: Boolean = true
+    showProgressBar: Boolean = true,
+    compact: Boolean = false
 ) {
     val progress = rememberConnectionProgress(status)
 
@@ -159,16 +160,18 @@ fun VpnConnectionHero(
         VpnConnectionShield(
             status = status,
             onClick = onClick,
-            progress = progress
+            progress = progress,
+            compact = compact
         )
 
         // Keep the status copy close enough to the hero that connected-state cards retain room.
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(if (compact) 8.dp else 12.dp))
 
         VpnStatusText(
             status = status,
             progress = progress,
-            showProgressBar = showProgressBar
+            showProgressBar = showProgressBar,
+            compact = compact
         )
     }
 }
@@ -181,7 +184,8 @@ fun VpnConnectionShield(
     status: VpnConnectionStatus,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    progress: Float? = null
+    progress: Float? = null,
+    compact: Boolean = false
 ) {
     val config = getStatusConfig(status)
     val connectionProgress = progress ?: rememberConnectionProgress(status)
@@ -254,13 +258,17 @@ fun VpnConnectionShield(
         VpnConnectionStatus.CONNECTED -> 1f + connectedPulse * 0.024f
         VpnConnectionStatus.DISCONNECTED -> 1f
     }
+    val shieldDiameter = if (compact) 176.dp else 188.dp
+    val glowDiameter = if (compact) 144.dp else 154.dp
+    val buttonDiameter = if (compact) 120.dp else 128.dp
+    val iconDiameter = if (compact) 60.dp else 64.dp
 
     Box(
         modifier = modifier
             .scale(shieldScale * activePulseScale * pressScale),
         contentAlignment = Alignment.Center
     ) {
-        Canvas(modifier = Modifier.size(188.dp)) {
+        Canvas(modifier = Modifier.size(shieldDiameter)) {
             val strokeWidth = size.minDimension * 0.055f
             val ringInset = strokeWidth / 2f + 8f
             val ringTopLeft = Offset(ringInset, ringInset)
@@ -341,7 +349,7 @@ fun VpnConnectionShield(
 
         Box(
             modifier = Modifier
-                .size(154.dp)
+                .size(glowDiameter)
                 .clip(CircleShape)
                 .background(
                     brush = Brush.radialGradient(
@@ -362,7 +370,7 @@ fun VpnConnectionShield(
 
         Box(
             modifier = Modifier
-                .size(128.dp)
+                .size(buttonDiameter)
                 .shadow(
                     elevation = if (status == VpnConnectionStatus.CONNECTED) 18.dp else 10.dp,
                     shape = CircleShape,
@@ -389,7 +397,7 @@ fun VpnConnectionShield(
                 imageVector = Icons.Default.Shield,
                 contentDescription = config.text,
                 modifier = Modifier
-                    .size(64.dp)
+                    .size(iconDiameter)
                     .graphicsLayer {
                         scaleX = iconScale
                         scaleY = iconScale
@@ -408,7 +416,8 @@ fun VpnStatusText(
     status: VpnConnectionStatus,
     modifier: Modifier = Modifier,
     progress: Float? = null,
-    showProgressBar: Boolean = true
+    showProgressBar: Boolean = true,
+    compact: Boolean = false
 ) {
     val connectionProgress = progress ?: rememberConnectionProgress(status)
     val titleColor by animateColorAsState(
@@ -452,7 +461,7 @@ fun VpnStatusText(
                     style = MaterialTheme.typography.headlineMedium,
                     color = titleColor
                 )
-                Spacer(modifier = Modifier.height(6.dp))
+                Spacer(modifier = Modifier.height(if (compact) 4.dp else 6.dp))
                 Text(
                     text = config.description,
                     style = MaterialTheme.typography.bodyMedium,
@@ -467,18 +476,18 @@ fun VpnStatusText(
             exit = fadeOut(animationSpec = tween(180)) + shrinkVertically(shrinkTowards = Alignment.Top)
         ) {
             Column(
-                modifier = Modifier.padding(top = 14.dp),
+                modifier = Modifier.padding(top = if (compact) 10.dp else 14.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 VpnConnectionProgressBar(
                     progress = connectionProgress,
                     status = status,
                     modifier = Modifier
-                        .width(224.dp)
-                        .height(10.dp)
+                        .width(if (compact) 210.dp else 224.dp)
+                        .height(if (compact) 8.dp else 10.dp)
                 )
 
-                Spacer(modifier = Modifier.height(6.dp))
+                Spacer(modifier = Modifier.height(if (compact) 4.dp else 6.dp))
 
                 Text(
                     text = if (status == VpnConnectionStatus.CONNECTED) {
