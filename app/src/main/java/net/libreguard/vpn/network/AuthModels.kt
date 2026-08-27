@@ -51,6 +51,8 @@ data class AuthResponse(
 data class GoogleLoginRequest(
     @SerializedName("idToken")
     val idToken: String,
+    @SerializedName("newsletterConsent")
+    val newsletterConsent: Boolean? = null,
     @SerializedName("deviceId")
     val deviceId: String? = null,
     @SerializedName("appVersion")

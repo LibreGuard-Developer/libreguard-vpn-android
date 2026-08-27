@@ -6,6 +6,7 @@ import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -98,6 +99,32 @@ class GoogleLoginApiTest {
         assertTrue(body.contains("\"idToken\":\"dummy-id-token\""))
         assertTrue(body.contains("\"deviceId\":\"device-123\""))
         assertTrue(body.contains("\"appVersion\":\"1.2.3\""))
+        assertFalse(body.contains("\"newsletterConsent\""))
+    }
+
+    @Test
+    fun `loginWithGoogle omits newsletter consent unless the user opted in`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200).setBody("{}"))
+
+        val response = api.loginWithGoogle(GoogleLoginRequest(idToken = "dummy-id-token"))
+
+        assertEquals(200, response.code())
+        assertFalse(server.takeRequest().body.readUtf8().contains("\"newsletterConsent\""))
+    }
+
+    @Test
+    fun `loginWithGoogle sends newsletter consent when the user opted in`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200).setBody("{}"))
+
+        val response = api.loginWithGoogle(
+            GoogleLoginRequest(
+                idToken = "dummy-id-token",
+                newsletterConsent = true
+            )
+        )
+
+        assertEquals(200, response.code())
+        assertTrue(server.takeRequest().body.readUtf8().contains("\"newsletterConsent\":true"))
     }
 
     @Test
@@ -123,6 +150,7 @@ class GoogleLoginApiTest {
         assertTrue(body.contains("\"pendingLoginToken\":\"pending-login-token\""))
         assertTrue(body.contains("\"deviceId\":\"device-123\""))
         assertTrue(body.contains("\"appVersion\":\"1.2.3\""))
+        assertFalse(body.contains("\"newsletterConsent\""))
     }
 
     @Test
@@ -148,6 +176,7 @@ class GoogleLoginApiTest {
         assertTrue(body.contains("\"pendingLoginToken\":\"pending-login-token\""))
         assertTrue(body.contains("\"deviceId\":\"device-123\""))
         assertTrue(body.contains("\"appVersion\":\"1.2.3\""))
+        assertFalse(body.contains("\"newsletterConsent\""))
     }
 
     @Test

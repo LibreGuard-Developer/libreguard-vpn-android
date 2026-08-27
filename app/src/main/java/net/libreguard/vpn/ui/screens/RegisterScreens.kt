@@ -35,6 +35,8 @@ import net.libreguard.vpn.R
 import net.libreguard.vpn.network.*
 import net.libreguard.vpn.ui.components.CenteredScreenHeader
 import net.libreguard.vpn.ui.components.LogoWithGradient
+import net.libreguard.vpn.ui.components.NewsletterConsentCheckbox
+import net.libreguard.vpn.ui.components.REGISTRATION_NEWSLETTER_CONSENT_TEST_TAG
 import net.libreguard.vpn.ui.theme.*
 import net.libreguard.vpn.util.DeviceIdManager
 import net.libreguard.vpn.util.DeviceKeyManager
@@ -62,6 +64,7 @@ fun RegisterScreen(
     var error by remember { mutableStateOf<String?>(null) }
     var isPasswordVisible by remember { mutableStateOf(false) }
     var isConfirmPasswordVisible by remember { mutableStateOf(false) }
+    var newsletterConsent by remember { mutableStateOf(false) }
 
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -269,6 +272,15 @@ fun RegisterScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
+            // Optional newsletter consent. This is intentionally independent from legal acceptance.
+            NewsletterConsentCheckbox(
+                checked = newsletterConsent,
+                onCheckedChange = { newsletterConsent = it },
+                testTag = REGISTRATION_NEWSLETTER_CONSENT_TEST_TAG
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
             // Terms Acceptance
             Surface(
                 modifier = Modifier.fillMaxWidth(),
@@ -318,7 +330,8 @@ fun RegisterScreen(
                             val resp = RetrofitClient.instance.register(
                                 RegisterRequest(
                                     email = email,
-                                    password = password
+                                    password = password,
+                                    newsletterConsent = newsletterConsent.takeIf { it }
                                 )
                             )
                             if (resp.isSuccessful) {

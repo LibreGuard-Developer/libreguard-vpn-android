@@ -55,6 +55,8 @@ import net.libreguard.vpn.util.DeviceIdManager
 import net.libreguard.vpn.ui.theme.*
 import net.libreguard.vpn.ui.components.CenteredScreenHeader
 import net.libreguard.vpn.ui.components.LogoWithGradient
+import net.libreguard.vpn.ui.components.GOOGLE_NEWSLETTER_CONSENT_TEST_TAG
+import net.libreguard.vpn.ui.components.NewsletterConsentCheckbox
 import kotlinx.coroutines.launch
 import net.libreguard.vpn.R
 import kotlin.reflect.KClass
@@ -92,6 +94,9 @@ fun LoginScreen(
     var googleIdToken by remember { mutableStateOf<String?>(null) }
     var isFetchingDevicesForManagement by remember { mutableStateOf(false) }
     var fetchDevicesError by remember { mutableStateOf<String?>(null) }
+    var showGoogleNewsletterConsentSheet by remember { mutableStateOf(false) }
+    var googleNewsletterConsent by remember { mutableStateOf(false) }
+    var pendingGoogleNewsletterConsent by remember { mutableStateOf<Boolean?>(null) }
 
     // Parse forced logout reason (best-effort)
     val forcedLogoutReasonParsed = remember(forcedLogoutReasonJson) {
@@ -621,6 +626,7 @@ fun LoginScreen(
                     .getResult(Exception::class.java)
             }.getOrElse {
                 googleLoading = false
+                pendingGoogleNewsletterConsent = null
                 errorMessage = context.getString(R.string.google_sign_in_error, it.localizedMessage ?: "Google sign-in failed")
                 return@launch
             }
@@ -628,6 +634,7 @@ fun LoginScreen(
             val idToken = account?.idToken
             if (idToken.isNullOrBlank()) {
                 googleLoading = false
+                pendingGoogleNewsletterConsent = null
                 errorMessage = context.getString(R.string.google_sign_in_error, "Missing ID token")
                 return@launch
             }
@@ -637,6 +644,7 @@ fun LoginScreen(
                 val resp = RetrofitClient.instance.loginWithGoogle(
                     GoogleLoginRequest(
                         idToken = idToken,
+                        newsletterConsent = pendingGoogleNewsletterConsent,
                         deviceId = deviceId,
                         appVersion = appVersion,
                         devicePublicKey = DeviceKeyManager.exportPublicKeyBase64(),
@@ -697,6 +705,7 @@ fun LoginScreen(
             } finally {
                 isLoading = false
                 googleLoading = false
+                pendingGoogleNewsletterConsent = null
             }
         }
     }
@@ -1083,11 +1092,8 @@ fun LoginScreen(
             Button(
                 onClick = {
                     errorMessage = null
-                    googleLoading = true
-                    googleSignInClient.signOut()
-                        .addOnCompleteListener {
-                            googleLauncher.launch(googleSignInClient.signInIntent)
-                        }
+                    googleNewsletterConsent = false
+                    showGoogleNewsletterConsentSheet = true
                 },
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1506,6 +1512,27 @@ fun LoginScreen(
     // Debug: log state for dialog condition
     if (showDevicePickerDialog) {
         android.util.Log.d("LoginScreen", "Dialog condition check: showDevicePickerDialog=true, deviceLimitError=${deviceLimitError != null}, devices.size=${deviceLimitError?.devices?.size ?: -1}")
+    }
+
+    if (showGoogleNewsletterConsentSheet) {
+        GoogleNewsletterConsentSheet(
+            newsletterConsent = googleNewsletterConsent,
+            onNewsletterConsentChange = { googleNewsletterConsent = it },
+            onDismiss = {
+                showGoogleNewsletterConsentSheet = false
+                googleNewsletterConsent = false
+                pendingGoogleNewsletterConsent = null
+            },
+            onContinue = {
+                pendingGoogleNewsletterConsent = googleNewsletterConsent.takeIf { it }
+                showGoogleNewsletterConsentSheet = false
+                googleLoading = true
+                googleSignInClient.signOut()
+                    .addOnCompleteListener {
+                        googleLauncher.launch(googleSignInClient.signInIntent)
+                    }
+            }
+        )
     }
 
     if (showDevicePickerDialog && deviceLimitError != null && !deviceLimitError?.devices.isNullOrEmpty()) {
@@ -2117,6 +2144,66 @@ fun PreviewLoginScreenUI() {
         onNavigateToRegister = { },
         onNavigateToEmailVerification = { _: String, _: String? -> }
     )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun GoogleNewsletterConsentSheet(
+    newsletterConsent: Boolean,
+    onNewsletterConsentChange: (Boolean) -> Unit,
+    onDismiss: () -> Unit,
+    onContinue: () -> Unit
+) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = CardBackground
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp, vertical = 8.dp)
+                .padding(bottom = 24.dp)
+        ) {
+            Text(
+                text = "Continue with Google",
+                style = MaterialTheme.typography.titleLarge,
+                color = Foreground
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            NewsletterConsentCheckbox(
+                checked = newsletterConsent,
+                onCheckedChange = onNewsletterConsentChange,
+                testTag = GOOGLE_NEWSLETTER_CONSENT_TEST_TAG
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            Text(
+                text = "This choice applies only if Google creates a new LibreGuard account. Existing accounts will not be subscribed or have their preferences changed.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MutedForeground
+            )
+            Spacer(modifier = Modifier.height(24.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextButton(onClick = onDismiss) {
+                    Text("Cancel")
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Button(
+                    onClick = onContinue,
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Primary,
+                        contentColor = PrimaryForeground
+                    )
+                ) {
+                    Text("Continue with Google")
+                }
+            }
+        }
+    }
 }
 
 private fun mapGoogleSignInFailure(ex: Throwable): String {
