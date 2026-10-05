@@ -31,6 +31,7 @@ import net.libreguard.vpn.service.LibreGuardVpnService
 import net.libreguard.vpn.service.VpnNotificationManager
 import net.libreguard.vpn.service.vpn.ConnectionState
 import net.libreguard.vpn.service.vpn.OpenVpnHandler
+import net.libreguard.vpn.service.vpn.OwnVpnStatus
 import net.libreguard.vpn.service.vpn.StrongSwanHandler
 import net.libreguard.vpn.service.vpn.VpnProtocolFactory
 import net.libreguard.vpn.service.vpn.VpnProtocolHandler
@@ -207,6 +208,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     private var authToken: String? = null
     private var currentUserId: String? = null
     private var activeVpnHandler: VpnProtocolHandler? = null
+    private val ownVpnStatus = OwnVpnStatus(application.applicationContext)
     private var pendingProfile: VpnProfile? = null
     private val configManager by lazy { VpnConfigManager(getApplication()) }
 
@@ -3407,59 +3409,14 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         VpnService.prepare(context)
     }
 
-    // Check current VPN connection status - improved version that doesn't require activeVpnHandler
-    suspend fun checkVpnStatusImproved(): Boolean = withContext(Dispatchers.IO) {
-        return@withContext try {
-            val context = getApplication<Application>().applicationContext
-
-            // Method 1: Check if VPN permission is granted (null means granted/prepared)
-            val vpnService = VpnService.prepare(context)
-            val isVpnServiceReady = vpnService == null
-
-            // Method 2: Check ConnectivityManager for VPN transport (Most reliable system check)
-            val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
-            val activeNetwork = connectivityManager.activeNetwork
-            val caps = connectivityManager.getNetworkCapabilities(activeNetwork)
-            val isVpnTransport = caps?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN) == true
-
-            // Method 3: Check network interfaces for active VPN tunnels
-            val isVpnInterfaceActive = try {
-                val networkInterfaces = java.net.NetworkInterface.getNetworkInterfaces()
-                var hasTunInterface = false
-                while (networkInterfaces.hasMoreElements()) {
-                    val networkInterface = networkInterfaces.nextElement()
-                    // Check for common VPN interface prefixes: tun (OpenVPN/WireGuard), ipsec (StrongSwan/IPSec)
-                    if ((networkInterface.name.startsWith("tun") ||
-                         networkInterface.name.startsWith("ipsec") ||
-                         networkInterface.name.startsWith("wg")) &&
-                        networkInterface.isUp) {
-                        hasTunInterface = true
-                        Log.d(TAG, "Found active VPN interface: ${networkInterface.name}")
-                        break
-                    }
-                }
-                hasTunInterface
-            } catch (e: Exception) {
-                Log.w(TAG, "Failed to check network interfaces: ${e.message}")
-                false
-            }
-
-            Log.d(TAG, "VPN status check details: vpnServiceReady=$isVpnServiceReady, transport=$isVpnTransport, interface=$isVpnInterfaceActive")
-
-            // SMART VALIDATION: Require service ready AND (transport OR interface)
-            // This prevents false positives from stale state while handling platform variations
-            // where transport detection may be delayed or unreliable on some Android versions/OEMs
-            val isActive = isVpnServiceReady && (isVpnTransport || isVpnInterfaceActive)
-
-            if (isActive) {
-                Log.d(TAG, "✅ VPN is actively connected (validation passed: transport=$isVpnTransport, interface=$isVpnInterfaceActive)")
-            } else {
-                Log.d(TAG, "❌ VPN is NOT active (validation failed)")
-            }
-
-            isActive
+    // Verify our VPN without preparing it or taking over another app's tunnel.
+    suspend fun checkVpnStatusImproved(): Boolean {
+        return try {
+            ownVpnStatus.isConnected()
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
-            Log.e(TAG, "Error checking VPN status (improved)", e)
+            Log.e(TAG, "Error checking LibreGuard VPN status", e)
             false
         }
     }
@@ -3581,6 +3538,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
      */
     override fun onCleared() {
         super.onCleared()
+        ownVpnStatus.close()
         try {
             // Stop background token validation - safely handle nullable property
             tokenValidationManager?.stopBackgroundValidation()
