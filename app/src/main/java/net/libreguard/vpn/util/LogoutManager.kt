@@ -39,7 +39,13 @@ object LogoutManager {
 
         try {
             // Step 2: Clear all local authentication data
-            clearLocalData()
+            try {
+                GoogleCredentialProvider.clearState(RetrofitClient.requireAppContext())
+            } catch (_: Exception) {
+                Log.w(TAG, "Credential provider state could not be cleared; explicit account selection remains available.")
+            } finally {
+                clearLocalData()
+            }
             Log.i(TAG, "Local logout completed")
             true
         } catch (e: Exception) {

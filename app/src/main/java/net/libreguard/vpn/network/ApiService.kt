@@ -149,6 +149,23 @@ data class VpnHealthResponse(
 )
 
 interface ApiService {
+    @POST("api/login/client/google/begin")
+    suspend fun beginClientGoogle(@Body request: ClientDeviceRequest): Response<ClientGoogleBeginResponse>
+    @POST("api/login/client/google/complete")
+    suspend fun completeClientGoogle(@Body request: ClientGoogleCompleteRequest): Response<ClientLoginResponse>
+    @POST("api/login/client/password")
+    suspend fun loginClientPassword(@Body request: ClientPasswordRequest): Response<ClientLoginResponse>
+    @POST("api/login/client/verify-2fa")
+    suspend fun verifyClientTwoFactor(@Body request: ClientFactorRequest): Response<ClientLoginResponse>
+    @POST("api/login/client/verify-recovery-code")
+    suspend fun verifyClientRecoveryCode(@Body request: ClientFactorRequest): Response<ClientLoginResponse>
+    @POST("api/login/client/continue")
+    suspend fun continueClientLogin(@Body request: ClientContinueRequest): Response<ClientLoginResponse>
+    @POST("api/login/client/link/password")
+    suspend fun proveClientLinkPassword(@Body request: ClientLinkPasswordRequest): Response<ClientLoginResponse>
+    @POST("api/login/client/link/confirm")
+    suspend fun confirmClientLink(@Body request: ClientLinkConfirmRequest): Response<ClientLoginResponse>
+
     @POST("api/login")
     suspend fun login(@Body request: AuthRequest): Response<AuthResponse>
 

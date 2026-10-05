@@ -1,11 +1,14 @@
 [versions]
+coroutinesTest = "1.10.2"
+credentials = "1.6.0"
+googleid = "1.2.1"
 agp = "9.3.1"
 appcompat = "1.7.1"
 converterGson = "2.11.0"
 fragmentKtx = "1.6.2"
 gradle = "8.5.2"
 gson = "2.10.1"
-kotlin = "2.2.10"
+kotlin = "2.4.20"
 coreKtx = "1.16.0"
 junit = "4.13.2"
 junitVersion = "1.2.1"
@@ -59,6 +62,10 @@ robolectric = "4.10.2"
 # End OpenVPN Libraries Catalog Definitions
 
 [libraries]
+kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutinesTest" }
+androidx-credentials = { module = "androidx.credentials:credentials", version.ref = "credentials" }
+androidx-credentials-play-services-auth = { module = "androidx.credentials:credentials-play-services-auth", version.ref = "credentials" }
+googleid = { module = "com.google.android.libraries.identity.googleid:googleid", version.ref = "googleid" }
 androidx-appcompat = { module = "androidx.appcompat:appcompat", version.ref = "appcompat" }
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 androidx-fragment-ktx = { module = "androidx.fragment:fragment-ktx", version.ref = "fragmentKtx" }

@@ -37,7 +37,7 @@ import net.libreguard.vpn.ui.screens.MainScreen
 import net.libreguard.vpn.ui.screens.OpenSourceLicensesScreen
 import net.libreguard.vpn.ui.screens.SettingsScreen
 import net.libreguard.vpn.ui.screens.TwoFactorSettingsScreen
-import net.libreguard.vpn.ui.screens.TwoFactorVerificationScreen
+import net.libreguard.vpn.viewmodel.ClientLoginViewModel
 import net.libreguard.vpn.ui.screens.RegisterScreen
 import net.libreguard.vpn.ui.screens.ConfirmEmailScreen
 import net.libreguard.vpn.ui.screens.PrivacyPolicyScreen
@@ -56,8 +56,7 @@ import net.libreguard.vpn.ui.theme.LibreGuardVPNTheme
 import net.libreguard.vpn.viewmodel.VpnViewModel
 import net.libreguard.vpn.util.TokenManager
 import net.libreguard.vpn.viewmodel.SubscriptionViewModel
-import com.google.android.gms.auth.api.signin.GoogleSignIn
-import com.google.android.gms.auth.api.signin.GoogleSignInOptions
+
 
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -147,10 +146,9 @@ fun AppNavigation(
         return
     }
 
+    val clientLoginViewModel: ClientLoginViewModel = viewModel(factory = ClientLoginViewModel.Factory(context))
     var authToken by remember { mutableStateOf<String?>(null) }
     var isCheckingToken by remember { mutableStateOf(true) }
-    var pendingEmail by rememberSaveable { mutableStateOf<String?>(null) }
-    var pendingLoginToken by rememberSaveable { mutableStateOf<String?>(null) }
     var loginPrefilledEmail by rememberSaveable { mutableStateOf<String?>(null) }
     var resetEmail by rememberSaveable { mutableStateOf<String?>(null) }
     var resetToken by rememberSaveable { mutableStateOf<String?>(null) }
@@ -263,6 +261,7 @@ fun AppNavigation(
     // Helper: perform full logout (API + Google + local state)
     // This runs sequentially to guarantee API call occurs after VPN disconnect
     suspend fun performLogoutSequential() {
+        clientLoginViewModel.cancel()
         android.util.Log.d("MainActivity", "Starting logout process")
         try {
             LogoutManager.logout()
@@ -273,14 +272,10 @@ fun AppNavigation(
         }
 
         // Clear in-memory auth token immediately for UI responsiveness
+        clientLoginViewModel.cancel()
         authToken = null
 
-        // Google Sign-Out (best-effort)
-        val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
-            .requestIdToken(net.libreguard.vpn.BuildConfig.GOOGLE_WEB_CLIENT_ID)
-            .requestEmail()
-            .build()
-        GoogleSignIn.getClient(context, gso).signOut()
+
     }
 
     suspend fun disconnectThenLogout(navigate: () -> Unit) {
@@ -456,6 +451,7 @@ fun AppNavigation(
             // Otherwise it will use the old token loaded during init
             vpnViewModel.clearCachedAuthToken()
             // Clear the local authToken variable too
+            clientLoginViewModel.cancel()
             authToken = null
             isCheckingToken = false
             return@LaunchedEffect
@@ -480,6 +476,7 @@ fun AppNavigation(
                         .remove("auth_token")
                         .apply()
                     vpnViewModel.clearCachedAuthToken()
+                    clientLoginViewModel.cancel()
                     authToken = null
                     isCheckingToken = false
                     return@LaunchedEffect
@@ -494,6 +491,7 @@ fun AppNavigation(
                         .remove("auth_token")
                         .apply()
                     vpnViewModel.clearCachedAuthToken()
+                    clientLoginViewModel.cancel()
                     authToken = null
                     isCheckingToken = false
                     return@LaunchedEffect
@@ -514,6 +512,7 @@ fun AppNavigation(
                             .remove("auth_token")
                             .apply()
                         vpnViewModel.clearCachedAuthToken()
+                        clientLoginViewModel.cancel()
                         authToken = null
                         isCheckingToken = false
                         return@LaunchedEffect
@@ -526,6 +525,7 @@ fun AppNavigation(
                         .remove("auth_token")
                         .apply()
                     vpnViewModel.clearCachedAuthToken()
+                    clientLoginViewModel.cancel()
                     authToken = null
                     isCheckingToken = false
                     return@LaunchedEffect
@@ -553,6 +553,7 @@ fun AppNavigation(
                         .remove("auth_token")
                         .apply()
                     vpnViewModel.clearCachedAuthToken()
+                    clientLoginViewModel.cancel()
                     authToken = null
                     isCheckingToken = false
                     return@LaunchedEffect
@@ -642,14 +643,9 @@ fun AppNavigation(
                     onNavigateToUpgrade = {
                         navController.navigate("upgrade")
                     },
-                    onNavigateToDeviceManagement = {
-                        navController.navigate("deviceManagement")
-                    },
                     onLoginSuccess = { token ->
                         authToken = token
                         loginPrefilledEmail = null
-                        pendingEmail = null
-                        pendingLoginToken = null
                         resetEmail = null
                         resetToken = null
                         // Clear registration state on successful login
@@ -664,11 +660,7 @@ fun AppNavigation(
                             launchSingleTop = true
                         }
                     },
-                    onRequires2FA = { email, token ->
-                        pendingEmail = email
-                        pendingLoginToken = token
-                        navController.navigate("twoFactor")
-                    },
+                    loginViewModel = clientLoginViewModel,
                     onNavigateToForgotPassword = {
                         navController.navigate("forgotPassword") {
                             launchSingleTop = true
@@ -848,60 +840,10 @@ fun AppNavigation(
             }
         }
 
+        // Old saved navigation entries restart authentication without restoring capabilities.
         composable("twoFactor") {
-            if (authToken != null) {
-                // Already authenticated - redirect immediately without rendering
-                LaunchedEffect(Unit) {
-                    navController.navigate("main") {
-                        popUpTo(0) { inclusive = true }
-                        launchSingleTop = true
-                    }
-                }
-                // Show empty box while redirecting
-                Box(modifier = Modifier.fillMaxSize())
-            } else if (pendingEmail != null && pendingLoginToken != null) {
-                TwoFactorVerificationScreen(
-                    email = pendingEmail!!,
-                    pendingLoginToken = pendingLoginToken!!,
-                    onVerificationSuccess = { token ->
-                        authToken = token
-                        pendingEmail = null
-                        pendingLoginToken = null
-                        // Clear registration state on successful 2FA login
-                        regUserId = null
-                        regEmail = null
-                        regToken = null
-                        regPassword = null
-                        regPrefs.edit().clear().apply()
-
-                        navController.navigate("main") {
-                            popUpTo(0) { inclusive = true }
-                            launchSingleTop = true
-                        }
-                    },
-                    onBackToLogin = {
-                        pendingEmail = null
-                        pendingLoginToken = null
-                        navController.navigate("login") {
-                            popUpTo(0) { inclusive = true }
-                            launchSingleTop = true
-                        }
-                    }
-                )
-            } else {
-                // No pending email and not authenticated - redirect to login
-                LaunchedEffect(Unit) {
-                    pendingEmail = null
-                    pendingLoginToken = null
-                    navController.navigate("login") {
-                        popUpTo(0) { inclusive = true }
-                        launchSingleTop = true
-                    }
-                }
-                Box(modifier = Modifier.fillMaxSize())
-            }
+            LaunchedEffect(Unit) { navController.navigate("login") { popUpTo(0); launchSingleTop = true } }
         }
-
         composable("main") {
             authToken?.let { token ->
                 // Force BackHandler here inside the composable

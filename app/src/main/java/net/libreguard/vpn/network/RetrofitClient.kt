@@ -26,7 +26,13 @@ object RetrofitClient {
     val authApiService: ApiService by lazy {
         val retrofit = Retrofit.Builder()
             .baseUrl(BASE_URL)
-            .client(newSecureOkHttpClientBuilder().build()) // No interceptors/authenticators
+            .client(
+                newSecureOkHttpClientBuilder()
+                    .retryOnConnectionFailure(false)
+                    .followRedirects(false)
+                    .followSslRedirects(false)
+                    .build()
+            ) // No interceptors/authenticators
             .addConverterFactory(GsonConverterFactory.create())
             .build()
         retrofit.create(ApiService::class.java)
@@ -53,6 +59,8 @@ object RetrofitClient {
             .build()
         retrofit.create(ApiService::class.java)
     }
+
+    fun requireAppContext(): Context = requireNotNull(appContext)
 
     fun getTokenManager(): TokenManager {
         return tokenManager ?: throw IllegalStateException("RetrofitClient not initialized")
