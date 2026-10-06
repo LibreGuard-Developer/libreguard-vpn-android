@@ -63,6 +63,7 @@ robolectric = "4.10.2"
 # End OpenVPN Libraries Catalog Definitions
 
 [libraries]
+json = { module = "org.json:json", version = "20260814" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutinesTest" }
 androidx-credentials = { module = "androidx.credentials:credentials", version.ref = "credentials" }
 androidx-credentials-play-services-auth = { module = "androidx.credentials:credentials-play-services-auth", version.ref = "credentials" }

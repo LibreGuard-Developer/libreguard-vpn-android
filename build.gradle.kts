@@ -11,3 +11,13 @@ plugins {
 project(":strongswan-android") {
     layout.buildDirectory.set(rootProject.layout.buildDirectory.dir("strongswan-android"))
 }
+
+// Build OpenVPN for the same ARM architectures packaged by the host app.
+// The fork retains its default ABI support when built independently.
+project(":ics-openvpn:main") {
+    plugins.withId("com.android.library") {
+        extensions.configure<com.android.build.gradle.LibraryExtension> {
+            defaultConfig.ndk.abiFilters.addAll(listOf("arm64-v8a", "armeabi-v7a"))
+        }
+    }
+}
