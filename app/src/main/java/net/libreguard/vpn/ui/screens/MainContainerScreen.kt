@@ -71,6 +71,7 @@ fun MainContainerScreen(
                             authToken = authToken,
                             vpnViewModel = viewModel,
                             onNavigateToServers = { currentTab = MainTab.SERVERS },
+                            onNavigateToSettings = { currentTab = MainTab.SETTINGS },
                             onNavigateToUpgrade = onNavigateToUpgrade
                         )
                     }

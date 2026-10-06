@@ -8,6 +8,8 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -21,6 +23,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
@@ -34,8 +37,13 @@ import net.libreguard.vpn.ui.components.LogoWithGradient
 import net.libreguard.vpn.ui.components.VpnConnectionHero
 import net.libreguard.vpn.ui.components.VpnConnectionStatus
 import net.libreguard.vpn.ui.components.getStatusConfig
+import net.libreguard.vpn.ui.components.BackgroundConnectionTip
+import net.libreguard.vpn.ui.components.rememberBackgroundConnectionStatus
+import net.libreguard.vpn.ui.components.rememberBackgroundTipVisible
 import net.libreguard.vpn.ui.theme.*
 import net.libreguard.vpn.util.getFlagEmoji
+import net.libreguard.vpn.util.BackgroundConnectionSupport
+import net.libreguard.vpn.util.BackgroundConnectionTipPreferences
 import net.libreguard.vpn.viewmodel.VpnProtocol
 import net.libreguard.vpn.viewmodel.VpnViewModel
 import java.util.Locale
@@ -50,7 +58,8 @@ fun DashboardScreen(
     authToken: String,
     vpnViewModel: VpnViewModel? = null,
     onNavigateToServers: () -> Unit,
-    onNavigateToUpgrade: () -> Unit
+    onNavigateToUpgrade: () -> Unit,
+    onNavigateToSettings: () -> Unit = {}
 ) {
     val viewModel: VpnViewModel = vpnViewModel ?: viewModel()
 
@@ -58,6 +67,13 @@ fun DashboardScreen(
     val isConnecting by viewModel.isConnecting.collectAsState()
     val selectedServer by viewModel.selectedServer.collectAsState()
     val selectedProtocol by viewModel.selectedProtocol.collectAsState()
+    val context = LocalContext.current
+    val backgroundSupport = remember(context) { BackgroundConnectionSupport(context) }
+    val backgroundStatus = rememberBackgroundConnectionStatus(backgroundSupport, selectedProtocol)
+    val backgroundTipStore = remember(context) { BackgroundConnectionTipPreferences(context) }
+    val showBackgroundTip = rememberBackgroundTipVisible(
+        backgroundStatus, selectedProtocol, isConnected && !isConnecting, backgroundTipStore
+    )
     val activeProtocolLabel = when (selectedProtocol) {
         VpnProtocol.IKEV2_IPSEC -> "IKEv2/IPSec"
         else -> selectedProtocol.displayName
@@ -418,7 +434,19 @@ fun DashboardScreen(
             sessionData = sessionData,
             monthlyLimit = monthlyLimit,
             monthlyPercentage = monthlyPercentage,
-            totalPercentage = totalPercentage
+            totalPercentage = totalPercentage,
+            backgroundTip = if (showBackgroundTip.value) {
+                {
+                    BackgroundConnectionTip(
+                        onReviewSettings = {
+                            showBackgroundTip.value = false
+                            onNavigateToSettings()
+                        },
+                        onDismiss = { showBackgroundTip.value = false },
+                        modifier = Modifier.padding(horizontal = 10.dp)
+                    )
+                }
+            } else null
         )
 
         // Data Usage Card - Fixed at Bottom (Free Plan Only, when disconnected)
@@ -590,7 +618,8 @@ internal fun AdaptiveConnectionViewport(
     sessionData: Double,
     monthlyLimit: Double,
     monthlyPercentage: Float,
-    totalPercentage: Float
+    totalPercentage: Float,
+    backgroundTip: (@Composable () -> Unit)? = null
 ) {
     BoxWithConstraints(
         modifier = modifier.testTag("dashboard_connection_viewport")
@@ -605,6 +634,9 @@ internal fun AdaptiveConnectionViewport(
             modifier = Modifier
                 .fillMaxWidth()
                 .fillMaxHeight()
+                .then(if (backgroundTip != null) {
+                    Modifier.verticalScroll(rememberScrollState()).testTag("dashboard_connection_scroll")
+                } else Modifier)
                 .animateContentSize(animationSpec = tween(durationMillis = 280))
                 .testTag("dashboard_connection_fit"),
             content = {
@@ -661,6 +693,7 @@ internal fun AdaptiveConnectionViewport(
                         compact = compact
                     )
                 }
+                backgroundTip?.invoke()
             }
         ) { measurables, constraints ->
             val layoutWidth = constraints.maxWidth
@@ -680,7 +713,7 @@ internal fun AdaptiveConnectionViewport(
             val spaceCount = placeables.size + 1
             val contentHeight = placeables.sumOf { it.height }
             val minimumLayoutHeight = contentHeight + minimumGapPx * spaceCount
-            val layoutHeight = if (viewportHeightPx > 0) viewportHeightPx else minimumLayoutHeight
+            val layoutHeight = if (backgroundTip == null && viewportHeightPx > 0) viewportHeightPx else minimumLayoutHeight
             val fitScale = if (layoutHeight > 0 && minimumLayoutHeight > layoutHeight) {
                 layoutHeight.toFloat() / minimumLayoutHeight.toFloat()
             } else {

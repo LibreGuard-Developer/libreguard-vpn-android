@@ -1646,6 +1646,10 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun connectToVpn() {
+        val backgroundSupport = net.libreguard.vpn.util.BackgroundConnectionSupport(getApplication<Application>())
+        net.libreguard.vpn.util.BackgroundConnectionDiagnostics.record(
+            backgroundSupport.sdkInt, _selectedProtocol.value.name, backgroundSupport.readStatus()
+        )
         val server = _selectedServer.value
 
         // IMPORTANT: Capture user's real IP BEFORE connecting to VPN

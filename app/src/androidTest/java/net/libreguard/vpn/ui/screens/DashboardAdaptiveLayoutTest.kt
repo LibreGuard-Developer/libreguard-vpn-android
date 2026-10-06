@@ -20,6 +20,8 @@ import net.libreguard.vpn.ui.theme.LibreGuardVPNTheme
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
+import androidx.compose.ui.test.performScrollTo
+import net.libreguard.vpn.ui.components.BackgroundConnectionTip
 
 class DashboardAdaptiveLayoutTest {
     @get:Rule
@@ -124,7 +126,15 @@ class DashboardAdaptiveLayoutTest {
         composeRule.onNodeWithTag("bandwidth_usage_card").assertIsDisplayed()
     }
 
-    private fun show(height: androidx.compose.ui.unit.Dp, isUnlimited: Boolean) {
+    @Test
+    fun compactConnectedLayoutScrollsToBackgroundTipWithoutShrinkingItsActions() {
+        show(height = 420.dp, isUnlimited = false, withTip = true)
+        composeRule.onNodeWithText("Review settings").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Dismiss").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("bandwidth_download_speed").performScrollTo().assertIsDisplayed()
+    }
+
+    private fun show(height: androidx.compose.ui.unit.Dp, isUnlimited: Boolean, withTip: Boolean = false) {
         composeRule.setContent {
             LibreGuardVPNTheme {
                 Box(Modifier.size(360.dp, height)) {
@@ -147,7 +157,8 @@ class DashboardAdaptiveLayoutTest {
                         sessionData = 12.0,
                         monthlyLimit = if (isUnlimited) Double.MAX_VALUE else 5120.0,
                         monthlyPercentage = 35f,
-                        totalPercentage = 35f
+                        totalPercentage = 35f,
+                        backgroundTip = if (withTip) { { BackgroundConnectionTip({}, {}) } } else null
                     )
                 }
             }

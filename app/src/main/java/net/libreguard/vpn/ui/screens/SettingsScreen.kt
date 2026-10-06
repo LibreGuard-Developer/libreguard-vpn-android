@@ -32,6 +32,9 @@ import net.libreguard.vpn.network.SubscriptionStatusResponse
 import net.libreguard.vpn.ui.components.ProBadge
 import net.libreguard.vpn.ui.components.ScreenHeader
 import net.libreguard.vpn.ui.components.SectionHeader
+import net.libreguard.vpn.ui.components.BackgroundConnectionSettingsCard
+import net.libreguard.vpn.ui.components.rememberBackgroundConnectionStatus
+import net.libreguard.vpn.util.BackgroundConnectionSupport
 import net.libreguard.vpn.ui.theme.*
 import net.libreguard.vpn.util.CrashlyticsReporter
 import net.libreguard.vpn.viewmodel.SubscriptionViewModel
@@ -74,6 +77,8 @@ fun SettingsScreen(
     var isLoading2fa by remember { mutableStateOf(false) }
 
     val context = LocalContext.current
+    val backgroundSupport = remember(context) { BackgroundConnectionSupport(context) }
+    val backgroundStatus = rememberBackgroundConnectionStatus(backgroundSupport, selectedProtocol)
     val sharedPrefs = remember { context.getSharedPreferences("vpn_state_prefs", android.content.Context.MODE_PRIVATE) }
     val token = remember { sharedPrefs.getString("auth_token", null) }
 
@@ -407,6 +412,17 @@ fun SettingsScreen(
                     }
                 }
             }
+
+            Spacer(modifier = Modifier.height(LibreGuardDimens.sectionSpacing))
+
+            BackgroundConnectionSettingsCard(
+                status = backgroundStatus,
+                usesIkev2 = selectedProtocol == net.libreguard.vpn.viewmodel.VpnProtocol.IKEV2_IPSEC,
+                onBatterySettings = backgroundSupport::openBatterySettings,
+                onTimingSettings = backgroundSupport::openExactAlarmSettings,
+                onAppDetails = backgroundSupport::openAppDetails,
+                modifier = Modifier.padding(horizontal = LibreGuardDimens.screenHorizontalPadding)
+            )
 
             Spacer(modifier = Modifier.height(LibreGuardDimens.sectionSpacing))
 
