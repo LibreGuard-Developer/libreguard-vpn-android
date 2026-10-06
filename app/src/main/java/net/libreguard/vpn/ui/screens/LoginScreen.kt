@@ -9,10 +9,8 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Devices
 import androidx.compose.material.icons.filled.Email
@@ -39,7 +37,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import net.libreguard.vpn.network.ClientLoginStep
 import net.libreguard.vpn.ui.components.CenteredScreenHeader
 import net.libreguard.vpn.ui.components.GOOGLE_NEWSLETTER_CONSENT_TEST_TAG
-import net.libreguard.vpn.ui.components.LogoWithGradient
+import net.libreguard.vpn.ui.components.LogoWithEdgeFade
+import net.libreguard.vpn.ui.components.LogoWordmark
 import net.libreguard.vpn.ui.components.NewsletterConsentCheckbox
 import net.libreguard.vpn.ui.theme.*
 import net.libreguard.vpn.viewmodel.ClientLoginViewModel
@@ -110,22 +109,66 @@ fun LoginScreen(
                 .getOrNull()?.takeIf { it.isNotBlank() } ?: "Sign in again to continue."
         }
 
-        Box(Modifier.fillMaxSize().background(Background)) {
+        BoxWithConstraints(Modifier.fillMaxSize().background(Background)) {
+            val compact = maxHeight < 720.dp
+            val veryCompact = maxHeight < 620.dp
+            val topSpacing = when {
+                veryCompact -> 4.dp
+                compact -> 8.dp
+                else -> 16.dp
+            }
+            val logoSize = when {
+                veryCompact -> 48.dp
+                compact -> 60.dp
+                else -> 76.dp
+            }
+            val wordmarkWidth = when {
+                veryCompact -> 118.dp
+                compact -> 138.dp
+                else -> 156.dp
+            }
+            val wordmarkHeight = when {
+                veryCompact -> 17.dp
+                compact -> 20.dp
+                else -> 22.dp
+            }
+            val brandGap = if (veryCompact) 2.dp else 4.dp
+            val headerGap = when {
+                veryCompact -> 6.dp
+                compact -> 10.dp
+                else -> 14.dp
+            }
+            val sectionGap = when {
+                veryCompact -> 8.dp
+                compact -> 12.dp
+                else -> 18.dp
+            }
+            val fieldGap = when {
+                veryCompact -> 6.dp
+                compact -> 10.dp
+                else -> 16.dp
+            }
+            val labelGap = if (veryCompact) 4.dp else if (compact) 6.dp else 8.dp
+            val buttonHeight = if (compact) 48.dp else 52.dp
+            val horizontalPadding =
+                if (maxWidth < 360.dp) 16.dp else LibreGuardDimens.screenHorizontalPadding
+
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .verticalScroll(rememberScrollState())
-                    .padding(LibreGuardDimens.screenHorizontalPadding),
+                    .padding(horizontal = horizontalPadding),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
-                Spacer(Modifier.height(48.dp))
-                LogoWithGradient(size = 96.dp)
-                Spacer(Modifier.height(24.dp))
+                Spacer(Modifier.height(topSpacing))
+                LogoWithEdgeFade(size = logoSize)
+                Spacer(Modifier.height(brandGap))
+                LogoWordmark(width = wordmarkWidth, height = wordmarkHeight)
+                Spacer(Modifier.height(headerGap))
                 CenteredScreenHeader(title = title, subtitle = subtitle)
 
                 if (forcedLogoutMessage != null) {
-                    Spacer(Modifier.height(16.dp))
+                    Spacer(Modifier.height(fieldGap))
                     Surface(
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp),
@@ -142,13 +185,13 @@ fun LoginScreen(
                         }
                     }
                 }
-                Spacer(Modifier.height(32.dp))
+                Spacer(Modifier.height(sectionGap))
 
                 when (val step = state.step) {
                     ClientLoginStep.Start -> {
                         Column(Modifier.fillMaxWidth()) {
                             Text("Email or username", style = MaterialTheme.typography.bodySmall,
-                                color = MutedForeground, modifier = Modifier.padding(bottom = 8.dp))
+                                color = MutedForeground, modifier = Modifier.padding(bottom = labelGap))
                             OutlinedTextField(
                                 value = identifier,
                                 onValueChange = { identifier = it },
@@ -167,10 +210,10 @@ fun LoginScreen(
                                 )
                             )
                         }
-                        Spacer(Modifier.height(16.dp))
+                        Spacer(Modifier.height(fieldGap))
                         Column(Modifier.fillMaxWidth()) {
                             Text("Password", style = MaterialTheme.typography.bodySmall, color = MutedForeground,
-                                modifier = Modifier.padding(bottom = 8.dp))
+                                modifier = Modifier.padding(bottom = labelGap))
                             OutlinedTextField(
                                 value = password,
                                 onValueChange = { password = it },
@@ -210,14 +253,14 @@ fun LoginScreen(
                                 }
                             )
                         }
-                        Spacer(Modifier.height(24.dp))
+                        Spacer(Modifier.height(sectionGap))
                         Button(
                             onClick = {
                                 keyboardController?.hide()
                                 vm.password(identifier, password)
                                 password = ""
                             },
-                            modifier = Modifier.fillMaxWidth().height(56.dp),
+                            modifier = Modifier.fillMaxWidth().height(buttonHeight),
                             enabled = !state.busy && identifier.isNotBlank() && password.isNotBlank(),
                             shape = RoundedCornerShape(12.dp),
                             colors = ButtonDefaults.buttonColors(
@@ -231,20 +274,20 @@ fun LoginScreen(
                                 Modifier.size(24.dp), color = PrimaryForeground, strokeWidth = 2.dp
                             ) else Text("Sign In", style = MaterialTheme.typography.labelLarge)
                         }
-                        Spacer(Modifier.height(24.dp))
+                        Spacer(Modifier.height(sectionGap))
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                             HorizontalDivider(Modifier.weight(1f), color = Border)
                             Text("Or continue with", style = MaterialTheme.typography.bodySmall,
                                 color = MutedForeground, modifier = Modifier.padding(horizontal = 16.dp))
                             HorizontalDivider(Modifier.weight(1f), color = Border)
                         }
-                        Spacer(Modifier.height(24.dp))
+                        Spacer(Modifier.height(sectionGap))
                         Button(
                             onClick = {
                                 newsletterConsent = false
                                 consentSheet = true
                             },
-                            modifier = Modifier.fillMaxWidth().height(56.dp),
+                            modifier = Modifier.fillMaxWidth().height(buttonHeight),
                             enabled = !state.busy,
                             shape = RoundedCornerShape(12.dp),
                             colors = ButtonDefaults.buttonColors(
@@ -284,7 +327,7 @@ fun LoginScreen(
                                 fontWeight = FontWeight.SemiBold
                             )
                         }
-                        Spacer(Modifier.height(16.dp))
+                        Spacer(Modifier.height(fieldGap))
                         TextButton(onClick = { vm.cancel(); onNavigateToRegister() }, enabled = !state.busy) {
                             Text("Don't have an account? Create one", color = MutedForeground)
                         }
@@ -466,7 +509,7 @@ fun LoginScreen(
                         Text("Cancel and start again", color = MutedForeground)
                     }
                 }
-                Spacer(Modifier.height(24.dp))
+                Spacer(Modifier.height(topSpacing))
             }
         }
     }

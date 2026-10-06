@@ -34,7 +34,8 @@ import kotlinx.coroutines.launch
 import net.libreguard.vpn.R
 import net.libreguard.vpn.network.*
 import net.libreguard.vpn.ui.components.CenteredScreenHeader
-import net.libreguard.vpn.ui.components.LogoWithGradient
+import net.libreguard.vpn.ui.components.LogoWithEdgeFade
+import net.libreguard.vpn.ui.components.LogoWordmark
 import net.libreguard.vpn.ui.components.NewsletterConsentCheckbox
 import net.libreguard.vpn.ui.components.REGISTRATION_NEWSLETTER_CONSENT_TEST_TAG
 import net.libreguard.vpn.ui.theme.*
@@ -111,7 +112,9 @@ fun RegisterScreen(
             Spacer(modifier = Modifier.height(16.dp))
 
             // Logo & Header
-            LogoWithGradient(size = 96.dp)
+            LogoWithEdgeFade(size = 96.dp)
+            Spacer(Modifier.height(4.dp))
+            LogoWordmark(width = 156.dp, height = 22.dp)
 
             Spacer(modifier = Modifier.height(16.dp))
 

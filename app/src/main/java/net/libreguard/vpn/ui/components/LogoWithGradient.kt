@@ -17,6 +17,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
@@ -27,6 +29,17 @@ import androidx.compose.ui.unit.dp
 import net.libreguard.vpn.R
 import net.libreguard.vpn.ui.theme.IsDarkMode
 import net.libreguard.vpn.ui.theme.Primary
+
+private val logoBackgroundAlphaFilter = ColorFilter.colorMatrix(
+    ColorMatrix(
+        floatArrayOf(
+            1f, 0f, 0f, 0f, 0f,
+            0f, 1f, 0f, 0f, 0f,
+            0f, 0f, 1f, 0f, 0f,
+            0f, 0f, 0f, 1.0669456f, -17.07113f
+        )
+    )
+)
 
 /**
  * LibreGuard logo with a subtle external halo so it transitions cleanly on dark backgrounds.
@@ -67,6 +80,7 @@ fun LogoWithGradient(
         Image(
             painter = painterResource(id = R.drawable.logo_primary),
             contentDescription = "LibreGuard shield",
+            colorFilter = logoBackgroundAlphaFilter,
             modifier = Modifier
                 .size(size)
                 .clip(shape)
@@ -86,9 +100,11 @@ fun LogoWithEdgeFade(
     Image(
         painter = painterResource(id = R.drawable.logo_primary),
         contentDescription = "LibreGuard shield",
+        colorFilter = logoBackgroundAlphaFilter,
         modifier = modifier
             .size(size)
             .fadeEdges(1.dp)
+            .clip(RoundedCornerShape(3.dp))
     )
 }
 
@@ -159,6 +175,7 @@ fun Logo(
     Image(
         painter = painterResource(id = R.drawable.logo_primary),
         contentDescription = "LibreGuard VPN",
+        colorFilter = logoBackgroundAlphaFilter,
         modifier = modifier.size(size)
     )
 }
