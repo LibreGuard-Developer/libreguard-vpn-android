@@ -33,7 +33,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import net.libreguard.vpn.service.data.DataUsageInfo
-import net.libreguard.vpn.ui.components.LogoWithGradient
+import net.libreguard.vpn.ui.components.LogoWithEdgeFade
+import net.libreguard.vpn.ui.components.LogoWordmark
 import net.libreguard.vpn.core.AppUpdateUiState
 import net.libreguard.vpn.ui.components.AppUpdateActions
 import net.libreguard.vpn.ui.components.AppUpdateHomeBanner
@@ -171,19 +172,15 @@ fun DashboardScreen(
         // Header - Compact
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
+            horizontalArrangement = Arrangement.spacedBy(LibreGuardDimens.headerContentSpacing),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(LibreGuardDimens.headerContentSpacing)
+            LogoWithEdgeFade(size = 40.dp)
+            Box(
+                modifier = Modifier.weight(1f),
+                contentAlignment = Alignment.Center
             ) {
-                LogoWithGradient(size = 40.dp)
-                Text(
-                    text = "LibreGuard",
-                    style = MaterialTheme.typography.headlineMedium,
-                    color = Foreground
-                )
+                LogoWordmark()
             }
 
             // Plan badge

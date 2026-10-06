@@ -11,7 +11,16 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -20,7 +29,7 @@ import net.libreguard.vpn.ui.theme.IsDarkMode
 import net.libreguard.vpn.ui.theme.Primary
 
 /**
- * LibreGuard Logo with a subtle external halo so it transitions cleanly on dark backgrounds.
+ * LibreGuard logo with a subtle external halo so it transitions cleanly on dark backgrounds.
  */
 @Composable
 fun LogoWithGradient(
@@ -57,13 +66,86 @@ fun LogoWithGradient(
 
         Image(
             painter = painterResource(id = R.drawable.logo_primary),
-            contentDescription = "LibreGuard",
+            contentDescription = "LibreGuard shield",
             modifier = Modifier
                 .size(size)
                 .clip(shape)
                 .border(width = 0.75.dp, color = borderColor, shape = shape)
         )
     }
+}
+
+/**
+ * Shield logo for the dashboard, with a very slight fade at the image edges.
+ */
+@Composable
+fun LogoWithEdgeFade(
+    modifier: Modifier = Modifier,
+    size: Dp = 96.dp
+) {
+    Image(
+        painter = painterResource(id = R.drawable.logo_primary),
+        contentDescription = "LibreGuard shield",
+        modifier = modifier
+            .size(size)
+            .fadeEdges(1.dp)
+    )
+}
+
+private fun Modifier.fadeEdges(fadeWidth: Dp): Modifier =
+    graphicsLayer {
+        compositingStrategy = CompositingStrategy.Offscreen
+    }.drawWithContent {
+        drawContent()
+        if (this.size.width <= 0f || this.size.height <= 0f) return@drawWithContent
+
+        val fadePixels = fadeWidth.toPx().coerceAtMost(this.size.minDimension / 2f)
+        val horizontalFade = (fadePixels / this.size.width).coerceAtMost(0.5f)
+        val verticalFade = (fadePixels / this.size.height).coerceAtMost(0.5f)
+
+        drawRect(
+            brush = Brush.linearGradient(
+                colorStops = arrayOf(
+                    0f to Color.Transparent,
+                    horizontalFade to Color.White,
+                    (1f - horizontalFade) to Color.White,
+                    1f to Color.Transparent
+                ),
+                start = Offset.Zero,
+                end = Offset(this.size.width, 0f)
+            ),
+            blendMode = BlendMode.DstIn
+        )
+        drawRect(
+            brush = Brush.linearGradient(
+                colorStops = arrayOf(
+                    0f to Color.Transparent,
+                    verticalFade to Color.White,
+                    (1f - verticalFade) to Color.White,
+                    1f to Color.Transparent
+                ),
+                start = Offset.Zero,
+                end = Offset(0f, this.size.height)
+            ),
+            blendMode = BlendMode.DstIn
+        )
+    }
+
+/**
+ * Crops the transparent margins from the supplied wordmark for a compact header fit.
+ */
+@Composable
+fun LogoWordmark(
+    modifier: Modifier = Modifier,
+    width: Dp = 140.dp,
+    height: Dp = 24.dp
+) {
+    Image(
+        painter = painterResource(id = R.drawable.logo_wordmark),
+        contentDescription = "LibreGuard VPN",
+        contentScale = ContentScale.Crop,
+        modifier = modifier.size(width, height)
+    )
 }
 
 /**
@@ -76,7 +158,7 @@ fun Logo(
 ) {
     Image(
         painter = painterResource(id = R.drawable.logo_primary),
-        contentDescription = "LibreGuard",
+        contentDescription = "LibreGuard VPN",
         modifier = modifier.size(size)
     )
 }
