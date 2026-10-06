@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_updates_section">Updates</string>
+    <string name="app_update_installed_version">Installed version %1$s</string>
+    <string name="app_update_checking">Checking for updates…</string>
+    <string name="app_update_current">You’re up to date</string>
+    <string name="app_update_available">Update available</string>
+    <string name="app_update_preparing">Preparing update…</string>
+    <string name="app_update_waiting">Waiting for download…</string>
+    <string name="app_update_downloading">Downloading update</string>
+    <string name="app_update_ready">Ready to install</string>
+    <string name="app_update_installing">Installing update…</string>
+    <string name="app_update_failed">Couldn’t update</string>
+    <string name="app_update_install_failed_title">Couldn’t install update</string>
+    <string name="app_update_install_failed_description">The update couldn’t be installed. Try again or open Google Play.</string>
+    <string name="app_update_check_failed_title">Couldn’t check for updates</string>
+    <string name="app_update_unavailable">Updates through Google Play</string>
+    <string name="app_update_checking_description">Checking Google Play for the latest available version.</string>
+    <string name="app_update_current_description">You have the latest version available to your device.</string>
+    <string name="app_update_available_description">Download the latest LibreGuard update while you keep using the app.</string>
+    <string name="app_update_store_description">Check for updates on LibreGuard’s Google Play page.</string>
+    <string name="app_update_download_description">You can keep using LibreGuard while the update downloads.</string>
+    <string name="app_update_ready_description">The download is complete. Restart when you’re ready.</string>
+    <string name="app_update_installing_description">LibreGuard will restart to finish updating.</string>
+    <string name="app_update_check_error">The update check didn’t finish. Please try again.</string>
+    <string name="app_update_start_error">The update couldn’t start. Try again or open Google Play.</string>
+    <string name="app_update_download_error">The download didn’t finish. Try again or open Google Play.</string>
+    <string name="app_update_install_error">Installation didn’t start. Please try restarting the update again.</string>
+    <string name="app_update_action">Update</string>
+    <string name="app_update_store_action">Update in Google Play</string>
+    <string name="app_update_open_store">Open Google Play</string>
+    <string name="app_update_check_again">Check again</string>
+    <string name="app_update_retry">Try again</string>
+    <string name="app_update_restart">Restart and update</string>
+    <string name="app_update_later">Later</string>
+    <string name="app_update_dismiss">Dismiss update reminder for 24 hours</string>
+    <string name="app_update_progress">Downloaded %1$s</string>
+    <string name="app_update_snackbar">Update ready to install</string>
+    <string name="app_update_restart_title">Restart to update?</string>
+    <string name="app_update_restart_warning">LibreGuard will restart to install the update. Your VPN connection may be interrupted.</string>
+    <string name="app_update_store_error">Couldn’t open Google Play. Please try again later.</string>
+</resources>

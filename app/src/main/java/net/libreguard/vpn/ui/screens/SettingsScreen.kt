@@ -19,6 +19,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -27,6 +28,10 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.launch
 import net.libreguard.vpn.BuildConfig
+import net.libreguard.vpn.R
+import net.libreguard.vpn.core.AppUpdateUiState
+import net.libreguard.vpn.ui.components.AppUpdateActions
+import net.libreguard.vpn.ui.components.AppUpdateSettingsCard
 import net.libreguard.vpn.network.RetrofitClient
 import net.libreguard.vpn.network.SubscriptionStatusResponse
 import net.libreguard.vpn.ui.components.ProBadge
@@ -55,7 +60,9 @@ fun SettingsScreen(
     onNavigateToPrivacy: () -> Unit = {},
     onNavigateToTerms: () -> Unit = {},
     onLogout: () -> Unit,
-    vpnViewModel: net.libreguard.vpn.viewmodel.VpnViewModel? = null
+    vpnViewModel: net.libreguard.vpn.viewmodel.VpnViewModel? = null,
+    updateState: AppUpdateUiState = AppUpdateUiState(installedVersion = BuildConfig.VERSION_NAME),
+    updateActions: AppUpdateActions = AppUpdateActions()
 ) {
     // Get or create ViewModel
     val viewModel: net.libreguard.vpn.viewmodel.VpnViewModel = vpnViewModel ?: viewModel()
@@ -77,6 +84,7 @@ fun SettingsScreen(
     var isLoading2fa by remember { mutableStateOf(false) }
 
     val context = LocalContext.current
+    LaunchedEffect(Unit) { updateActions.onCheck() }
     val backgroundSupport = remember(context) { BackgroundConnectionSupport(context) }
     val backgroundStatus = rememberBackgroundConnectionStatus(backgroundSupport, selectedProtocol)
     val sharedPrefs = remember { context.getSharedPreferences("vpn_state_prefs", android.content.Context.MODE_PRIVATE) }
@@ -451,6 +459,14 @@ fun SettingsScreen(
 
             Spacer(modifier = Modifier.height(LibreGuardDimens.sectionSpacing))
 
+            SectionHeader(title = stringResource(R.string.app_updates_section), modifier = Modifier.padding(horizontal = LibreGuardDimens.screenHorizontalPadding))
+            AppUpdateSettingsCard(
+                state = updateState,
+                actions = updateActions,
+                modifier = Modifier.padding(horizontal = LibreGuardDimens.screenHorizontalPadding)
+            )
+            Spacer(modifier = Modifier.height(LibreGuardDimens.sectionSpacing))
+
             // Support Section
             SectionHeader(title = "Support", modifier = Modifier.padding(horizontal = LibreGuardDimens.screenHorizontalPadding))
 
@@ -533,7 +549,7 @@ fun SettingsScreen(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
-                    text = "LibreGuard v${BuildConfig.VERSION_NAME}",
+                    text = "LibreGuard v" + updateState.installedVersion.ifBlank { BuildConfig.VERSION_NAME },
                     style = MaterialTheme.typography.bodySmall,
                     color = MutedForeground
                 )

@@ -332,6 +332,10 @@ dependencies {
     // Google Play Billing
     implementation(libs.play.billing.ktx)
 
+    // Google Play flexible in-app updates
+    implementation(libs.play.app.update)
+    implementation(libs.play.app.update.ktx)
+
     // Testing
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)

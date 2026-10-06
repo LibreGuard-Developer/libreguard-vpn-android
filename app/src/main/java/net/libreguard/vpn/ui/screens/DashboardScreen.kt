@@ -34,6 +34,9 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import net.libreguard.vpn.service.data.DataUsageInfo
 import net.libreguard.vpn.ui.components.LogoWithGradient
+import net.libreguard.vpn.core.AppUpdateUiState
+import net.libreguard.vpn.ui.components.AppUpdateActions
+import net.libreguard.vpn.ui.components.AppUpdateHomeBanner
 import net.libreguard.vpn.ui.components.VpnConnectionHero
 import net.libreguard.vpn.ui.components.VpnConnectionStatus
 import net.libreguard.vpn.ui.components.getStatusConfig
@@ -59,7 +62,9 @@ fun DashboardScreen(
     vpnViewModel: VpnViewModel? = null,
     onNavigateToServers: () -> Unit,
     onNavigateToUpgrade: () -> Unit,
-    onNavigateToSettings: () -> Unit = {}
+    onNavigateToSettings: () -> Unit = {},
+    updateState: AppUpdateUiState = AppUpdateUiState(),
+    updateActions: AppUpdateActions = AppUpdateActions()
 ) {
     val viewModel: VpnViewModel = vpnViewModel ?: viewModel()
 
@@ -446,6 +451,15 @@ fun DashboardScreen(
                         modifier = Modifier.padding(horizontal = 10.dp)
                     )
                 }
+            } else null,
+            updateNotice = if (updateState.showHomeBanner) {
+                {
+                    AppUpdateHomeBanner(
+                        state = updateState,
+                        actions = updateActions,
+                        modifier = Modifier.padding(horizontal = 10.dp)
+                    )
+                }
             } else null
         )
 
@@ -619,7 +633,8 @@ internal fun AdaptiveConnectionViewport(
     monthlyLimit: Double,
     monthlyPercentage: Float,
     totalPercentage: Float,
-    backgroundTip: (@Composable () -> Unit)? = null
+    backgroundTip: (@Composable () -> Unit)? = null,
+    updateNotice: (@Composable () -> Unit)? = null
 ) {
     BoxWithConstraints(
         modifier = modifier.testTag("dashboard_connection_viewport")
@@ -634,7 +649,7 @@ internal fun AdaptiveConnectionViewport(
             modifier = Modifier
                 .fillMaxWidth()
                 .fillMaxHeight()
-                .then(if (backgroundTip != null) {
+                .then(if (backgroundTip != null || updateNotice != null) {
                     Modifier.verticalScroll(rememberScrollState()).testTag("dashboard_connection_scroll")
                 } else Modifier)
                 .animateContentSize(animationSpec = tween(durationMillis = 280))
@@ -694,6 +709,7 @@ internal fun AdaptiveConnectionViewport(
                     )
                 }
                 backgroundTip?.invoke()
+                updateNotice?.invoke()
             }
         ) { measurables, constraints ->
             val layoutWidth = constraints.maxWidth
@@ -713,7 +729,7 @@ internal fun AdaptiveConnectionViewport(
             val spaceCount = placeables.size + 1
             val contentHeight = placeables.sumOf { it.height }
             val minimumLayoutHeight = contentHeight + minimumGapPx * spaceCount
-            val layoutHeight = if (backgroundTip == null && viewportHeightPx > 0) viewportHeightPx else minimumLayoutHeight
+            val layoutHeight = if (backgroundTip == null && updateNotice == null && viewportHeightPx > 0) viewportHeightPx else minimumLayoutHeight
             val fitScale = if (layoutHeight > 0 && minimumLayoutHeight > layoutHeight) {
                 layoutHeight.toFloat() / minimumLayoutHeight.toFloat()
             } else {

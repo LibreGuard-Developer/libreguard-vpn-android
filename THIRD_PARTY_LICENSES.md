@@ -47,11 +47,12 @@ This file is a practical summary for repository distribution and release review;
 
 ## Google-managed SDKs used by the app
 
-The app also integrates SDKs published by Google, including Firebase Crashlytics, Google Sign-In, and Google Play Billing. Review the license/terms bundled with those SDKs and their upstream package metadata before each public release.
+The app also integrates SDKs published by Google, including Firebase Crashlytics, Google Sign-In, Google Play Billing, and Google Play In-App Updates. Review the license/terms bundled with those SDKs and their upstream package metadata before each public release.
 
 - Firebase Android SDK: https://github.com/firebase/firebase-android-sdk
 - Google Play services auth: https://developers.google.com/android/guides/overview
 - Google Play Billing: https://developer.android.com/google/play/billing
+- Google Play In-App Updates: https://developer.android.com/guide/playcore/in-app-updates
 
 ## Dependency inventory source
 

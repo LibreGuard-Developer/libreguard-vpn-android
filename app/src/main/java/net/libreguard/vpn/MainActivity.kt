@@ -54,6 +54,9 @@ import net.libreguard.vpn.ui.theme.ThemePreferences
 import net.libreguard.vpn.ui.theme.ThemeMode
 import net.libreguard.vpn.ui.theme.LibreGuardVPNTheme
 import net.libreguard.vpn.viewmodel.VpnViewModel
+import net.libreguard.vpn.viewmodel.AppUpdateViewModel
+import net.libreguard.vpn.ui.components.AppUpdateHost
+import net.libreguard.vpn.ui.components.AppUpdateActions
 import net.libreguard.vpn.util.TokenManager
 import net.libreguard.vpn.viewmodel.SubscriptionViewModel
 
@@ -221,6 +224,16 @@ fun AppNavigation(
 
     // ViewModel reference for VPN disconnect on logout - shared across all composables
     val vpnViewModel: VpnViewModel = viewModel()
+    val updateViewModel: AppUpdateViewModel = viewModel(factory = AppUpdateViewModel.Factory(context))
+    val updateBackStackEntry by navController.currentBackStackEntryAsState()
+    val updateState by updateViewModel.state.collectAsState()
+    val updateActions = AppUpdateActions(
+        onAction = updateViewModel::primaryAction,
+        onCheck = updateViewModel::checkForUpdates,
+        onRestart = updateViewModel::requestRestart,
+        onDismiss = updateViewModel::dismissBanner,
+        onOpenStore = updateViewModel::openStore
+    )
 
     // Keep account-wide DNS eligibility/effectiveness current after returning to
     // the app. The ViewModel ignores this until an authenticated account exists.
@@ -859,6 +872,8 @@ fun AppNavigation(
                     effectiveDarkMode = effectiveDarkMode,
                     onThemeModeChange = onThemeModeChange,
                     vpnViewModel = vpnViewModel,
+                    updateState = updateState,
+                    updateActions = updateActions,
                     onLogout = {
                         // Disconnect VPN first, then logout
                         coroutineScope.launch {
@@ -891,6 +906,9 @@ fun AppNavigation(
         composable("settings") {
             authToken?.let { _ ->
                 SettingsScreen(
+                    updateState = updateState,
+                    updateActions = updateActions,
+                    vpnViewModel = vpnViewModel,
                     themeMode = themeMode,
                     effectiveDarkMode = effectiveDarkMode,
                     onThemeModeChange = onThemeModeChange,
@@ -1006,4 +1024,10 @@ fun AppNavigation(
             )
         }
     }
+    AppUpdateHost(
+        viewModel = updateViewModel,
+        isVpnActive = { vpnViewModel.isConnected.value || vpnViewModel.isConnecting.value },
+        hasBottomNavigation = updateBackStackEntry?.destination?.route == "main",
+        modifier = modifier
+    )
 }

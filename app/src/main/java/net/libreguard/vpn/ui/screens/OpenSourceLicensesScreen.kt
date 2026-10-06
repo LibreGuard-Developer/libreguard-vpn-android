@@ -217,7 +217,7 @@ fun OpenSourceLicensesScreen(
                         color = Foreground
                     )
                     Text(
-                        text = "LibreGuard VPN also uses Kotlin, AndroidX/Jetpack Compose, Material, Retrofit/OkHttp, Gson, ZXing, Bouncy Castle, Firebase, Google Sign-In, and Google Play Billing under their respective upstream licenses and terms.",
+                        text = "LibreGuard VPN also uses Kotlin, AndroidX/Jetpack Compose, Material, Retrofit/OkHttp, Gson, ZXing, Bouncy Castle, Firebase, Google Sign-In, Google Play Billing, and Google Play In-App Updates under their respective upstream licenses and terms.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MutedForeground
                     )

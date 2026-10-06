@@ -11,6 +11,8 @@ import net.libreguard.vpn.ui.navigation.MainTab
 import net.libreguard.vpn.ui.theme.Background
 import net.libreguard.vpn.ui.theme.ThemeMode
 import net.libreguard.vpn.viewmodel.VpnViewModel
+import net.libreguard.vpn.core.AppUpdateUiState
+import net.libreguard.vpn.ui.components.AppUpdateActions
 
 /**
  * Legal/Support screen overlay types
@@ -32,7 +34,9 @@ fun MainContainerScreen(
     onLogout: () -> Unit,
     onNavigateToUpgrade: () -> Unit,
     onNavigateToTwoFactor: () -> Unit,
-    vpnViewModel: VpnViewModel? = null
+    vpnViewModel: VpnViewModel? = null,
+    updateState: AppUpdateUiState = AppUpdateUiState(),
+    updateActions: AppUpdateActions = AppUpdateActions()
 ) {
     // Use shared ViewModel instance or create new one
     val viewModel: VpnViewModel = vpnViewModel ?: viewModel()
@@ -72,6 +76,8 @@ fun MainContainerScreen(
                             vpnViewModel = viewModel,
                             onNavigateToServers = { currentTab = MainTab.SERVERS },
                             onNavigateToSettings = { currentTab = MainTab.SETTINGS },
+                            updateState = updateState,
+                            updateActions = updateActions,
                             onNavigateToUpgrade = onNavigateToUpgrade
                         )
                     }
@@ -103,6 +109,8 @@ fun MainContainerScreen(
                             onNavigateToPrivacy = { legalScreen = LegalScreen.PRIVACY },
                             onNavigateToTerms = { legalScreen = LegalScreen.TERMS },
                             onLogout = onLogout,
+                            updateState = updateState,
+                            updateActions = updateActions,
                             vpnViewModel = viewModel
                         )
                     }
@@ -163,7 +171,9 @@ fun MainScreen(
     onLogout: (() -> Unit)? = null,
     onNavigateToSettings: (() -> Unit)? = null,
     onNavigateToUpgrade: (() -> Unit)? = null,
-    onNavigateToTwoFactor: (() -> Unit)? = null
+    onNavigateToTwoFactor: (() -> Unit)? = null,
+    updateState: AppUpdateUiState = AppUpdateUiState(),
+    updateActions: AppUpdateActions = AppUpdateActions()
 ) {
     MainContainerScreen(
         authToken = authToken,
@@ -173,6 +183,8 @@ fun MainScreen(
         onLogout = { onLogout?.invoke() },
         onNavigateToUpgrade = { onNavigateToUpgrade?.invoke() },
         onNavigateToTwoFactor = { onNavigateToTwoFactor?.invoke() },
-        vpnViewModel = vpnViewModel
+        vpnViewModel = vpnViewModel,
+        updateState = updateState,
+        updateActions = updateActions
     )
 }

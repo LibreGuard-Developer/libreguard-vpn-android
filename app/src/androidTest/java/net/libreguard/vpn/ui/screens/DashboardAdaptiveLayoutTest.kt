@@ -16,6 +16,11 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.unit.dp
 import net.libreguard.vpn.service.data.DataUsageInfo
 import net.libreguard.vpn.ui.components.VpnConnectionStatus
+import net.libreguard.vpn.ui.components.AppUpdateActions
+import net.libreguard.vpn.ui.components.AppUpdateHomeBanner
+import net.libreguard.vpn.core.AppUpdatePhase
+import net.libreguard.vpn.core.AppUpdateSnapshot
+import net.libreguard.vpn.core.AppUpdateUiState
 import net.libreguard.vpn.ui.theme.LibreGuardVPNTheme
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -134,7 +139,20 @@ class DashboardAdaptiveLayoutTest {
         composeRule.onNodeWithTag("bandwidth_download_speed").performScrollTo().assertIsDisplayed()
     }
 
-    private fun show(height: androidx.compose.ui.unit.Dp, isUnlimited: Boolean, withTip: Boolean = false) {
+    @Test
+    fun compactLayoutKeepsUpdateAndBackgroundTipActionsReachable() {
+        show(height = 420.dp, isUnlimited = false, withTip = true, withUpdate = true)
+        composeRule.onNodeWithTag("app_update_primary_action").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Review settings").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("bandwidth_download_speed").performScrollTo().assertIsDisplayed()
+    }
+
+    private fun show(
+        height: androidx.compose.ui.unit.Dp,
+        isUnlimited: Boolean,
+        withTip: Boolean = false,
+        withUpdate: Boolean = false
+    ) {
         composeRule.setContent {
             LibreGuardVPNTheme {
                 Box(Modifier.size(360.dp, height)) {
@@ -158,7 +176,17 @@ class DashboardAdaptiveLayoutTest {
                         monthlyLimit = if (isUnlimited) Double.MAX_VALUE else 5120.0,
                         monthlyPercentage = 35f,
                         totalPercentage = 35f,
-                        backgroundTip = if (withTip) { { BackgroundConnectionTip({}, {}) } } else null
+                        backgroundTip = if (withTip) { { BackgroundConnectionTip({}, {}) } } else null,
+                        updateNotice = if (withUpdate) {
+                            {
+                                AppUpdateHomeBanner(
+                                    AppUpdateUiState(AppUpdateSnapshot(
+                                        AppUpdatePhase.AVAILABLE, versionCode = 20040, flexibleAllowed = true
+                                    )),
+                                    AppUpdateActions()
+                                )
+                            }
+                        } else null
                     )
                 }
             }
