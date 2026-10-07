@@ -17,4 +17,6 @@
         <item name="textAppearanceLabelMedium">@style/TextAppearance.LibreGuard.Label</item>
         <item name="textAppearanceLabelSmall">@style/TextAppearance.LibreGuard.Caption</item>
     </style>
+
+    <style name="Theme.LibreGuardVPN.Starting" parent="Theme.LibreGuardVPN" />
 </resources>

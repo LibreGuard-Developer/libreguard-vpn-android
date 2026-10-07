@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.LibreGuardVPN.Starting" parent="Theme.LibreGuardVPN">
+        <item name="android:windowSplashScreenBackground">#FFFFFFFF</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_lockup_light</item>
+    </style>
+</resources>

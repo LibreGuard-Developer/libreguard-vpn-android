@@ -1,7 +1,10 @@
 package net.libreguard.vpn.ui.screens
 
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -14,6 +17,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.draw.clip
@@ -35,12 +39,14 @@ import net.libreguard.vpn.util.getSecondaryServerLabel
 import net.libreguard.vpn.viewmodel.VpnProtocol
 import net.libreguard.vpn.viewmodel.VpnViewModel
 import net.libreguard.vpn.viewmodel.ServerLatencyStatus
+import kotlin.math.PI
+import kotlin.math.sin
 
 /**
  * Server List Screen - Select server and protocol
  * EXACTLY matching ServerList.tsx design
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun ServerListScreen(
     authToken: String,
@@ -242,11 +248,18 @@ fun ServerListScreen(
             ) {
                 // Favorites Section
                 if (favoriteServersList.isNotEmpty() && searchQuery.isBlank()) {
-                    item {
+                    item(key = "favorites-header") {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            modifier = Modifier.padding(vertical = 8.dp)
+                            modifier = Modifier
+                                .animateItem(
+                                    placementSpec = spring(
+                                        dampingRatio = 0.86f,
+                                        stiffness = Spring.StiffnessLow
+                                    )
+                                )
+                                .padding(vertical = 8.dp)
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Star,
@@ -261,13 +274,19 @@ fun ServerListScreen(
                             )
                         }
                     }
-                    items(favoriteServersList) { server ->
+                    items(favoriteServersList, key = { "server-" + it.id }) { server ->
                         ServerCard(
                             server = server,
                             latency = serverLatencies[server.id],
                             latencyStatus = latencyStatuses[server.id] ?: ServerLatencyStatus.UNAVAILABLE,
                             isSelected = selectedServer == server,
                             isFavorite = true,
+                            modifier = Modifier.animateItem(
+                                placementSpec = spring(
+                                    dampingRatio = 0.86f,
+                                    stiffness = Spring.StiffnessLow
+                                )
+                            ),
                             onSelect = {
                                 viewModel.selectServer(server)
                                 onServerSelected()
@@ -285,11 +304,18 @@ fun ServerListScreen(
 
                 // All Servers by Country
                 regularServersByCountry.forEach { (country, countryServers) ->
-                    item {
+                    item(key = "country-" + country) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            modifier = Modifier.padding(top = 16.dp, bottom = 8.dp)
+                            modifier = Modifier
+                                .animateItem(
+                                    placementSpec = spring(
+                                        dampingRatio = 0.86f,
+                                        stiffness = Spring.StiffnessLow
+                                    )
+                                )
+                                .padding(top = 16.dp, bottom = 8.dp)
                         ) {
                             Text(
                                 text = getFlagEmoji(country),
@@ -307,13 +333,19 @@ fun ServerListScreen(
                             )
                         }
                     }
-                    items(countryServers) { server ->
+                    items(countryServers, key = { "server-" + it.id }) { server ->
                         ServerCard(
                             server = server,
                             latency = serverLatencies[server.id],
                             latencyStatus = latencyStatuses[server.id] ?: ServerLatencyStatus.UNAVAILABLE,
                             isSelected = selectedServer == server,
                             isFavorite = favoriteServers.contains(server.id.toString()),
+                            modifier = Modifier.animateItem(
+                                placementSpec = spring(
+                                    dampingRatio = 0.86f,
+                                    stiffness = Spring.StiffnessLow
+                                )
+                            ),
                             onSelect = {
                                 viewModel.selectServer(server)
                                 onServerSelected()
@@ -331,7 +363,7 @@ fun ServerListScreen(
 
                 // Empty state
                 if (filteredServers.isEmpty()) {
-                    item {
+                    item(key = "empty-state") {
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -382,6 +414,7 @@ private fun ServerCard(
     latencyStatus: ServerLatencyStatus,
     isSelected: Boolean,
     isFavorite: Boolean,
+    modifier: Modifier = Modifier,
     onSelect: () -> Unit,
     onToggleFavorite: () -> Unit
 ) {
@@ -389,7 +422,7 @@ private fun ServerCard(
     val isPremiumServer = server.pricingTier.equals("Premium", ignoreCase = true)
 
     Surface(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .clickable { onSelect() },
         shape = RoundedCornerShape(12.dp),
@@ -490,17 +523,10 @@ private fun ServerCard(
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    IconButton(
-                        onClick = onToggleFavorite,
-                        modifier = Modifier.size(32.dp)
-                    ) {
-                        Icon(
-                            imageVector = if (isFavorite) Icons.Default.Star else Icons.Default.StarBorder,
-                            contentDescription = if (isFavorite) "Remove from favorites" else "Add to favorites",
-                            tint = if (isFavorite) Primary else MutedForeground,
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
+                    FavoriteStarButton(
+                        isFavorite = isFavorite,
+                        onToggleFavorite = onToggleFavorite
+                    )
                     Icon(
                         imageVector = Icons.Default.ChevronRight,
                         contentDescription = null,
@@ -638,6 +664,72 @@ internal fun LatencySignalBars(latency: Int, status: ServerLatencyStatus) {
                 size = Size(width = barWidth, height = barHeight),
                 cornerRadius = CornerRadius(x = barWidth / 2, y = barWidth / 2)
             )
+        }
+    }
+}
+
+
+@Composable
+private fun FavoriteStarButton(
+    isFavorite: Boolean,
+    onToggleFavorite: () -> Unit
+) {
+    val bounceProgress = remember { Animatable(0f) }
+    var hasObservedInitialValue by remember { mutableStateOf(false) }
+    val tint by animateColorAsState(
+        targetValue = if (isFavorite) Primary else MutedForeground,
+        animationSpec = spring(
+            dampingRatio = 0.86f,
+            stiffness = Spring.StiffnessLow
+        ),
+        label = "favorite-star-tint"
+    )
+    val bounceDistance = with(androidx.compose.ui.platform.LocalDensity.current) { 3.dp.toPx() }
+
+    LaunchedEffect(isFavorite) {
+        if (hasObservedInitialValue) {
+            bounceProgress.snapTo(0f)
+            bounceProgress.animateTo(
+                targetValue = 1f,
+                animationSpec = spring(
+                    dampingRatio = 0.52f,
+                    stiffness = 650f
+                )
+            )
+        }
+        hasObservedInitialValue = true
+    }
+
+    IconButton(
+        onClick = onToggleFavorite,
+        modifier = Modifier.size(32.dp).semantics {
+            contentDescription = if (isFavorite) "Remove from favorites" else "Add to favorites"
+        }
+    ) {
+        Box(
+            modifier = Modifier
+                .size(20.dp)
+                .graphicsLayer {
+                    val bounce = sin(bounceProgress.value * PI).toFloat()
+                    val scale = 1f + 0.2f * bounce
+                    scaleX = scale
+                    scaleY = scale
+                    translationY = -bounceDistance * bounce
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            Crossfade(
+                targetState = isFavorite,
+                animationSpec = tween(durationMillis = 150),
+                label = "favorite-star-symbol"
+            ) { favorite ->
+                Icon(
+                    imageVector = if (favorite) Icons.Default.Star else Icons.Default.StarBorder,
+                    contentDescription = null,
+                    tint = tint,
+                    modifier = Modifier.size(16.dp)
+                )
+            }
         }
     }
 }
