@@ -1,6 +1,7 @@
 package net.libreguard.vpn.ui.screens
 
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -13,14 +14,17 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import net.libreguard.vpn.network.RemoteVpnServer
 import net.libreguard.vpn.ui.components.ProBadge
 import net.libreguard.vpn.ui.components.ScreenHeader
@@ -30,6 +34,7 @@ import net.libreguard.vpn.util.getPrimaryServerLabel
 import net.libreguard.vpn.util.getSecondaryServerLabel
 import net.libreguard.vpn.viewmodel.VpnProtocol
 import net.libreguard.vpn.viewmodel.VpnViewModel
+import net.libreguard.vpn.viewmodel.ServerLatencyStatus
 
 /**
  * Server List Screen - Select server and protocol
@@ -55,7 +60,8 @@ fun ServerListScreen(
 
     var searchQuery by remember { mutableStateOf("") }
     var favoriteServers by remember { mutableStateOf(setOf<String>()) }
-    var isRefreshing by remember { mutableStateOf(false) }
+    val isRefreshing by viewModel.isRefreshingServers.collectAsState()
+    val latencyStatuses by viewModel.serverLatencyStatuses.collectAsState()
 
     LaunchedEffect(authToken) {
         viewModel.setAuthToken(authToken)
@@ -211,44 +217,13 @@ fun ServerListScreen(
                 )
             )
 
-            // Refresh Button
-            val coroutineScope = rememberCoroutineScope()
-            Surface(
-                modifier = Modifier.size(56.dp),
-                shape = RoundedCornerShape(12.dp),
-                color = Primary,
-                onClick = {
-                    isRefreshing = true
-                    viewModel.refreshServers()
-                    // Reset after animation
-                    coroutineScope.launch {
-                        delay(1000)
-                        isRefreshing = false
-                    }
-                }
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    val rotation by animateFloatAsState(
-                        targetValue = if (isRefreshing) 360f else 0f,
-                        animationSpec = tween(1000, easing = LinearEasing),
-                        label = "rotation"
-                    )
-                    Icon(
-                        imageVector = Icons.Default.Refresh,
-                        contentDescription = "Refresh servers",
-                        tint = PrimaryForeground,
-                        modifier = Modifier
-                            .size(24.dp)
-                            .graphicsLayer(rotationZ = rotation)
-                    )
-                }
-            }
+            ServerRefreshButton(isRefreshing = isRefreshing, onRefresh = viewModel::refreshServers)
         }
 
         Spacer(modifier = Modifier.height(16.dp))
 
         // Server List
-        if (isLoadingServers) {
+        if (isLoadingServers && servers.isEmpty()) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -290,6 +265,7 @@ fun ServerListScreen(
                         ServerCard(
                             server = server,
                             latency = serverLatencies[server.id],
+                            latencyStatus = latencyStatuses[server.id] ?: ServerLatencyStatus.UNAVAILABLE,
                             isSelected = selectedServer == server,
                             isFavorite = true,
                             onSelect = {
@@ -335,6 +311,7 @@ fun ServerListScreen(
                         ServerCard(
                             server = server,
                             latency = serverLatencies[server.id],
+                            latencyStatus = latencyStatuses[server.id] ?: ServerLatencyStatus.UNAVAILABLE,
                             isSelected = selectedServer == server,
                             isFavorite = favoriteServers.contains(server.id.toString()),
                             onSelect = {
@@ -402,6 +379,7 @@ private fun ProtocolToggleButton(
 private fun ServerCard(
     server: RemoteVpnServer,
     latency: Int?,
+    latencyStatus: ServerLatencyStatus,
     isSelected: Boolean,
     isFavorite: Boolean,
     onSelect: () -> Unit,
@@ -484,20 +462,7 @@ private fun ServerCard(
                         horizontalArrangement = Arrangement.spacedBy(4.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        if (latency != null) {
-                            Icon(
-                                imageVector = Icons.Default.SignalCellularAlt,
-                                contentDescription = null,
-                                tint = getPingColor(latency),
-                                modifier = Modifier.size(14.dp)
-                            )
-                            Text(
-                                text = "${latency}ms",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MutedForeground,
-                                maxLines = 1
-                            )
-                        }
+                        ServerLatencyReading(latency = latency, status = latencyStatus)
                     }
                     Spacer(modifier = Modifier.height(4.dp))
                     // Only show load if we have real data from API
@@ -586,3 +551,93 @@ private fun getLoadColor(load: Int): Color {
     }
 }
 
+
+@Composable
+internal fun ServerRefreshButton(isRefreshing: Boolean, onRefresh: () -> Unit) {
+    Surface(
+        modifier = Modifier.size(56.dp).semantics {
+            contentDescription = if (isRefreshing) "Refreshing servers" else "Refresh servers"
+        },
+        shape = RoundedCornerShape(12.dp),
+        color = Primary,
+        enabled = !isRefreshing,
+        onClick = onRefresh
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            if (isRefreshing) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(24.dp),
+                    color = PrimaryForeground,
+                    strokeWidth = 2.dp
+                )
+            } else {
+                Icon(
+                    imageVector = Icons.Default.Refresh,
+                    contentDescription = null,
+                    tint = PrimaryForeground,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+internal fun ServerLatencyReading(latency: Int?, status: ServerLatencyStatus) {
+    Column(horizontalAlignment = Alignment.End) {
+        if (latency != null) {
+            val latencyColor = if (status == ServerLatencyStatus.FRESH) getPingColor(latency) else MutedForeground
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(3.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                LatencySignalBars(latency = latency, status = status)
+                Text(
+                    text = "${latency}ms",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = latencyColor
+                )
+            }
+        }
+        when (status) {
+            ServerLatencyStatus.REFRESHING -> Text("Updating", style = MaterialTheme.typography.labelSmall, color = MutedForeground)
+            ServerLatencyStatus.STALE -> Text("Previous", style = MaterialTheme.typography.labelSmall, color = MutedForeground)
+            ServerLatencyStatus.UNAVAILABLE -> Text("--", style = MaterialTheme.typography.labelSmall, color = MutedForeground)
+            ServerLatencyStatus.FRESH -> Unit
+        }
+    }
+}
+
+@Composable
+internal fun LatencySignalBars(latency: Int, status: ServerLatencyStatus) {
+    val activeBars = when {
+        latency <= 100 -> 4
+        latency <= 200 -> 3
+        else -> 1
+    }
+    val activeColor = if (status == ServerLatencyStatus.FRESH) getPingColor(latency) else MutedForeground
+    val inactiveColor = MutedForeground.copy(alpha = 0.25f)
+    val signalDescription = when {
+        latency <= 100 -> "Low latency"
+        latency <= 200 -> "Medium latency"
+        else -> "High latency"
+    }
+    Canvas(
+        modifier = Modifier
+            .size(width = 16.dp, height = 12.dp)
+            .semantics { contentDescription = signalDescription }
+    ) {
+        val gap = size.width * 0.1f
+        val barWidth = (size.width - gap * 3) / 4
+        val heights = listOf(0.34f, 0.55f, 0.76f, 1f)
+        heights.forEachIndexed { index, fraction ->
+            val barHeight = size.height * fraction
+            drawRoundRect(
+                color = if (index < activeBars) activeColor else inactiveColor,
+                topLeft = Offset(x = index * (barWidth + gap), y = size.height - barHeight),
+                size = Size(width = barWidth, height = barHeight),
+                cornerRadius = CornerRadius(x = barWidth / 2, y = barWidth / 2)
+            )
+        }
+    }
+}

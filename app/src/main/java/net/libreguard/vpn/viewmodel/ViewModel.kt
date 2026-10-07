@@ -5,6 +5,14 @@ import android.app.Application
 import android.content.Context
 import android.content.Intent
 import android.net.VpnService
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.flow.combine
+import java.util.concurrent.atomic.AtomicInteger
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -159,12 +167,63 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     private val _isConnecting = MutableStateFlow(false)
     val isConnecting: StateFlow<Boolean> = _isConnecting
 
-    private val _isLoadingServers = MutableStateFlow(false)
-    val isLoadingServers: StateFlow<Boolean> = _isLoadingServers
+    private val serverRefresh by lazy {
+        ServerRefreshCoordinator(
+            scope = viewModelScope,
+            fetchServers = ::fetchRemoteServers,
+            probeServers = { servers, onResult ->
+                PingService.pingServers(servers, canProbe = { !isLatencyBlocked() }, onResult = onResult)
+            },
+            canProbe = ::canMeasureServerLatencies,
+            isBlocked = ::isLatencyBlocked,
+            onServers = { servers ->
+                _servers.value = servers
+            },
+            onFailure = {
+                Log.w(TAG, "Server refresh failed", it)
+                if (_servers.value.isEmpty()) _errorMessage.value = "Network error loading servers"
+            },
+            log = { Log.d(TAG, it) },
+            onFetched = ::cacheServers
+        )
+    }
+    val isLoadingServers: StateFlow<Boolean> get() = serverRefresh.isLoading
+    val isMeasuringServerLatencies: StateFlow<Boolean> get() = serverRefresh.isMeasuring
+    val isRefreshingServers: StateFlow<Boolean> get() = serverRefresh.isRefreshing
+    val serverLatencies: StateFlow<Map<Int, Int>> get() = serverRefresh.latencies
+    val serverLatencyStatuses: StateFlow<Map<Int, ServerLatencyStatus>> get() = serverRefresh.statuses
 
-    // Server latency tracking (cached until server list reload while not connected)
-    private val _serverLatencies = MutableStateFlow<Map<Int, Int>>(emptyMap())
-    val serverLatencies: StateFlow<Map<Int, Int>> = _serverLatencies
+    private var vpnStateRestoreJob: Job? = null
+    private var quickConnectJob: Job? = null
+    private val latencyDisconnectsInProgress = AtomicInteger(0)
+    private val connectivityManager by lazy { application.getSystemService(ConnectivityManager::class.java) }
+    private var latencyNetwork: Network? = null
+    @Volatile private var nativeVpnNetworkPresent = false
+    private var networkCallbacksRegistered = false
+    private val latencyNetworkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) {
+            viewModelScope.launch { updateLatencyNetwork(network) }
+        }
+        override fun onLost(network: Network) {
+            viewModelScope.launch { if (latencyNetwork == network) updateLatencyNetwork(null) }
+        }
+        override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
+            if (capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) {
+                viewModelScope.launch { serverRefresh.cancelLatency("nativeVpnNetwork") }
+            }
+        }
+    }
+    private val nativeVpnNetworkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) {
+            nativeVpnNetworkPresent = true
+            viewModelScope.launch { serverRefresh.cancelLatency("nativeVpnNetwork") }
+        }
+        override fun onLost(network: Network) {
+            nativeVpnNetworkPresent = connectivityManager.allNetworks.any {
+                connectivityManager.getNetworkCapabilities(it)?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
+            }
+        }
+    }
 
     private val _errorMessage = MutableStateFlow<String?>(null)
     val errorMessage: StateFlow<String?> = _errorMessage
@@ -287,6 +346,8 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     private var activeConnectSessionId: Long = 0L
 
     private fun beginConnectSession(): Long {
+        serverRefresh.cancelLatency("connectionStarted")
+        quickConnectJob?.cancel()
         activeConnectJob?.cancel()
         activeConnectSessionId += 1L
         return activeConnectSessionId
@@ -371,6 +432,11 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
         // Start background VPN state monitoring to detect ghost connections
         startVpnStateMonitoring()
+        startLatencyNetworkMonitoring()
+        viewModelScope.launch {
+            combine(_isConnected, _isConnecting) { connected, connecting -> connected || connecting }
+                .collect { blocked -> if (blocked) serverRefresh.cancelLatency("vpnStateChanged") }
+        }
 
         // Fetch user's real IP on app startup (only if not connected)
         fetchUserIP()
@@ -525,6 +591,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
      * to prevent the ViewModel from using an old/invalid token
      */
     fun clearCachedAuthToken() {
+        serverRefresh.invalidate(clearLatencies = true, reason = "sessionCleared")
+        quickConnectJob?.cancel()
+        _servers.value = emptyList()
         Log.d(TAG, "Clearing cached auth token from ViewModel")
         authToken = null
         currentUserId = null
@@ -534,7 +603,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
      * Load persisted connection state when app restarts
      */
     private fun loadPersistedState() {
-        viewModelScope.launch {
+        vpnStateRestoreJob = viewModelScope.launch {
             try {
                 val wasConnected = sharedPrefs.getBoolean("was_connected", false)
                 val serverName = sharedPrefs.getString("connected_server", null)
@@ -837,6 +906,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
      * Logout user and clear all state
      */
     fun logout() {
+        serverRefresh.invalidate(clearLatencies = true, reason = "logout")
+        quickConnectJob?.cancel()
+        _servers.value = emptyList()
         viewModelScope.launch {
             dnsPreferenceJob?.cancel()
             dnsRequestGate.invalidate()
@@ -904,6 +976,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
      * - Session expires
      */
     suspend fun forceDisconnectVpn(context: Context) {
+        latencyDisconnectsInProgress.incrementAndGet()
+        serverRefresh.invalidate(clearLatencies = true, reason = "forceDisconnect")
+        quickConnectJob?.cancel()
         try {
             Log.d(TAG, "🛑 Force disconnect VPN on logout")
 
@@ -965,6 +1040,8 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             _isConnected.value = false
             _isConnecting.value = false
             activeVpnHandler = null
+        } finally {
+            latencyDisconnectsInProgress.decrementAndGet()
         }
     }
 
@@ -1051,89 +1128,66 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     /**
      * Load remote servers with caching - try cache first, then API
      */
-    private fun loadRemoteServersWithFallback() {
-        // TokenManager is the source of truth; avoid using a stale ViewModel authToken.
-        val token = RetrofitClient.getTokenManager().getAccessToken()
-        if (token.isNullOrBlank()) {
-            Log.w(TAG, "No auth token available for loading remote servers")
-            return
+    private fun loadRemoteServersWithFallback(): Deferred<Unit>? {
+        if (RetrofitClient.getTokenManager().getAccessToken().isNullOrBlank()) return null
+        if (!serverRefresh.isRefreshing.value) {
+            val cached = _servers.value.ifEmpty { loadCachedServers() }
+            if (cached.isNotEmpty()) serverRefresh.updateServers(cached)
         }
+        return serverRefresh.refresh()
+    }
 
-        _isLoadingServers.value = true
+    private suspend fun fetchRemoteServers(): List<RemoteVpnServer> {
+        val freshToken = RetrofitClient.getTokenManager().getAccessToken()
+            ?: throw IllegalStateException("No auth token available for loading servers")
+        val response = RetrofitClient.instance.getVpnServers("Bearer $freshToken")
+        if (!response.isSuccessful) throw IllegalStateException("Server list request failed: ${response.code()}")
+        return response.body()?.servers ?: throw IllegalStateException("No servers received from API")
+    }
 
-        viewModelScope.launch {
-            try {
-                val cachedServers = loadCachedServers()
-                if (cachedServers.isNotEmpty()) {
-                    _servers.value = cachedServers
-                    Log.d(TAG, "Loaded ${cachedServers.size} servers from cache")
-                }
-
-                // Always re-read token right before the call (it may have been refreshed).
-                val freshToken = RetrofitClient.getTokenManager().getAccessToken()
-                if (freshToken.isNullOrBlank()) {
-                    Log.w(TAG, "No auth token available for loading remote servers (after cache)")
-                    return@launch
-                }
-
-                val response = RetrofitClient.instance.getVpnServers("Bearer $freshToken")
-
-                if (response.isSuccessful) {
-                    val serverResponse = response.body()
-                    if (serverResponse?.servers != null) {
-                        _servers.value = serverResponse.servers
-                        cacheServers(serverResponse.servers)
-                        Log.d(TAG, "Loaded ${serverResponse.servers.size} remote servers from API")
-                        _errorMessage.value = "Server list updated (${serverResponse.servers.size} servers)"
-
-                        if (!_isConnected.value) {
-                            _serverLatencies.value = emptyMap()
-                            measureServerLatencies(serverResponse.servers)
-                        } else {
-                            Log.d(TAG, "Skipping latency measurement while connected to VPN")
-                        }
-                    } else {
-                        Log.w(TAG, "No servers received from API")
-                        if (cachedServers.isEmpty()) {
-                            _errorMessage.value = "No servers received from API"
-                        }
-                    }
-                } else {
-                    Log.w(TAG, "Failed to load servers: ${response.code()}")
-                    if (cachedServers.isEmpty()) {
-                        _errorMessage.value = "Failed to load servers (network issue)"
-                    }
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "Error loading remote servers")
-                if (_servers.value.isEmpty()) {
-                    _errorMessage.value = "Network error loading servers"
-                }
-            } finally {
-                _isLoadingServers.value = false
+    private fun isLatencyBlocked(): Boolean =
+        nativeVpnNetworkPresent || _isConnected.value || _isConnecting.value || pendingConnectAfterVpnConsent ||
+            latencyDisconnectsInProgress.get() > 0 ||
+            activeVpnHandler?.connectionState?.value.let {
+                it is ConnectionState.Connected || it is ConnectionState.Connecting || it is ConnectionState.Disconnecting
             }
+
+    private suspend fun canMeasureServerLatencies(): Boolean {
+        vpnStateRestoreJob?.join()
+        if (isLatencyBlocked()) return false
+        return try {
+            !ownVpnStatus.isConnected() && !isLatencyBlocked()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "VPN state unresolved; skipping latency refresh", e)
+            false
         }
     }
 
-    /**
-     * Measure latency for all servers in the background using /ping endpoint
-     */
-    private fun measureServerLatencies(servers: List<RemoteVpnServer>) {
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                Log.d(TAG, "Starting latency measurement for ${servers.size} servers")
-                val latencies = PingService.pingServers(servers)
+    private fun updateLatencyNetwork(network: Network?) {
+        if (latencyNetwork == network) return
+        latencyNetwork = network
+        serverRefresh.invalidate(reason = "networkChanged")
+        PingService.resetConnections()
+        quickConnectJob?.cancel()
+    }
 
-                // Only update if measurement was successful and we got some results
-                if (latencies.isNotEmpty()) {
-                    _serverLatencies.value = latencies
-                    Log.d(TAG, "Latency measurement complete: ${latencies.size} servers measured")
-                } else {
-                    Log.v(TAG, "No latency measurements succeeded")
-                }
-            } catch (e: Exception) {
-                Log.v(TAG, "Error measuring server latencies")
+    private fun startLatencyNetworkMonitoring() {
+        latencyNetwork = connectivityManager.activeNetwork
+        try {
+            nativeVpnNetworkPresent = connectivityManager.allNetworks.any {
+                connectivityManager.getNetworkCapabilities(it)?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
             }
+            connectivityManager.registerDefaultNetworkCallback(latencyNetworkCallback)
+            networkCallbacksRegistered = true
+            connectivityManager.registerNetworkCallback(
+                NetworkRequest.Builder().addTransportType(NetworkCapabilities.TRANSPORT_VPN)
+                    .removeCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN).build(),
+                nativeVpnNetworkCallback
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not observe latency network changes", e)
         }
     }
 
@@ -1155,6 +1209,11 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         // CRITICAL FIX: Create stable user ID that persists across login sessions
         // Instead of using token hash (which changes), extract user info from token or create persistent ID
         val userId = getStableUserId(token)
+        if (currentUserId != userId) {
+            serverRefresh.invalidate(clearLatencies = true, reason = "accountChanged")
+            quickConnectJob?.cancel()
+            _servers.value = emptyList()
+        }
         currentUserId = userId
         sharedPrefs.edit().putString("current_user_id", userId).apply()
         dataUsageManager.setUserId(userId)
@@ -1342,6 +1401,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun selectServer(server: RemoteVpnServer) {
+        quickConnectJob?.cancel()
         _selectedServer.value = server
         _isQuickConnectMode.value = false // Switch to manual mode
     }
@@ -1580,69 +1640,42 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
      * 4. Pro server preference for Pro users (10% bonus)
      */
     fun quickConnect() {
-        // Guard: ignore if already connecting or connected
-        if (_isConnecting.value) {
-            _errorMessage.value = "Already connecting..."
-            return
-        }
-        if (_isConnected.value) {
-            _errorMessage.value = "Already connected"
-            return
-        }
-
-        val servers = _servers.value
-        if (servers.isEmpty()) {
-            _errorMessage.value = "No servers available. Please refresh the server list."
-            return
-        }
-
-        val latencies = _serverLatencies.value
-        if (latencies.isEmpty()) {
-            // Latency measurement not complete - trigger it and inform user
-            _errorMessage.value = "Measuring server latencies, please wait..."
-            Log.d(TAG, "Quick Connect: No latency data available, measuring now...")
-
-            viewModelScope.launch {
-                // Trigger latency measurement
-                measureServerLatencies(servers)
-
-                // Wait a bit for measurements to complete
-                delay(3000)
-
-                // Try again if we got some measurements
-                if (_serverLatencies.value.isNotEmpty()) {
-                    quickConnect()
-                } else {
-                    _errorMessage.value = "Unable to measure server latencies. Please try manual selection."
+        if (quickConnectJob?.isActive == true || isLatencyBlocked()) return
+        val accountId = currentUserId
+        val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
+            try {
+                if (serverRefresh.isRefreshing.value || serverRefresh.freshLatencies().isEmpty()) {
+                    _errorMessage.value = "Measuring server latencies, please wait..."
+                    if (!serverRefresh.isRefreshing.value && _servers.value.isNotEmpty()) {
+                        serverRefresh.updateServers(_servers.value)
+                    }
+                    serverRefresh.refresh(fetchMetadata = _servers.value.isEmpty(), trigger = "quickConnect").await()
                 }
+                if (currentUserId != accountId || !canMeasureServerLatencies()) return@launch
+                val latencies = serverRefresh.freshLatencies()
+                if (latencies.isEmpty()) {
+                    _errorMessage.value = "Unable to measure server latencies. Please try manual selection."
+                    return@launch
+                }
+                val bestServer = ServerSelectionHelper.selectBestServer(
+                    servers = _servers.value,
+                    serverLatencies = latencies,
+                    isPro = subscriptionViewModel.isPro.value
+                )
+                if (bestServer == null) {
+                    _errorMessage.value = "No suitable server found. All servers may be overloaded or unavailable."
+                    return@launch
+                }
+                _selectedServer.value = bestServer
+                _isQuickConnectMode.value = true
+                _errorMessage.value = "Connecting to ${bestServer.serverName}..."
+                connectToVpn()
+            } catch (e: CancellationException) {
+                throw e
             }
-            return
         }
-
-        // Get user subscription status
-        val isProCached = subscriptionViewModel.isPro.value
-
-        // Select best server using helper
-        val bestServer = ServerSelectionHelper.selectBestServer(
-            servers = servers,
-            serverLatencies = latencies,
-            isPro = isProCached
-        )
-
-        if (bestServer == null) {
-            _errorMessage.value = "No suitable server found. All servers may be overloaded or unavailable."
-            Log.w(TAG, "Quick Connect: Could not find suitable server")
-            return
-        }
-
-        // Auto-select the best server
-        Log.d(TAG, "Quick Connect: Auto-selected ${bestServer.serverName.take(8)}...")
-        _selectedServer.value = bestServer
-        _isQuickConnectMode.value = true // Ensure Quick Connect mode is active
-        _errorMessage.value = "Connecting to ${bestServer.serverName}..."
-
-        // Connect to the selected server
-        connectToVpn()
+        quickConnectJob = job
+        job.start()
     }
 
     fun connectToVpn() {
@@ -2639,6 +2672,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                                 stateObserverJob = null
                             }
                             is ConnectionState.Disconnecting -> {
+                            serverRefresh.cancelLatency("handlerDisconnecting")
                                 _isConnecting.value = false
                                 _errorMessage.value = "Disconnecting..."
                             }
@@ -3079,6 +3113,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                             _isConnected.value = false
                         }
                         is ConnectionState.Disconnecting -> {
+                                serverRefresh.cancelLatency("handlerDisconnecting")
                             _isConnecting.value = false
                             _isConnected.value = false
                             _errorMessage.value = "Cancelling connection..."
@@ -3207,6 +3242,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun disconnect() {
+        latencyDisconnectsInProgress.incrementAndGet()
+        serverRefresh.cancelLatency("disconnectionStarted")
+        quickConnectJob?.cancel()
         viewModelScope.launch {
             var disconnectSessionId = activeConnectSessionId
             var vpnStillActiveAfterDisconnect = false
@@ -3367,6 +3405,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 Log.e(TAG, "Error during disconnect process", e)
                 _errorMessage.value = "Disconnect error: ${e.localizedMessage}"
             } finally {
+                latencyDisconnectsInProgress.decrementAndGet()
                 if (!isConnectSessionActive(disconnectSessionId)) {
                     Log.d(TAG, "Skipping disconnect cleanup because a newer connection attempt is active")
                 } else if (vpnStillActiveAfterDisconnect) {
@@ -3405,7 +3444,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun refreshServers() {
-        loadRemoteServers()
+        if (!RetrofitClient.getTokenManager().getAccessToken().isNullOrBlank()) {
+            serverRefresh.refresh(trigger = "manual")
+        }
     }
 
     // Check if VPN permission is granted
@@ -3541,6 +3582,12 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
      * Cleanup when ViewModel is destroyed
      */
     override fun onCleared() {
+        serverRefresh.invalidate(reason = "viewModelCleared")
+        quickConnectJob?.cancel()
+        if (networkCallbacksRegistered) {
+            runCatching { connectivityManager.unregisterNetworkCallback(latencyNetworkCallback) }
+            runCatching { connectivityManager.unregisterNetworkCallback(nativeVpnNetworkCallback) }
+        }
         super.onCleared()
         ownVpnStatus.close()
         try {
