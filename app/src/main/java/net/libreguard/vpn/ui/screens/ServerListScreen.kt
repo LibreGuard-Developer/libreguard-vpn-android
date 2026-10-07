@@ -488,7 +488,7 @@ private fun ServerCard(
 
                 // Stats - Vertical layout
                 Column(
-                    modifier = Modifier.width(58.dp),
+                    modifier = Modifier.width(68.dp),
                     horizontalAlignment = Alignment.End
                 ) {
                     Row(
@@ -611,7 +611,9 @@ internal fun ServerRefreshButton(isRefreshing: Boolean, onRefresh: () -> Unit) {
 @Composable
 internal fun ServerLatencyReading(latency: Int?, status: ServerLatencyStatus) {
     Column(horizontalAlignment = Alignment.End) {
-        if (latency != null) {
+        if (status == ServerLatencyStatus.REFRESHING) {
+            Text("Updating", style = MaterialTheme.typography.labelSmall, color = MutedForeground)
+        } else if (latency != null) {
             val latencyColor = if (status == ServerLatencyStatus.FRESH) getPingColor(latency) else MutedForeground
             Row(
                 horizontalArrangement = Arrangement.spacedBy(3.dp),
@@ -621,15 +623,16 @@ internal fun ServerLatencyReading(latency: Int?, status: ServerLatencyStatus) {
                 Text(
                     text = "${latency}ms",
                     style = MaterialTheme.typography.labelSmall,
-                    color = latencyColor
+                    color = latencyColor,
+                    maxLines = 1,
+                    softWrap = false
                 )
             }
         }
         when (status) {
-            ServerLatencyStatus.REFRESHING -> Text("Updating", style = MaterialTheme.typography.labelSmall, color = MutedForeground)
+            ServerLatencyStatus.REFRESHING, ServerLatencyStatus.FRESH -> Unit
             ServerLatencyStatus.STALE -> Text("Previous", style = MaterialTheme.typography.labelSmall, color = MutedForeground)
             ServerLatencyStatus.UNAVAILABLE -> Text("--", style = MaterialTheme.typography.labelSmall, color = MutedForeground)
-            ServerLatencyStatus.FRESH -> Unit
         }
     }
 }
