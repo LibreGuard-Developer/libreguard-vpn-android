@@ -38,6 +38,8 @@ import net.libreguard.vpn.network.VpnConfigRequest
 import net.libreguard.vpn.service.LibreGuardVpnService
 import net.libreguard.vpn.service.VpnNotificationManager
 import net.libreguard.vpn.service.vpn.ConnectionState
+import net.libreguard.vpn.service.vpn.VpnPermissionFailure
+import net.libreguard.vpn.util.CrashlyticsReporter
 import net.libreguard.vpn.service.vpn.OpenVpnHandler
 import net.libreguard.vpn.service.vpn.OwnVpnStatus
 import net.libreguard.vpn.service.vpn.StrongSwanHandler
@@ -69,6 +71,8 @@ import net.libreguard.vpn.network.DnsSettingsResponse
 import net.libreguard.vpn.network.UpdateDnsSettingsRequest
 import net.libreguard.vpn.util.VpnConfigManager
 import net.libreguard.vpn.util.TokenRefreshResult
+import net.libreguard.vpn.util.TokenValidationResult
+import net.libreguard.vpn.util.validationResult
 
 private val _connectionState = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected)
 val connectionState: StateFlow<ConnectionState> = _connectionState
@@ -181,7 +185,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             },
             onFailure = {
                 Log.w(TAG, "Server refresh failed", it)
-                if (_servers.value.isEmpty()) _errorMessage.value = "Network error loading servers"
+                showConnectionIssue("Couldn't refresh servers. Check your connection and allow network access for LibreGuard in Android settings.")
             },
             log = { Log.d(TAG, it) },
             onFetched = ::cacheServers
@@ -198,7 +202,8 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     private val latencyDisconnectsInProgress = AtomicInteger(0)
     private val connectivityManager by lazy { application.getSystemService(ConnectivityManager::class.java) }
     private var latencyNetwork: Network? = null
-    @Volatile private var nativeVpnNetworkPresent = false
+    private val nativeVpnNetworks = VpnNetworkTracker<Network>()
+    private val nativeVpnNetworkPresent get() = nativeVpnNetworks.isVpnPresent
     private var networkCallbacksRegistered = false
     private val latencyNetworkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
@@ -208,25 +213,23 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             viewModelScope.launch { if (latencyNetwork == network) updateLatencyNetwork(null) }
         }
         override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
-            if (capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) {
-                viewModelScope.launch { serverRefresh.cancelLatency("nativeVpnNetwork") }
-            }
+            viewModelScope.launch { updateVpnNetworkCapabilities(network, capabilities) }
         }
     }
     private val nativeVpnNetworkCallback = object : ConnectivityManager.NetworkCallback() {
-        override fun onAvailable(network: Network) {
-            nativeVpnNetworkPresent = true
-            viewModelScope.launch { serverRefresh.cancelLatency("nativeVpnNetwork") }
+        // Wait for capabilities: availability alone can leave stale state on custom ROMs.
+        override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
+            viewModelScope.launch { updateVpnNetworkCapabilities(network, capabilities) }
         }
         override fun onLost(network: Network) {
-            nativeVpnNetworkPresent = connectivityManager.allNetworks.any {
-                connectivityManager.getNetworkCapabilities(it)?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
-            }
+            viewModelScope.launch { nativeVpnNetworks.lost(network) }
         }
     }
 
     private val _errorMessage = MutableStateFlow<String?>(null)
     val errorMessage: StateFlow<String?> = _errorMessage
+    private val _connectionIssue = MutableStateFlow<ConnectionIssue?>(null)
+    val connectionIssue: StateFlow<ConnectionIssue?> = _connectionIssue
 
     private val _pendingKeyChainImport = MutableStateFlow<Intent?>(null)
     val pendingKeyChainImport: StateFlow<Intent?> = _pendingKeyChainImport
@@ -332,18 +335,30 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     private val _upgradeEvents = MutableSharedFlow<Map<String, String?>>(replay = 0)
     val upgradeEvents: SharedFlow<Map<String, String?>> = _upgradeEvents
 
-    /**
-     * Emitted when the app needs the user to approve VPN permissions (VpnService.prepare returned an Intent).
-     * UI layer must launch the Intent via Activity Result API.
-     */
-    private val _vpnPermissionRequests = kotlinx.coroutines.flow.MutableSharedFlow<Intent>(extraBufferCapacity = 1)
-    val vpnPermissionRequests: kotlinx.coroutines.flow.SharedFlow<Intent> = _vpnPermissionRequests
+    private data class VpnConnectRequest(
+        val server: RemoteVpnServer,
+        val protocol: VpnProtocol,
+        val automatic: Boolean
+    )
+    private val consentPrefs by lazy {
+        getApplication<Application>().getSharedPreferences("vpn_consent_prefs", Context.MODE_PRIVATE)
+    }
+    private val vpnConsentCoordinator by lazy {
+        VpnConsentCoordinator<VpnConnectRequest, Intent>(
+            prepare = { VpnService.prepare(getApplication<Application>().applicationContext) },
+            needsGuidance = { consentPrefs.getBoolean("needs_guidance", false) },
+            saveGuidance = { consentPrefs.edit().putBoolean("needs_guidance", it).apply() },
 
-    // When true, a connect attempt is waiting on VPN consent. We'll retry once consent is granted.
-    @Volatile
-    private var pendingConnectAfterVpnConsent: Boolean = false
+            onCheckFailure = { CrashlyticsReporter.recordHandledException(it, "VPN consent preparation failed") }
+        )
+    }
+    val vpnConsentState: StateFlow<VpnConsentUiState<Intent>> get() = vpnConsentCoordinator.state
+    private var activeConnectAutomatic = false
+    private var latencyResetsInProgress = 0
+    private var activeDisconnectJob: Job? = null
+    private var vpnCleanupJob: Job? = null
     private var activeConnectJob: Job? = null
-    private var activeConnectSessionId: Long = 0L
+    @Volatile private var activeConnectSessionId: Long = 0L
 
     private fun beginConnectSession(): Long {
         serverRefresh.cancelLatency("connectionStarted")
@@ -364,11 +379,11 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun isHandlerStateRelevant(sessionId: Long): Boolean {
-        return _isConnected.value || activeConnectSessionId == sessionId
+        return activeConnectSessionId == sessionId
     }
 
     private fun clearPendingConnectArtifacts() {
-        pendingConnectAfterVpnConsent = false
+        vpnConsentCoordinator.cancel()
         pendingProfile?.userCertificateAlias?.let { alias ->
             runCatching { configManager.cleanupInstallIntentData(alias) }
         }
@@ -435,7 +450,10 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         startLatencyNetworkMonitoring()
         viewModelScope.launch {
             combine(_isConnected, _isConnecting) { connected, connecting -> connected || connecting }
-                .collect { blocked -> if (blocked) serverRefresh.cancelLatency("vpnStateChanged") }
+                .collect { blocked ->
+                    if (blocked) serverRefresh.cancelLatency("vpnStateChanged")
+                    if (_isConnected.value) clearConnectionIssue()
+                }
         }
 
         // Fetch user's real IP on app startup (only if not connected)
@@ -697,6 +715,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                                         Log.w(TAG, "Failed to restore VPN profile in handler")
                                     }
                                 }
+                                observeActiveHandlerState(ignoreInitialDisconnected = true)
                             } else {
                                 Log.w(TAG, "Failed to initialize VPN handler for restored connection, but connection state restored")
                             }
@@ -906,6 +925,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
      * Logout user and clear all state
      */
     fun logout() {
+        val needsDisconnect = _isConnected.value || _isConnecting.value
+        cancelPendingConnectAttempt()
+        _isConnecting.value = false
         serverRefresh.invalidate(clearLatencies = true, reason = "logout")
         quickConnectJob?.cancel()
         _servers.value = emptyList()
@@ -921,7 +943,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             tokenValidationManager?.stopBackgroundTokenRefresh()
 
             // Disconnect VPN if connected
-            if (_isConnected.value) {
+            if (needsDisconnect) {
                 disconnect()
             }
 
@@ -1146,7 +1168,8 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun isLatencyBlocked(): Boolean =
-        nativeVpnNetworkPresent || _isConnected.value || _isConnecting.value || pendingConnectAfterVpnConsent ||
+        nativeVpnNetworkPresent || _isConnected.value || _isConnecting.value || vpnConsentState.value.awaitingConsent ||
+            latencyResetsInProgress > 0 ||
             latencyDisconnectsInProgress.get() > 0 ||
             activeVpnHandler?.connectionState?.value.let {
                 it is ConnectionState.Connected || it is ConnectionState.Connecting || it is ConnectionState.Disconnecting
@@ -1165,20 +1188,41 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun updateLatencyNetwork(network: Network?) {
+    private suspend fun updateLatencyNetwork(network: Network?) {
         if (latencyNetwork == network) return
         latencyNetwork = network
+        latencyResetsInProgress++
         serverRefresh.invalidate(reason = "networkChanged")
-        PingService.resetConnections()
         quickConnectJob?.cancel()
+        try {
+            PingService.resetConnections()
+        } finally {
+            latencyResetsInProgress--
+        }
+    }
+
+    private fun updateVpnNetworkCapabilities(network: Network, capabilities: NetworkCapabilities) {
+        val isVpn = capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+        nativeVpnNetworks.capabilitiesChanged(network, isVpn)
+        if (isVpn) serverRefresh.cancelLatency("nativeVpnNetwork")
+    }
+
+    private fun reconcileNativeVpnNetworks() {
+        try {
+            val wasPresent = nativeVpnNetworkPresent
+            nativeVpnNetworks.reconcile(connectivityManager.allNetworks.associateWith { network ->
+                connectivityManager.getNetworkCapabilities(network)?.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+            })
+            if (wasPresent && !nativeVpnNetworkPresent) Log.d(TAG, "Cleared stale VPN network state")
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not reconcile VPN networks", e)
+        }
     }
 
     private fun startLatencyNetworkMonitoring() {
         latencyNetwork = connectivityManager.activeNetwork
         try {
-            nativeVpnNetworkPresent = connectivityManager.allNetworks.any {
-                connectivityManager.getNetworkCapabilities(it)?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
-            }
+            reconcileNativeVpnNetworks()
             connectivityManager.registerDefaultNetworkCallback(latencyNetworkCallback)
             networkCallbacksRegistered = true
             connectivityManager.registerNetworkCallback(
@@ -1401,6 +1445,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun selectServer(server: RemoteVpnServer) {
+        if (_selectedServer.value?.id != server.id || _isQuickConnectMode.value) invalidateConnectionSelection()
         quickConnectJob?.cancel()
         _selectedServer.value = server
         _isQuickConnectMode.value = false // Switch to manual mode
@@ -1410,12 +1455,26 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
      * Clear manual server selection and return to Quick Connect mode
      */
     fun clearServerSelection() {
+        invalidateConnectionSelection()
+        quickConnectJob?.cancel()
         _selectedServer.value = null
         _isQuickConnectMode.value = true
     }
 
     fun selectProtocol(protocol: VpnProtocol) {
         saveDefaultProtocol(protocol)
+    }
+
+    private fun invalidateConnectionSelection() {
+        if (_isConnected.value) {
+            vpnConsentCoordinator.cancel()
+            return
+        }
+        if (_isConnecting.value && !_isConnected.value) {
+            disconnect()
+        } else {
+            cancelPendingConnectAttempt()
+        }
     }
 
     private fun getPendingUpgradeProtocolPrefsKey(): String {
@@ -1639,8 +1698,25 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
      * 3. Server load (25% weight, 50% if load > 70%)
      * 4. Pro server preference for Pro users (10% bonus)
      */
-    fun quickConnect() {
-        if (quickConnectJob?.isActive == true || isLatencyBlocked()) return
+    fun quickConnect(automatic: Boolean = false, retryConsent: Boolean = false) {
+        if (quickConnectJob?.isActive == true) return
+        clearConnectionIssue()
+        reconcileNativeVpnNetworks()
+        if (isLatencyBlocked()) {
+            Log.d(TAG, "Quick Connect blocked: nativeVpn=$nativeVpnNetworkPresent connected=${_isConnected.value} connecting=${_isConnecting.value} consent=${vpnConsentState.value.awaitingConsent} resets=$latencyResetsInProgress disconnects=${latencyDisconnectsInProgress.get()} handler=${activeVpnHandler?.connectionState?.value}")
+            if (!automatic && !_isConnected.value && !_isConnecting.value && !vpnConsentState.value.awaitingConsent) {
+                showConnectionIssue(
+                    if (nativeVpnNetworkPresent) {
+                        "Disconnect the other VPN before using Quick Connect, or select a server manually."
+                    } else {
+                        "The network is changing. Please try again in a moment."
+                    },
+                    if (nativeVpnNetworkPresent) ConnectionIssueSettings.VPN else ConnectionIssueSettings.NONE,
+                    title = if (nativeVpnNetworkPresent) "Another VPN is active" else null
+                )
+            }
+            return
+        }
         val accountId = currentUserId
         val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
             try {
@@ -1654,7 +1730,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 if (currentUserId != accountId || !canMeasureServerLatencies()) return@launch
                 val latencies = serverRefresh.freshLatencies()
                 if (latencies.isEmpty()) {
-                    _errorMessage.value = "Unable to measure server latencies. Please try manual selection."
+                    showConnectionIssue("Unable to reach latency servers. Check LibreGuard's network access or select a server manually.")
                     return@launch
                 }
                 val bestServer = ServerSelectionHelper.selectBestServer(
@@ -1663,13 +1739,13 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                     isPro = subscriptionViewModel.isPro.value
                 )
                 if (bestServer == null) {
-                    _errorMessage.value = "No suitable server found. All servers may be overloaded or unavailable."
+                    showConnectionIssue("No suitable server found. Please try selecting a server manually.", ConnectionIssueSettings.NONE)
                     return@launch
                 }
                 _selectedServer.value = bestServer
                 _isQuickConnectMode.value = true
                 _errorMessage.value = "Connecting to ${bestServer.serverName}..."
-                connectToVpn()
+                connectToVpn(automatic, retryConsent)
             } catch (e: CancellationException) {
                 throw e
             }
@@ -1678,16 +1754,13 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         job.start()
     }
 
-    fun connectToVpn() {
+    fun connectToVpn(automatic: Boolean = false, retryConsent: Boolean = false) {
+        if (vpnConsentState.value.awaitingConsent) return
         val backgroundSupport = net.libreguard.vpn.util.BackgroundConnectionSupport(getApplication<Application>())
         net.libreguard.vpn.util.BackgroundConnectionDiagnostics.record(
             backgroundSupport.sdkInt, _selectedProtocol.value.name, backgroundSupport.readStatus()
         )
         val server = _selectedServer.value
-
-        // IMPORTANT: Capture user's real IP BEFORE connecting to VPN
-        // This ensures "Your IP" displays the actual user IP, not the VPN server IP
-        fetchUserIP()
 
         // Avoid capturing authToken early; token may be refreshed.
         val initialToken = RetrofitClient.getTokenManager().getAccessToken()
@@ -1749,38 +1822,44 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
+        val request = VpnConnectRequest(server, _selectedProtocol.value, automatic)
+        val authorized = vpnConsentCoordinator.request(request, automatic, retryConsent)
+        if (authorized == null) {
+            serverRefresh.cancelLatency("vpnConsent")
+            _isConnecting.value = false
+            return
+        }
+        startAuthorizedConnection(authorized)
+    }
+
+    private fun startAuthorizedConnection(request: VpnConnectRequest) {
+        clearConnectionIssue()
+        val server = request.server
+        val selected = request.protocol
         val connectSessionId = beginConnectSession()
+        activeConnectAutomatic = request.automatic
         _isConnecting.value = true
         _errorMessage.value = null
 
-        // Before any network/config/handler work, ensure VPN permission is granted.
-        // If not granted, request UI to launch the consent Intent.
-        try {
-            val context = getApplication<Application>().applicationContext
-            val vpnIntent = android.net.VpnService.prepare(context)
-            if (vpnIntent != null) {
-                pendingConnectAfterVpnConsent = true
-                _isConnecting.value = false
-                _errorMessage.value = "VPN permission required"
-                _vpnPermissionRequests.tryEmit(vpnIntent)
-                return
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "VpnService.prepare failed")
-            // Continue; handler/connect will surface errors if permission truly missing.
-        }
-
         var connectJob: Job? = null
-        connectJob = viewModelScope.launch {
+        connectJob = viewModelScope.launch(start = CoroutineStart.LAZY) {
             try {
+                activeDisconnectJob?.join()
+                vpnCleanupJob?.join()
                 ensureConnectSessionActive(connectSessionId)
+                fetchUserIP()
                 val tokenManager = RetrofitClient.getTokenManager()
                 Log.d(TAG, "Checking token refresh before connection")
-                val refreshSuccess = tokenManager.refreshTokenIfNeeded(RetrofitClient.authApiService)
+                val refreshResult = tokenManager.refreshTokenWithResult(RetrofitClient.authApiService).validationResult()
                 ensureConnectSessionActive(connectSessionId)
 
-                if (!refreshSuccess) {
-                    Log.w(TAG, "Token refresh failed - session expired")
+                if (refreshResult == TokenValidationResult.UNAVAILABLE) {
+                    showConnectionIssue("Couldn't reach LibreGuard. Check your connection and allow network access for the app in Android settings.")
+                    _isConnecting.value = false
+                    return@launch
+                }
+                if (refreshResult == TokenValidationResult.REVOKED) {
+                    Log.w(TAG, "Session refresh rejected - login required")
                     _errorMessage.value = "Your session has expired. Please login again."
                     _isConnecting.value = false
 
@@ -1833,10 +1912,14 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 val manager = tokenValidationManager
                 if (manager != null) {
                     Log.d(TAG, "Validating token before VPN connection")
-                    val tokenValid = manager.validateTokenBeforeAction()
+                    val validation = manager.validateTokenBeforeConnection()
                     ensureConnectSessionActive(connectSessionId)
-                    if (!tokenValid) {
-                        _errorMessage.value = "Token invalid or revoked. Please login again."
+                    if (validation != TokenValidationResult.VALID) {
+                        if (validation == TokenValidationResult.REVOKED) {
+                            _errorMessage.value = "Your session has expired. Please login again."
+                        } else {
+                            showConnectionIssue("Couldn't reach LibreGuard. Check your connection and allow network access for the app in Android settings.")
+                        }
                         _isConnecting.value = false
                         return@launch
                     }
@@ -1873,11 +1956,10 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                     Log.w(TAG, "WARNING: Refresh token missing! session may expire prematurely.")
                 }
 
-                val selected = _selectedProtocol.value
                 val remoteServer = server
                 if (selected == VpnProtocol.OPENVPN) {
                     // Use download endpoint and cached config
-                    val ok = connectOpenVpnViaDownload(remoteServer.id)
+                    val ok = connectOpenVpnViaDownload(remoteServer.id, connectSessionId)
                     if (!ok && isConnectSessionActive(connectSessionId)) {
                         _errorMessage.value = "Failed to connect using OpenVPN"
                     }
@@ -1952,9 +2034,14 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 }
             } catch (e: CancellationException) {
                 Log.d(TAG, "Connection attempt cancelled")
+                throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Error connecting to VPN", e)
-                _errorMessage.value = "Connection error"
+                if (e is java.io.IOException) {
+                    showConnectionIssue("Couldn't reach LibreGuard. Check your connection and allow network access for the app in Android settings.")
+                } else {
+                    showConnectionIssue("Connection failed. Please try again or choose another server.", ConnectionIssueSettings.NONE)
+                }
                 _isConnecting.value = false
             } finally {
                 if (activeConnectJob === connectJob) {
@@ -1966,6 +2053,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         activeConnectJob = connectJob
+        connectJob.start()
     }
 
     private fun extractApiMessage(response: retrofit2.Response<*>): String? {
@@ -2658,6 +2746,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                                 }
                             }
                             is ConnectionState.Disconnected -> {
+                                if (_isConnecting.value && !_isConnected.value) return@collect
                                 _isConnected.value = false
                                 _isConnecting.value = false
                                 if (_errorMessage.value?.contains("Connected") == true || _errorMessage.value?.contains("Connecting") == true) {
@@ -2677,10 +2766,14 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                                 _errorMessage.value = "Disconnecting..."
                             }
                             is ConnectionState.Error -> {
+                                if (state.permissionFailure != null) {
+                                    handleVpnPermissionFailure(state)
+                                    return@collect
+                                }
                                 val wasConnected = _isConnected.value
                                 _isConnected.value = false
                                 _isConnecting.value = false
-                                _errorMessage.value = state.message
+                                showConnectionIssue(state.message, ConnectionIssueSettings.NONE)
                                 Log.e(TAG, "Connection error via StateFlow: ${state.message}")
 
                                 // Show notification for data limit exceeded
@@ -2729,6 +2822,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         val initiatedSuccessfully = withContext(Dispatchers.IO) {
             handler?.connect(context, profile) ?: false
         }
+        ensureConnectSessionActive(connectSessionId)
+        (handler?.connectionState?.value as? ConnectionState.Error)?.takeIf { it.permissionFailure != null }
+            ?.let { handleVpnPermissionFailure(it) }
         
         Log.d(TAG, "Connection initiation returned: $initiatedSuccessfully")
         
@@ -2780,10 +2876,11 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private suspend fun connectOpenVpnViaDownload(serverId: Int): Boolean {
+    private suspend fun connectOpenVpnViaDownload(serverId: Int, connectSessionId: Long): Boolean {
         return withContext(Dispatchers.IO) {
             val context = getApplication<Application>().applicationContext
             try {
+                ensureConnectSessionActive(connectSessionId)
                 val tokenManager = RetrofitClient.getTokenManager()
                 val token = tokenManager.getAccessToken() ?: return@withContext false
                 val cacheDir = getUserScopedDir(context, VpnProtocol.OPENVPN)
@@ -2805,10 +2902,12 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
                         // Validate config structure before attempting connection
                         if (validateOpenVpnConfig(configContent)) {
+                            ensureConnectSessionActive(connectSessionId)
                             val ok = (activeVpnHandler as? OpenVpnHandler)?.connect(context, cacheFile.absolutePath) == true
+                            ensureConnectSessionActive(connectSessionId)
+                            if ((activeVpnHandler?.connectionState?.value as? ConnectionState.Error)?.permissionFailure != null) return@withContext false
                             if (ok) {
-                                onOpenVpnConnected()
-                                return@withContext true
+                                return@withContext onOpenVpnConnected(connectSessionId)
                             } else {
                                 Log.w(TAG, "Cached OpenVPN config failed connection attempt. Will re-download and retry")
                             }
@@ -2863,14 +2962,17 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 Log.d(TAG, "Saved OpenVPN config to ${cacheFile.absolutePath}")
 
                 // Connect with fresh config
+                ensureConnectSessionActive(connectSessionId)
                 val ok = (activeVpnHandler as? OpenVpnHandler)?.connect(context, cacheFile.absolutePath) == true
+                ensureConnectSessionActive(connectSessionId)
                 if (ok) {
-                    onOpenVpnConnected()
-                    true
+                    onOpenVpnConnected(connectSessionId)
                 } else {
                     Log.e(TAG, "Failed to connect with freshly downloaded OpenVPN config")
                     false
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.e(TAG, "OpenVPN download/connect error", e)
                 false
@@ -2878,7 +2980,14 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun onOpenVpnConnected() {
+    private suspend fun onOpenVpnConnected(connectSessionId: Long): Boolean = withContext(Dispatchers.Main.immediate) {
+        ensureConnectSessionActive(connectSessionId)
+        val permissionError = (activeVpnHandler?.connectionState?.value as? ConnectionState.Error)
+            ?.takeIf { it.permissionFailure != null }
+        if (permissionError != null) {
+            handleVpnPermissionFailure(permissionError)
+            return@withContext false
+        }
         _isConnected.value = true
         _isConnecting.value = false
         _errorMessage.value = "Connected using OpenVPN"
@@ -2893,6 +3002,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
         // Notify Kill Switch that VPN connected
         notifyKillSwitchConnected()
+        true
     }
 
     /**
@@ -3083,13 +3193,17 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // Observe active handler state (especially for OpenVPN) and reflect in UI
-    private fun observeActiveHandlerState() {
+    private fun observeActiveHandlerState(ignoreInitialDisconnected: Boolean = false) {
         openVpnStateJob?.cancel()
         val handler = activeVpnHandler ?: return
         val connectSessionId = activeConnectSessionId
         openVpnStateJob = viewModelScope.launch {
+            var initialState = true
             try {
                 handler.connectionState.collect { st ->
+                    val skipRestoredSnapshot = initialState && ignoreInitialDisconnected && st is ConnectionState.Disconnected
+                    initialState = false
+                    if (skipRestoredSnapshot) return@collect
                     if (!isHandlerStateRelevant(connectSessionId)) {
                         Log.d(TAG, "Ignoring stale handler state after connection cancel: $st")
                         return@collect
@@ -3135,7 +3249,11 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                             _isConnected.value = false
                         }
                         is ConnectionState.Error -> {
-                            _errorMessage.value = st.message
+                            if (st.permissionFailure != null) {
+                                handleVpnPermissionFailure(st)
+                                return@collect
+                            }
+                            showConnectionIssue(st.message, ConnectionIssueSettings.NONE)
                             val wasConnected = _isConnected.value
 
                             // Show notification for data limit exceeded
@@ -3242,10 +3360,11 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun disconnect() {
+        cancelPendingConnectAttempt()
         latencyDisconnectsInProgress.incrementAndGet()
         serverRefresh.cancelLatency("disconnectionStarted")
         quickConnectJob?.cancel()
-        viewModelScope.launch {
+        activeDisconnectJob = viewModelScope.launch {
             var disconnectSessionId = activeConnectSessionId
             var vpnStillActiveAfterDisconnect = false
             try {
@@ -3359,18 +3478,6 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                         Log.w(TAG, "Failed to send disconnect intents to StrongSwan: ${e.message}")
                     }
 
-                    // Method 2: Try to revoke VPN connection via VpnService
-                    try {
-                        // This will revoke the VPN connection if our app established it
-                        val vpnIntent = VpnService.prepare(context)
-                        if (vpnIntent == null) {
-                            // VPN is prepared, we can try to disconnect by revoking
-                            Log.d(TAG, "VPN service is prepared, attempting to revoke connection")
-                        }
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Failed to revoke VPN connection: ${e.message}")
-                    }
-
                     // Method 3: Clear VPN state files to force cleanup
                     try {
                         val charonLog = File(context.filesDir, "charon.log")
@@ -3439,19 +3546,62 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private fun showConnectionIssue(
+        message: String,
+        settings: ConnectionIssueSettings = ConnectionIssueSettings.APP,
+        title: String? = null
+    ) {
+        _errorMessage.value = message
+        _connectionIssue.value = ConnectionIssue(message, settings, title)
+    }
+
+    fun onSessionValidationUnavailable() {
+        showConnectionIssue("Couldn't refresh your sign-in. Check LibreGuard's network access and tap Connect to try again.")
+    }
+
+    fun clearConnectionIssue() {
+        _connectionIssue.value = null
+    }
+
     fun clearError() {
         _errorMessage.value = null
+        clearConnectionIssue()
     }
 
     fun refreshServers() {
         if (!RetrofitClient.getTokenManager().getAccessToken().isNullOrBlank()) {
+            clearConnectionIssue()
+            reconcileNativeVpnNetworks()
+            if (nativeVpnNetworkPresent && !_isConnected.value && !_isConnecting.value && !vpnConsentState.value.awaitingConsent) {
+                showConnectionIssue("Disconnect the other VPN to measure server latency.", ConnectionIssueSettings.VPN,
+                    title = "Another VPN is active")
+            }
             serverRefresh.refresh(trigger = "manual")
         }
     }
 
-    // Check if VPN permission is granted
-    suspend fun prepareVpn(context: Context): Intent? = withContext(Dispatchers.IO) {
-        VpnService.prepare(context)
+    /** App resume is a passive check; consent preparation only belongs to connection attempts. */
+    fun onAppResumed() {
+        reconcileNativeVpnNetworks()
+        if (!_isConnected.value) return
+        val sessionId = activeConnectSessionId
+        viewModelScope.launch {
+            val connected = checkVpnStatusImproved()
+            if (!isConnectSessionActive(sessionId) || !_isConnected.value) return@launch
+            val permissionError = (activeVpnHandler?.connectionState?.value as? ConnectionState.Error)
+                ?.takeIf { it.permissionFailure != null }
+            if (permissionError != null) {
+                handleVpnPermissionFailure(permissionError)
+            } else if (!connected) {
+                _isConnected.value = false
+                _isConnecting.value = false
+                _connectionState.value = ConnectionState.Disconnected
+                stopConnectionTracking()
+                dataUsageManager.stopMonitoring()
+                clearPersistedState()
+                notifyKillSwitchDisconnected(isManual = false)
+            }
+        }
     }
 
     // Verify our VPN without preparing it or taking over another app's tunnel.
@@ -3466,21 +3616,6 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /**
-     * Request VPN permission and handle the result
-     */
-    fun requestVpnPermission(context: Context, onResult: (Intent?) -> Unit) {
-        viewModelScope.launch {
-            try {
-                val vpnIntent = prepareVpn(context)
-                onResult(vpnIntent)
-            } catch (e: Exception) {
-                Log.e(TAG, "Error preparing VPN", e)
-                _errorMessage.value = "Failed to prepare VPN: ${e.localizedMessage}"
-                onResult(null)
-            }
-        }
-    }
 
     /**
      * Get connection logs from the active VPN handler
@@ -3778,14 +3913,23 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         // This prevents auto-connecting with an expired/revoked token
         try {
             tokenValidationManager?.let { manager ->
-                val tokenValid = manager.validateTokenBeforeAction()
-                if (!tokenValid) {
-                    Log.w(TAG, "Auto-Connect: Token validation failed, cannot connect")
+                val validation = manager.validateTokenBeforeConnection()
+                if (validation != TokenValidationResult.VALID) {
+                    Log.w(TAG, "Auto-Connect paused: token validation=$validation")
+                    if (validation == TokenValidationResult.REVOKED) {
+                        _errorMessage.value = "Your session has expired. Please login again."
+                    } else {
+                        showConnectionIssue("Auto-connect paused. Couldn't reach LibreGuard; check the app's network access and try Connect.")
+                    }
                     return false
                 }
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
-            Log.w(TAG, "Auto-Connect: Token validation error: ${e.message}, proceeding anyway")
+            Log.w(TAG, "Auto-Connect: Token validation unavailable", e)
+            showConnectionIssue("Auto-connect paused. Check your connection and try Connect.")
+            return false
         }
 
         // Mark as attempted for this session
@@ -3796,17 +3940,17 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
         if (_isQuickConnectMode.value) {
             // Use Quick Connect algorithm
-            quickConnect()
+            quickConnect(automatic = true)
         } else {
             // Use last manually selected server
             val lastServer = _selectedServer.value
             if (lastServer != null) {
                 Log.d(TAG, "Auto-Connect: Using last server: ${lastServer.serverName}")
-                connectToVpn()
+                connectToVpn(automatic = true)
             } else {
                 // Fallback to Quick Connect if no manual server
                 Log.d(TAG, "Auto-Connect: No manual server selected, using Quick Connect")
-                quickConnect()
+                quickConnect(automatic = true)
             }
         }
 
@@ -3943,6 +4087,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
      * Called when user selects a protocol in Settings
      */
     fun saveDefaultProtocol(protocol: VpnProtocol) {
+        if (_selectedProtocol.value != protocol) invalidateConnectionSelection()
         _selectedProtocol.value = protocol
 
         // Use user-scoped key if user ID is available
@@ -3958,23 +4103,72 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         Log.d(TAG, "Default Protocol preference set to: ${protocol.displayName} (user: ${currentUserId ?: "global"})")
     }
 
-    /**
-     * Called by UI after the VPN consent activity returns.
-     * resultOk=true means the user granted permission.
-     */
-    fun onVpnPermissionResult(resultOk: Boolean) {
-        if (!resultOk) {
-            pendingConnectAfterVpnConsent = false
-            _isConnecting.value = false
-            _errorMessage.value = "VPN permission denied"
-            return
-        }
+    fun claimVpnConsentRequest(attemptId: String): Intent? = vpnConsentCoordinator.claimLaunch(attemptId)
 
-        // User granted permission; retry pending connect if needed.
-        if (pendingConnectAfterVpnConsent) {
-            pendingConnectAfterVpnConsent = false
-            // Kick off the normal connect flow again.
-            connectToVpn()
+    fun onVpnPermissionResult(attemptId: String?, resultOk: Boolean) {
+        vpnConsentCoordinator.result(attemptId, resultOk)?.let(::startAuthorizedConnection)
+    }
+
+    fun onVpnConsentLaunchFailed(attemptId: String?) {
+        vpnConsentCoordinator.launchFailed(attemptId)
+    }
+
+    fun retryVpnConsent() {
+        if (vpnConsentCoordinator.hasPendingRequest) {
+            vpnConsentCoordinator.retry()?.let(::startAuthorizedConnection)
+        } else if (_isQuickConnectMode.value) {
+            quickConnect(retryConsent = true)
+        } else {
+            connectToVpn(retryConsent = true)
+        }
+    }
+
+    fun dismissVpnConsentRecovery() {
+        quickConnectJob?.cancel()
+        vpnConsentCoordinator.dismissRecovery()
+    }
+
+    fun cancelVpnConsentRequest() {
+        cancelPendingConnectAttempt()
+        _isConnecting.value = false
+    }
+
+    private fun handleVpnPermissionFailure(error: ConnectionState.Error) {
+        val failure = error.permissionFailure ?: return
+        val wasConnected = _isConnected.value
+        val showDialog = _isConnecting.value && !activeConnectAutomatic && failure != VpnPermissionFailure.CONSENT_REVOKED
+        val handler = activeVpnHandler
+        cancelPendingConnectAttempt()
+        vpnConsentCoordinator.reportFailure(failure, showDialog)
+        _isConnecting.value = false
+        _isConnected.value = false
+        _connectionState.value = error
+        _errorMessage.value = error.message
+        stopConnectionTracking()
+        dataUsageManager.stopMonitoring()
+        clearPersistedState()
+        if (wasConnected) notifyKillSwitchDisconnected(isManual = false)
+        stateObserverJob?.cancel()
+        openVpnStateJob?.cancel()
+        val previousCleanup = vpnCleanupJob
+        vpnCleanupJob = viewModelScope.launch {
+            try {
+                previousCleanup?.join()
+                try {
+                    if (handler?.disconnect(getApplication<Application>().applicationContext) == false) {
+                        CrashlyticsReporter.log("VPN permission cleanup returned failure")
+                    }
+                } finally {
+                    when (handler) {
+                        is StrongSwanHandler -> handler.cleanup()
+                        is OpenVpnHandler -> handler.cleanup()
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                CrashlyticsReporter.recordHandledException(e, "VPN permission cleanup failed")
+            }
         }
     }
 

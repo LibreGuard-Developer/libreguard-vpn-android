@@ -94,6 +94,20 @@ class ServerRefreshCoordinatorTest {
         assertEquals(1, probes)
     }
 
+    @Test fun nextRefreshRecoversWhenVpnLostCallbackWasMissed() = runTest {
+        val tracker = VpnNetworkTracker<Int>()
+        tracker.capabilitiesChanged(99, true)
+        var probes = 0
+        val coordinator = coordinator(this, blocked = { tracker.isVpnPresent },
+            probe = { servers, result -> probes++; servers.forEach { result(it, 25) } })
+        coordinator.refresh().await()
+        assertEquals(0, probes)
+        tracker.reconcile(mapOf(106 to false))
+        coordinator.refresh(fetchMetadata = false, trigger = "manual").await()
+        assertEquals(1, probes)
+        assertEquals(mapOf(1 to 25, 2 to 25), coordinator.freshLatencies())
+    }
+
     @Test fun lateResultsAfterConnectionAreDiscarded() = runTest {
         var pass = 0
         var blocked = false

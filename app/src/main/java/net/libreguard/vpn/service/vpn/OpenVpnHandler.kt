@@ -8,7 +8,6 @@ import android.content.ServiceConnection
 import android.os.IBinder
 import android.os.ParcelFileDescriptor
 import android.util.Log
-import de.blinkt.openvpn.LaunchVPN
 import de.blinkt.openvpn.VpnProfile
 import de.blinkt.openvpn.core.ConfigParser
 import de.blinkt.openvpn.core.IOpenVPNServiceInternal
@@ -52,6 +51,7 @@ class OpenVpnHandler(
 
     private val tag = "OpenVpnHandler"
 
+    @Volatile private var permissionError: ConnectionState.Error? = null
     private val _state = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected)
     override val connectionState: StateFlow<ConnectionState> = _state
 
@@ -88,6 +88,7 @@ class OpenVpnHandler(
     }
 
     // Cross-process status binding (OpenVPNStatusService)
+    private val statusReady = kotlinx.coroutines.CompletableDeferred<Unit>()
     @Volatile private var statusService: IServiceStatus? = null
     private var statusServiceBound = false
     private val statusLogs = CopyOnWriteArrayList<String>()
@@ -117,6 +118,7 @@ class OpenVpnHandler(
                 val pfd: ParcelFileDescriptor? = statusService?.registerStatusCallback(statusCallbacks)
                 try { pfd?.close() } catch (_: Throwable) {}
             } catch (t: Throwable) { Log.w(tag, "registerStatusCallback failed: ${t.message}") }
+            finally { statusReady.complete(Unit) }
         }
         override fun onServiceDisconnected(name: ComponentName?) {
             try { statusService?.unregisterStatusCallback(statusCallbacks) } catch (_: Throwable) {}
@@ -156,8 +158,12 @@ class OpenVpnHandler(
                 // Keep local process listener for completeness, but AIDL will deliver real updates
                 VpnStatus.addStateListener(vpnStatusListener)
             }
+            // Consume the cached status before a new attempt can accept native events.
+            if (kotlinx.coroutines.withTimeoutOrNull(4_000L) { statusReady.await(); true } != true) return@withContext false
             startWatchdog()
             true
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (t: Throwable) {
             Log.e(tag, "Failed to initialize OpenVPN handler", t)
             false
@@ -165,6 +171,7 @@ class OpenVpnHandler(
     }
 
     override suspend fun connect(context: Context, configPath: String): Boolean = withContext(Dispatchers.IO) {
+        permissionError = null
         try {
             ensureOpenVpnNotificationChannels(context)
             bindStatusService(context)
@@ -215,25 +222,22 @@ class OpenVpnHandler(
             connectStartAt = System.currentTimeMillis()
             connectingActive = true
 
-            // Start VPN: if permission already granted, start service directly; else use LaunchVPN to prompt
-            val needsPermission = android.net.VpnService.prepare(context) != null
-            if (needsPermission) {
-                val launch = Intent(context, LaunchVPN::class.java).apply {
-                    putExtra(LaunchVPN.EXTRA_KEY, profile.getUUIDString())
-                    putExtra(OpenVPNService.EXTRA_START_REASON, "VPN start")
-                    putExtra(LaunchVPN.EXTRA_HIDELOG, true)
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    action = Intent.ACTION_MAIN
-                }
-                context.startActivity(launch)
-            } else {
-                VPNLaunchHelper.startOpenVpn(profile, context.applicationContext, "VPN start", true)
+            checkVpnPermissionForStart(context)?.let { error ->
+                permissionError = error
+                connectingActive = false
+                connectingSinceMs = 0L
+                watchdogJob?.cancel()
+                _state.value = error
+                return@withContext false
             }
+            VPNLaunchHelper.startOpenVpn(profile, context.applicationContext, "VPN start", true)
 
             // Wait until connected (or error) to report success
             val success = waitUntilConnectedOrFail()
             if (!success) Log.w(tag, "OpenVPN did not reach CONNECTED state in time")
             success
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (t: Throwable) {
             Log.e(tag, "Failed to start OpenVPN", t)
             connectingActive = false
@@ -262,6 +266,8 @@ class OpenVpnHandler(
             }
             _state.value = ConnectionState.Disconnected
             true
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (t: Throwable) {
             Log.e(tag, "Failed to stop OpenVPN", t)
             _state.value = ConnectionState.Error("OpenVPN disconnect failed: ${t.localizedMessage}")
@@ -274,6 +280,15 @@ class OpenVpnHandler(
             }
             // Do not unbind here; keep callbacks active across reconnects
         }
+    }
+
+    fun cleanup() {
+        watchdogJob?.cancel()
+        scope.coroutineContext[Job]?.cancel()
+        if (listenerRegistered.compareAndSet(true, false)) {
+            VpnStatus.removeStateListener(vpnStatusListener)
+        }
+        unbindStatusService(appContext)
     }
 
     override suspend fun getConnectionLogs(context: Context): String? = withContext(Dispatchers.IO) {
@@ -438,6 +453,23 @@ class OpenVpnHandler(
     }
 
     private fun handleStateUpdate(stateRaw: String, logmessage: String, level: IcsConnectionStatus) {
+        val failure = openVpnPermissionFailure(stateRaw)
+        if (failure != null) {
+            if (!connectingActive && !hadConnected) return
+            val error = ConnectionState.Error(
+                if (failure == VpnPermissionFailure.CHECK_FAILED) "VPN access could not be checked" else "VPN permission needed",
+                failure
+            )
+            permissionError = error
+            connectingActive = false
+            connectingSinceMs = 0L
+            reconnectStartAt = 0L
+            connectRetryCount.set(0)
+            watchdogJob?.cancel()
+            _state.value = error
+            return
+        }
+        if (permissionError != null) return
         val now = System.currentTimeMillis()
         lastStatusUpdateAt = now
         lastLibLevel = level
@@ -536,19 +568,24 @@ class OpenVpnHandler(
                     initialCheck is ConnectionState.Connected
                 }
             }
-        } catch (_: Throwable) {
-            // Fallback polling on ASSIGN_IP/ADD_ROUTES or tun up within the same timeout
+        } catch (_: kotlinx.coroutines.TimeoutCancellationException) {
+            // The startup timeout may race the native ASSIGN_IP/ADD_ROUTES callback.
             try {
                 withContext(Dispatchers.Default) {
                     val start = System.currentTimeMillis()
                     while (System.currentTimeMillis() - start < timeoutMs) {
+                        if (permissionError != null) return@withContext false
                         val st = lastStateName
                         if (st == "ASSIGN_IP" || st == "ADD_ROUTES" || isTunUp()) return@withContext true
                         kotlinx.coroutines.delay(300)
                     }
                     false
                 }
-            } catch (_: Throwable) { false }
-        }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (_: Exception) { false }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (_: Exception) { false }
     }
 }

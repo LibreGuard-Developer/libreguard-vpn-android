@@ -30,11 +30,11 @@ class ServerLatencyRefreshUiTest {
         }
     }
 
-    @Test fun previousReadingStaysVisibleWhileUpdatingThenBecomesFresh() {
+    @Test fun updatingHidesThePreviousReadingUntilItBecomesFresh() {
         val status = mutableStateOf(ServerLatencyStatus.REFRESHING)
         val latency = mutableStateOf<Int?>(80)
         compose.setContent { MaterialTheme { ServerLatencyReading(latency.value, status.value) } }
-        compose.onNodeWithText("80ms").assertExists()
+        compose.onNodeWithText("80ms").assertDoesNotExist()
         compose.onNodeWithText("Updating").assertExists()
         compose.runOnIdle { latency.value = 35; status.value = ServerLatencyStatus.FRESH }
         compose.onNodeWithText("35ms").assertExists()

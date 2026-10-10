@@ -5,6 +5,9 @@ import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.StateFlow
 import org.json.JSONObject
 
@@ -16,7 +19,7 @@ sealed class TokenRefreshResult {
     data class ExceptionFailure(val throwable: Throwable) : TokenRefreshResult()
 }
 
-class TokenManager(context: Context) {
+class TokenManager(context: Context) : AccountSessionSource {
     private val appContext = context.applicationContext
     private val sharedPreferences: SharedPreferences
     private val _deviceMetadataFlow = MutableStateFlow(Pair(0, 0))
@@ -41,7 +44,49 @@ class TokenManager(context: Context) {
         ensureDeviceIdPersisted()
     }
 
-    fun saveTokens(accessToken: String, refreshToken: String) {
+    fun beginSession(accessToken: String, refreshToken: String, accountId: String? = null) = sessionGate.locked {
+        val subject = requireNotNull(tokenSubject(accessToken)) { "Missing account identity" }
+        require(accountId == null || accountId == subject)
+        sessionGate.begin(subject)
+        saveTokens(accessToken, refreshToken)
+    }
+
+    override fun sessionSnapshot(): AccountSessionSnapshot? = sessionGate.locked {
+        val accessToken = sharedPreferences.getString(KEY_ACCESS_TOKEN, null) ?: return@locked null
+        val accountId = tokenSubject(accessToken) ?: return@locked null
+        AccountSessionSnapshot(sessionGate.restore(accountId), accessToken)
+    }
+
+    override fun isSessionCurrent(context: AccountSessionContext): Boolean = sessionGate.locked {
+        sessionGate.isCurrent(context) &&
+            tokenSubject(sharedPreferences.getString(KEY_ACCESS_TOKEN, null)) == context.accountId
+    }
+
+    fun commitRefresh(
+        context: AccountSessionContext,
+        accessToken: String,
+        refreshToken: String,
+        metadata: () -> Unit = {}
+    ): Boolean = sessionGate.withCurrent(context) {
+        if (tokenSubject(accessToken) != context.accountId) false else {
+            saveTokens(accessToken, refreshToken)
+            metadata()
+            true
+        }
+    } == true
+
+    fun currentRefreshToken(context: AccountSessionContext): String? = sessionGate.withCurrent(context) {
+        sharedPreferences.getString(KEY_REFRESH_TOKEN, null)
+    }
+
+    private fun tokenSubject(token: String?): String? = runCatching {
+        val parts = requireNotNull(token).split('.')
+        require(parts.size == 3)
+        val payload = android.util.Base64.decode(parts[1], android.util.Base64.URL_SAFE or android.util.Base64.NO_WRAP)
+        JSONObject(String(payload, Charsets.UTF_8)).optString("sub").takeIf { it.isNotBlank() }
+    }.getOrNull()
+
+    private fun saveTokens(accessToken: String, refreshToken: String) {
         sharedPreferences.edit()
             .putString(KEY_ACCESS_TOKEN, accessToken)
             .putString(KEY_REFRESH_TOKEN, refreshToken)
@@ -219,7 +264,17 @@ class TokenManager(context: Context) {
         }
     }
 
-    fun clearTokens() {
+    fun clearSessionIfCurrent(context: AccountSessionContext, metadata: () -> Unit = {}): Boolean =
+        sessionGate.withCurrent(context) {
+            if (tokenSubject(sharedPreferences.getString(KEY_ACCESS_TOKEN, null)) != context.accountId) false else {
+                clearTokens()
+                metadata()
+                true
+            }
+        } == true
+
+    fun clearTokens() = sessionGate.locked {
+        sessionGate.clear()
         sharedPreferences.edit()
             .remove(KEY_ACCESS_TOKEN)
             .remove(KEY_REFRESH_TOKEN)
@@ -351,6 +406,8 @@ class TokenManager(context: Context) {
         forceRefresh: Boolean = false
     ): TokenRefreshResult = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
         try {
+            val expectedSession = sessionSnapshot()?.context
+                ?: return@withContext TokenRefreshResult.Failure(401, message = "Missing account session")
             val needsRefresh = forceRefresh || isTokenExpired() || isTokenExpiringWithin(300)
 
             if (!needsRefresh) {
@@ -364,7 +421,7 @@ class TokenManager(context: Context) {
                 "Token expired or expiring soon, attempting refresh"
             })
 
-            val refreshToken = getRefreshToken()
+            val refreshToken = currentRefreshToken(expectedSession)
             if (refreshToken.isNullOrBlank()) {
                 android.util.Log.w("TokenManager", "No refresh token available for refresh")
                 return@withContext TokenRefreshResult.Failure(statusCode = 401, message = "Missing refresh token")
@@ -380,17 +437,20 @@ class TokenManager(context: Context) {
             val refreshRequest = buildRefreshRequest(refreshToken, deviceId, appVersion)
 
             val response = authApiService.refreshToken(refreshRequest).execute()
+            currentCoroutineContext().ensureActive()
 
             if (response.isSuccessful) {
                 val authResponse = response.body()
                 if (authResponse?.token != null && authResponse.refreshToken != null) {
-                    saveTokens(authResponse.token, authResponse.refreshToken)
-                    saveDeviceId(authResponse.deviceId ?: deviceId)
-                    saveCurrentDeviceKeyId()
-
-                    if (authResponse.activeDevices != null && authResponse.maxDevices != null) {
-                        saveDeviceMetadata(authResponse.activeDevices, authResponse.maxDevices)
+                    val accepted = commitRefresh(expectedSession, authResponse.token, authResponse.refreshToken) {
+                        saveDeviceId(authResponse.deviceId ?: deviceId)
+                        saveCurrentDeviceKeyId()
+                        if (authResponse.activeDevices != null && authResponse.maxDevices != null)
+                            saveDeviceMetadata(authResponse.activeDevices, authResponse.maxDevices)
                     }
+                    if (!accepted) return@withContext TokenRefreshResult.Failure(
+                        409, "SESSION_CHANGED", "The account session changed."
+                    )
 
                     android.util.Log.d("TokenManager", "Token refreshed successfully")
                     return@withContext TokenRefreshResult.Success(authResponse.token)
@@ -409,6 +469,8 @@ class TokenManager(context: Context) {
             val failure = parseRefreshFailure(response)
             android.util.Log.w("TokenManager", "Token refresh failed: code=${failure.statusCode}, errorCode=${failure.errorCode}, message=${failure.message}")
             return@withContext failure
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             android.util.Log.e("TokenManager", "Error during token refresh", e)
             return@withContext TokenRefreshResult.ExceptionFailure(e)
@@ -428,6 +490,7 @@ class TokenManager(context: Context) {
     }
 
     companion object {
+        private val sessionGate = AccountSessionGate()
         private const val KEY_ACCESS_TOKEN = "access_token"
         private const val KEY_REFRESH_TOKEN = "refresh_token"
         private const val KEY_LAST_TOKEN_CHECK = "last_token_check"

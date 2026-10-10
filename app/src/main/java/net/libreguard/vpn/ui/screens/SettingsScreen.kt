@@ -44,6 +44,8 @@ import net.libreguard.vpn.ui.theme.*
 import net.libreguard.vpn.util.CrashlyticsReporter
 import net.libreguard.vpn.viewmodel.SubscriptionViewModel
 import net.libreguard.vpn.viewmodel.DnsPreferenceUiState
+import net.libreguard.vpn.viewmodel.NewsletterViewModel
+import net.libreguard.vpn.ui.components.NewsletterPreferencesCard
 import org.json.JSONObject
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -61,6 +63,7 @@ fun SettingsScreen(
     onNavigateToTerms: () -> Unit = {},
     onLogout: () -> Unit,
     vpnViewModel: net.libreguard.vpn.viewmodel.VpnViewModel? = null,
+    newsletterViewModel: NewsletterViewModel? = null,
     updateState: AppUpdateUiState = AppUpdateUiState(installedVersion = BuildConfig.VERSION_NAME),
     updateActions: AppUpdateActions = AppUpdateActions()
 ) {
@@ -84,6 +87,11 @@ fun SettingsScreen(
     var isLoading2fa by remember { mutableStateOf(false) }
 
     val context = LocalContext.current
+    val newsletters = newsletterViewModel ?: androidx.lifecycle.viewmodel.compose.viewModel<NewsletterViewModel>(
+        factory = NewsletterViewModel.Factory(context)
+    )
+    val newsletterState by newsletters.state.collectAsState()
+    LaunchedEffect(newsletters) { newsletters.refresh() }
     LaunchedEffect(Unit) { updateActions.onCheck() }
     val backgroundSupport = remember(context) { BackgroundConnectionSupport(context) }
     val backgroundStatus = rememberBackgroundConnectionStatus(backgroundSupport, selectedProtocol)
@@ -231,7 +239,7 @@ fun SettingsScreen(
             }
 
             // Security Section
-            SectionHeader(title = "Security", modifier = Modifier.padding(horizontal = LibreGuardDimens.screenHorizontalPadding))
+            SectionHeader(title = "Account Settings", modifier = Modifier.padding(horizontal = LibreGuardDimens.screenHorizontalPadding))
 
             SettingsCard(modifier = Modifier.padding(horizontal = LibreGuardDimens.screenHorizontalPadding)) {
                 Row(
@@ -292,6 +300,14 @@ fun SettingsScreen(
                 }
             }
 
+            Spacer(modifier = Modifier.height(LibreGuardDimens.sectionSpacing))
+
+            NewsletterPreferencesCard(
+                state = newsletterState,
+                onToggle = newsletters::setSubscribed,
+                onRefresh = newsletters::refresh,
+                modifier = Modifier.padding(horizontal = LibreGuardDimens.screenHorizontalPadding)
+            )
             Spacer(modifier = Modifier.height(LibreGuardDimens.sectionSpacing))
 
             // Connection Section

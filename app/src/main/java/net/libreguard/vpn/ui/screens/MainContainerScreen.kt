@@ -11,6 +11,7 @@ import net.libreguard.vpn.ui.navigation.MainTab
 import net.libreguard.vpn.ui.theme.Background
 import net.libreguard.vpn.ui.theme.ThemeMode
 import net.libreguard.vpn.viewmodel.VpnViewModel
+import net.libreguard.vpn.viewmodel.NewsletterViewModel
 import net.libreguard.vpn.core.AppUpdateUiState
 import net.libreguard.vpn.ui.components.AppUpdateActions
 
@@ -35,6 +36,7 @@ fun MainContainerScreen(
     onNavigateToUpgrade: () -> Unit,
     onNavigateToTwoFactor: () -> Unit,
     vpnViewModel: VpnViewModel? = null,
+    newsletterViewModel: NewsletterViewModel? = null,
     updateState: AppUpdateUiState = AppUpdateUiState(),
     updateActions: AppUpdateActions = AppUpdateActions()
 ) {
@@ -98,6 +100,7 @@ fun MainContainerScreen(
                     }
                     MainTab.SETTINGS -> {
                         SettingsScreen(
+                            newsletterViewModel = newsletterViewModel,
                             themeMode = themeMode,
                             effectiveDarkMode = effectiveDarkMode,
                             onThemeModeChange = onThemeModeChange,
@@ -168,6 +171,7 @@ fun MainScreen(
     effectiveDarkMode: Boolean,
     onThemeModeChange: (ThemeMode) -> Unit,
     vpnViewModel: VpnViewModel? = null,
+    newsletterViewModel: NewsletterViewModel? = null,
     onLogout: (() -> Unit)? = null,
     onNavigateToSettings: (() -> Unit)? = null,
     onNavigateToUpgrade: (() -> Unit)? = null,
@@ -184,6 +188,7 @@ fun MainScreen(
         onNavigateToUpgrade = { onNavigateToUpgrade?.invoke() },
         onNavigateToTwoFactor = { onNavigateToTwoFactor?.invoke() },
         vpnViewModel = vpnViewModel,
+        newsletterViewModel = newsletterViewModel,
         updateState = updateState,
         updateActions = updateActions
     )

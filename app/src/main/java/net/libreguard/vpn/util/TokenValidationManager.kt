@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -85,6 +86,8 @@ class TokenValidationManager(
                             Log.d(TAG, "Token still valid, no refresh needed")
                         }
                     }
+                } catch (e: CancellationException) {
+                    throw e
                 } catch (e: Exception) {
                     Log.e(TAG, "Error in background token refresh loop", e)
                 }
@@ -125,8 +128,10 @@ class TokenValidationManager(
                     // Only validate if we have a token
                     if (tokenManager.getAccessToken() != null) {
                         Log.d(TAG, "Running periodic token validation check")
-                        validateTokenValidity()
+                        validateTokenBeforeConnection()
                     }
+                } catch (e: CancellationException) {
+                    throw e
                 } catch (e: Exception) {
                     Log.e(TAG, "Error in background validation loop", e)
                 }
@@ -145,164 +150,39 @@ class TokenValidationManager(
         Log.d(TAG, "Background token validation stopped")
     }
 
-    /**
-     * Validate token immediately (used before connect/disconnect operations)
-     * Returns true if token is valid, false if revoked
-     */
-    suspend fun validateTokenBeforeAction(): Boolean {
-        val token = tokenManager.getAccessToken()
-        if (token == null) {
-            Log.w(TAG, "No token available for validation")
-            return false
+    /** Only confirmed rejection reports an invalid session; connectivity failures remain retryable. */
+    suspend fun validateTokenBeforeConnection(): TokenValidationResult {
+        if (tokenManager.getAccessToken().isNullOrBlank()) return TokenValidationResult.REVOKED
+
+        if (tokenManager.isTokenExpired() || tokenManager.isTokenExpiringWithin(300)) {
+            val refresh = tokenManager.refreshTokenWithResult(RetrofitClient.authApiService).validationResult()
+            if (refresh == TokenValidationResult.REVOKED) handleTokenRevocation()
+            if (refresh != TokenValidationResult.VALID) return refresh
         }
 
-        // OPTIMIZATION: Check if access token is expired locally first
-        if (tokenManager.isTokenExpired()) {
-            Log.d(TAG, "Access token is expired locally - attempting refresh before validation")
-
-            // Check if refresh token is available
-            val refreshToken = tokenManager.getRefreshToken()
-            if (refreshToken.isNullOrBlank()) {
-                Log.w(TAG, "No refresh token available - cannot recover, triggering logout")
-                handleTokenRevocation()
-                return false
-            }
-
-            // Check if refresh token is expired (for JWT-format refresh tokens)
-            if (tokenManager.isRefreshTokenExpired()) {
-                Log.w(TAG, "Both access and refresh tokens are expired - cannot recover, triggering logout")
-                handleTokenRevocation()
-                return false
-            }
-
-            // Attempt to refresh the token proactively
-            try {
-                val refreshSuccess = tokenManager.refreshTokenIfNeeded(
-                    net.libreguard.vpn.network.RetrofitClient.authApiService
-                )
-
-                if (refreshSuccess) {
-                    Log.d(TAG, "Token refresh successful during validation - proceeding with API validation")
-                    // Continue to validate the new token with the server
-                } else {
-                    Log.w(TAG, "Token refresh failed during validation - session may be invalid")
-                    // Don't logout immediately - let the API validation decide
-                    // The refresh may have failed due to network issues
-                    return false
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Exception during token refresh in validation: ${e.message}")
-                // Don't logout on exception - might be network issue
-                return false
-            }
+        val token = tokenManager.getAccessToken() ?: return TokenValidationResult.REVOKED
+        val result = validateTokenRequest(
+            request = { RetrofitClient.instance.checkTokenValidity("Bearer $token") },
+            onFailure = { Log.w(TAG, "Token validation unavailable", it) }
+        )
+        Log.d(TAG, "Token validation result=$result")
+        when (result) {
+            TokenValidationResult.VALID -> tokenManager.saveLastTokenCheckTime(System.currentTimeMillis())
+            TokenValidationResult.REVOKED -> handleTokenRevocation()
+            TokenValidationResult.UNAVAILABLE -> Unit
         }
-
-        // CRITICAL: Warn if refresh token is missing (indicates OAuth persistence issue)
-        val refreshToken = tokenManager.getRefreshToken()
-        if (refreshToken.isNullOrBlank()) {
-            Log.w(TAG, "WARNING: Refresh token is missing! This indicates OAuth tokens may not have been persisted correctly. " +
-                       "User will be unable to refresh expired tokens.")
-        }
-
-        return validateTokenValidity()
+        return result
     }
 
-    /**
-     * Validate token with a short timeout (2 seconds)
-     * Used during disconnect operations where we want to detect revocation quickly
-     * but don't want to block the disconnect for too long if server is unresponsive
-     *
-     * Returns:
-     * - true if token is valid
-     * - false if token is revoked or validation times out (defaults to assuming valid to proceed with disconnect)
-     */
-    suspend fun validateTokenWithTimeout(timeoutMs: Long = 2000L): Boolean {
-        return withTimeoutOrNull(timeoutMs) {
-            validateTokenBeforeAction()
-        } ?: run {
-            // Timeout occurred - just log and continue
+    /** Compatibility for disconnect: network failure must never prevent tunnel cleanup. */
+    suspend fun validateTokenBeforeAction(): Boolean =
+        validateTokenBeforeConnection() != TokenValidationResult.REVOKED
+
+    suspend fun validateTokenWithTimeout(timeoutMs: Long = 2000L): Boolean =
+        withTimeoutOrNull(timeoutMs) { validateTokenBeforeAction() } ?: run {
             Log.d(TAG, "Token validation timed out after ${timeoutMs}ms - proceeding without validation")
-            true // Return true to allow operation to continue (we couldn't verify, so we assume valid)
+            true
         }
-    }
-
-    /**
-     * Check if token is still valid via API
-     * Returns true if token is valid, false if revoked
-     */
-    private suspend fun validateTokenValidity(): Boolean {
-        return try {
-            var token = tokenManager.getAccessToken()
-            if (token == null) {
-                Log.w(TAG, "No token to validate")
-                return false
-            }
-
-            // OPTIMIZATION: Check if token is expired locally before making API call
-            // If expired, attempt refresh FIRST to avoid 401 responses that trigger logout
-            if (tokenManager.isTokenExpired()) {
-                Log.d(TAG, "Token is expired locally - attempting refresh before API validation")
-
-                val refreshToken = tokenManager.getRefreshToken()
-                if (refreshToken.isNullOrBlank() || tokenManager.isRefreshTokenExpired()) {
-                    Log.w(TAG, "Cannot refresh - refresh token missing or expired")
-                    return false
-                }
-
-                val refreshSuccess = tokenManager.refreshTokenIfNeeded(
-                    net.libreguard.vpn.network.RetrofitClient.authApiService
-                )
-
-                if (refreshSuccess) {
-                    Log.d(TAG, "Token refreshed successfully before API validation")
-                    token = tokenManager.getAccessToken()
-                    if (token == null) {
-                        Log.w(TAG, "Token still null after refresh")
-                        return false
-                    }
-                } else {
-                    Log.w(TAG, "Token refresh failed - skipping API validation")
-                    return false
-                }
-            }
-
-            // CRITICAL: Check if refresh token exists (needed for token rotation)
-            val refreshToken = tokenManager.getRefreshToken()
-            if (refreshToken.isNullOrBlank()) {
-                Log.w(TAG, "WARNING: Refresh token is missing during validation! " +
-                           "Token rotation will fail on expiry. This indicates OAuth tokens were not persisted correctly.")
-            }
-
-            val response = RetrofitClient.instance.checkTokenValidity("Bearer $token")
-
-            when {
-                response.isSuccessful -> {
-                    val body = response.body()
-                    if (body?.isValid == true) {
-                        Log.d(TAG, "Token validation successful - token is valid")
-                        tokenManager.saveLastTokenCheckTime(System.currentTimeMillis())
-                        true
-                    } else {
-                        Log.w(TAG, "Token validation failed - token is invalid/revoked")
-                        handleTokenRevocation()
-                        false
-                    }
-                }
-                response.code() == 401 || response.code() == 403 -> {
-                    Log.w(TAG, "Token validation returned ${response.code()} - token revoked")
-                    handleTokenRevocation()
-                    false
-                }
-                else -> {
-                    Log.w(TAG, "Token validation failed with code ${response.code()}")
-                    true // Don't logout on network errors, just skip this check
-                }
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error during token validation", e)
-            false // On exception, assume validation failed
-        }
-    }
 
     /**
      * Handle token revocation - clear tokens and broadcast logout

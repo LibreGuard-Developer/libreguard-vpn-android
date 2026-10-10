@@ -58,6 +58,7 @@ fun ServerListScreen(
     val viewModel: VpnViewModel = vpnViewModel ?: viewModel()
 
     val servers by viewModel.servers.collectAsState()
+    val connectionIssue by viewModel.connectionIssue.collectAsState()
     val selectedServer by viewModel.selectedServer.collectAsState()
     val selectedProtocol by viewModel.selectedProtocol.collectAsState()
     val isLoadingServers by viewModel.isLoadingServers.collectAsState()
@@ -227,6 +228,11 @@ fun ServerListScreen(
         }
 
         Spacer(modifier = Modifier.height(16.dp))
+
+        net.libreguard.vpn.ui.components.ConnectionIssueNotice(
+            connectionIssue, viewModel::clearConnectionIssue,
+            Modifier.padding(horizontal = LibreGuardDimens.screenHorizontalPadding)
+        )
 
         // Server List
         if (isLoadingServers && servers.isEmpty()) {

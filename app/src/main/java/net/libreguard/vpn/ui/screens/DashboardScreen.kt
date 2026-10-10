@@ -71,6 +71,8 @@ fun DashboardScreen(
 
     val isConnected by viewModel.isConnected.collectAsState()
     val isConnecting by viewModel.isConnecting.collectAsState()
+    val consentState by viewModel.vpnConsentState.collectAsState()
+    val connectionIssue by viewModel.connectionIssue.collectAsState()
     val selectedServer by viewModel.selectedServer.collectAsState()
     val selectedProtocol by viewModel.selectedProtocol.collectAsState()
     val context = LocalContext.current
@@ -209,6 +211,14 @@ fun DashboardScreen(
                     )
                 }
             }
+        }
+
+        net.libreguard.vpn.ui.components.VpnConsentNotice(
+            consentState, viewModel::retryVpnConsent, viewModel::cancelVpnConsentRequest
+        )
+
+        if (!isConnected && !isConnecting && !consentState.awaitingConsent) {
+            net.libreguard.vpn.ui.components.ConnectionIssueNotice(connectionIssue, viewModel::clearConnectionIssue)
         }
 
         // IP Address Display (when connected) - Compact

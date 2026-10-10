@@ -38,6 +38,8 @@ import net.libreguard.vpn.ui.screens.OpenSourceLicensesScreen
 import net.libreguard.vpn.ui.screens.SettingsScreen
 import net.libreguard.vpn.ui.screens.TwoFactorSettingsScreen
 import net.libreguard.vpn.viewmodel.ClientLoginViewModel
+import net.libreguard.vpn.viewmodel.NewsletterViewModel
+import net.libreguard.vpn.ui.components.NewsletterConsentHost
 import net.libreguard.vpn.ui.screens.RegisterScreen
 import net.libreguard.vpn.ui.screens.ConfirmEmailScreen
 import net.libreguard.vpn.ui.screens.PrivacyPolicyScreen
@@ -58,6 +60,9 @@ import net.libreguard.vpn.viewmodel.AppUpdateViewModel
 import net.libreguard.vpn.ui.components.AppUpdateHost
 import net.libreguard.vpn.ui.components.AppUpdateActions
 import net.libreguard.vpn.util.TokenManager
+import net.libreguard.vpn.util.TokenValidationManager
+import net.libreguard.vpn.util.TokenValidationResult
+import net.libreguard.vpn.util.restoreSavedSession
 import net.libreguard.vpn.viewmodel.SubscriptionViewModel
 
 
@@ -150,8 +155,12 @@ fun AppNavigation(
     }
 
     val clientLoginViewModel: ClientLoginViewModel = viewModel(factory = ClientLoginViewModel.Factory(context))
+    val newsletterViewModel: NewsletterViewModel = viewModel(factory = NewsletterViewModel.Factory(context))
     var authToken by remember { mutableStateOf<String?>(null) }
     var isCheckingToken by remember { mutableStateOf(true) }
+    LaunchedEffect(authToken, isCheckingToken) {
+        if (!isCheckingToken) newsletterViewModel.bindSession(authToken != null)
+    }
     var loginPrefilledEmail by rememberSaveable { mutableStateOf<String?>(null) }
     var resetEmail by rememberSaveable { mutableStateOf<String?>(null) }
     var resetToken by rememberSaveable { mutableStateOf<String?>(null) }
@@ -242,31 +251,16 @@ fun AppNavigation(
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 vpnViewModel.refreshDnsPreference()
+                newsletterViewModel.refresh()
+                vpnViewModel.onAppResumed()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    // Launcher for the system VPN consent dialog (VpnService.prepare intent)
-    val vpnConsentLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        // RESULT_OK means permission granted; RESULT_CANCELED means user denied/backed out
-        vpnViewModel.onVpnPermissionResult(result.resultCode == android.app.Activity.RESULT_OK)
-    }
-
-    // Collect VPN permission requests from the ViewModel and launch the system consent dialog.
-    LaunchedEffect(vpnViewModel) {
-        vpnViewModel.vpnPermissionRequests.collect { intent ->
-            try {
-                vpnConsentLauncher.launch(intent)
-            } catch (e: Exception) {
-                android.util.Log.e("MainActivity", "Failed to launch VPN consent")
-                vpnViewModel.onVpnPermissionResult(false)
-            }
-        }
-    }
+    net.libreguard.vpn.ui.components.VpnConsentHost(vpnViewModel)
+    if (authToken != null && !isCheckingToken) NewsletterConsentHost(newsletterViewModel)
 
     // Coroutine scope for async logout operations
     val coroutineScope = rememberCoroutineScope()
@@ -274,6 +268,7 @@ fun AppNavigation(
     // Helper: perform full logout (API + Google + local state)
     // This runs sequentially to guarantee API call occurs after VPN disconnect
     suspend fun performLogoutSequential() {
+        newsletterViewModel.reset()
         clientLoginViewModel.cancel()
         android.util.Log.d("MainActivity", "Starting logout process")
         try {
@@ -307,6 +302,9 @@ fun AppNavigation(
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(ctx: Context?, intent: Intent?) {
                 if (intent?.action == "net.libreguard.vpn.ACTION_LOGOUT") {
+                    val revokedEpoch = intent.getLongExtra("account_session_epoch", -1L)
+                    val activeSession = RetrofitClient.getTokenManager().sessionSnapshot()?.context
+                    if (revokedEpoch >= 0L && activeSession != null && activeSession.epoch != revokedEpoch) return
                     android.util.Log.d("MainActivity", "Received ACTION_LOGOUT broadcast")
                     // Capture logout reason (if any) before we navigate back to login
                     consumeForcedLogoutReasonFromPrefs()
@@ -471,137 +469,35 @@ fun AppNavigation(
         }
 
         val tokenManager = RetrofitClient.getTokenManager()
-        var savedToken = tokenManager.getAccessToken()
-
-        if (!savedToken.isNullOrBlank()) {
-            // CRITICAL FIX: Check if token is expired and attempt REFRESH first before clearing
-            // This ensures users stay logged in even after app was closed for hours
-            if (tokenManager.isTokenExpired() || tokenManager.isTokenExpiringWithin(300)) {
-                android.util.Log.d("MainActivity", "Token is expired or expiring soon - attempting refresh")
-
-                // Check if refresh token is available and not expired
-                val refreshToken = tokenManager.getRefreshToken()
-                if (refreshToken.isNullOrBlank()) {
-                    android.util.Log.w("MainActivity", "No refresh token available - must re-login")
-                    tokenManager.clearTokens()
-                    context.getSharedPreferences("vpn_state_prefs", Context.MODE_PRIVATE)
-                        .edit()
-                        .remove("auth_token")
-                        .apply()
-                    vpnViewModel.clearCachedAuthToken()
-                    clientLoginViewModel.cancel()
-                    authToken = null
-                    isCheckingToken = false
-                    return@LaunchedEffect
-                }
-
-                // Check if refresh token is expired (for JWT-format refresh tokens)
-                if (tokenManager.isRefreshTokenExpired()) {
-                    android.util.Log.w("MainActivity", "Refresh token is expired - must re-login")
-                    tokenManager.clearTokens()
-                    context.getSharedPreferences("vpn_state_prefs", Context.MODE_PRIVATE)
-                        .edit()
-                        .remove("auth_token")
-                        .apply()
-                    vpnViewModel.clearCachedAuthToken()
-                    clientLoginViewModel.cancel()
-                    authToken = null
-                    isCheckingToken = false
-                    return@LaunchedEffect
-                }
-
-                // Attempt to refresh the token BEFORE any API calls
-                try {
-                    val refreshSuccess = tokenManager.refreshTokenIfNeeded(RetrofitClient.authApiService)
-                    if (refreshSuccess) {
-                        android.util.Log.d("MainActivity", "Token refresh successful on startup")
-                        // Update savedToken with the new refreshed token
-                        savedToken = tokenManager.getAccessToken()
-                    } else {
-                        android.util.Log.w("MainActivity", "Token refresh failed on startup - must re-login")
-                        tokenManager.clearTokens()
-                        context.getSharedPreferences("vpn_state_prefs", Context.MODE_PRIVATE)
-                            .edit()
-                            .remove("auth_token")
-                            .apply()
-                        vpnViewModel.clearCachedAuthToken()
-                        clientLoginViewModel.cancel()
-                        authToken = null
-                        isCheckingToken = false
-                        return@LaunchedEffect
-                    }
-                } catch (e: Exception) {
-                    android.util.Log.e("MainActivity", "Token refresh exception on startup")
-                    tokenManager.clearTokens()
-                    context.getSharedPreferences("vpn_state_prefs", Context.MODE_PRIVATE)
-                        .edit()
-                        .remove("auth_token")
-                        .apply()
-                    vpnViewModel.clearCachedAuthToken()
-                    clientLoginViewModel.cancel()
-                    authToken = null
-                    isCheckingToken = false
-                    return@LaunchedEffect
-                }
-            }
-
-            // Token is valid (either was already valid or we just refreshed it)
-            // Now validate with server to ensure it's not revoked
-            try {
-                android.util.Log.d("MainActivity", "Validating token with server")
-                val currentToken = savedToken ?: tokenManager.getAccessToken()
-                if (currentToken.isNullOrBlank()) {
-                    android.util.Log.w("MainActivity", "No token after refresh attempt")
-                    isCheckingToken = false
-                    return@LaunchedEffect
-                }
-
-                val response = RetrofitClient.instance.checkTokenValidity("Bearer $currentToken")
-
-                if (!response.isSuccessful || response.body()?.isValid != true) {
-                    android.util.Log.w("MainActivity", "Token validation failed - clearing token")
-                    tokenManager.clearTokens()
-                    context.getSharedPreferences("vpn_state_prefs", Context.MODE_PRIVATE)
-                        .edit()
-                        .remove("auth_token")
-                        .apply()
-                    vpnViewModel.clearCachedAuthToken()
-                    clientLoginViewModel.cancel()
-                    authToken = null
-                    isCheckingToken = false
-                    return@LaunchedEffect
-                }
-
-                android.util.Log.d("MainActivity", "Token validation successful - proceeding")
-            } catch (e: Exception) {
-                // Network error during validation - allow proceeding but log warning
-                android.util.Log.w("MainActivity", "Token validation network error - proceeding anyway")
-            }
-
-            authToken = savedToken ?: tokenManager.getAccessToken()
+        val restored = restoreSavedSession(
+            readToken = tokenManager::getAccessToken,
+            validate = { TokenValidationManager(context, tokenManager).validateTokenBeforeConnection() },
+            onRevoked = {
+                Log.w("MainActivity", "Saved session rejected - login required")
+                tokenManager.clearTokens()
+                context.getSharedPreferences("vpn_state_prefs", Context.MODE_PRIVATE)
+                    .edit().remove("auth_token").apply()
+                vpnViewModel.clearCachedAuthToken()
+                clientLoginViewModel.cancel()
+                authToken = null
+            },
+            onFailure = { Log.w("MainActivity", "Session validation unavailable", it) }
+        )
+        if (restored.validation == TokenValidationResult.UNAVAILABLE) {
+            Log.w("MainActivity", "Session validation unavailable - preserving saved sign-in")
+            vpnViewModel.onSessionValidationUnavailable()
+        }
+        if (!restored.token.isNullOrBlank()) {
+            authToken = restored.token
             navController.navigate("main") {
                 popUpTo(0) { inclusive = true }
                 launchSingleTop = true
             }
-
-            // IMPORTANT: Trigger auto-connect AFTER navigation and delay
-            // This ensures the UI is ready and ViewModel is properly initialized
-            coroutineScope.launch {
-                // Wait longer to ensure:
-                // 1. UI composables are fully initialized
-                // 2. ViewModel state observers are active
-                // 3. Servers are loaded
-                delay(3000) // 3 seconds for full UI initialization
-
+            if (restored.validation == TokenValidationResult.VALID) coroutineScope.launch {
+                delay(3000)
                 Log.d("MainActivity", "Attempting Auto-Connect...")
-
-                // Attempt auto-connect
                 val autoConnected = vpnViewModel.attemptAutoConnect()
-                if (autoConnected) {
-                    android.util.Log.d("MainActivity", "Auto-Connect initiated")
-                } else {
-                    android.util.Log.d("MainActivity", "Auto-Connect skipped")
-                }
+                Log.d("MainActivity", if (autoConnected) "Auto-Connect initiated" else "Auto-Connect skipped")
             }
         }
         isCheckingToken = false
@@ -783,11 +679,11 @@ fun AppNavigation(
                         password = passwordParam ?: "",
                         initialToken = tokenParam,
                         onConfirmed = { authResponse ->
-                            android.util.Log.d("MainActivity", "onConfirmed called with token=${authResponse.token?.take(30)}...")
+                            android.util.Log.d("MainActivity", "Email confirmation session accepted")
                             // Persist full auth response like LoginScreen does
                             val tokenManager = TokenManager(context)
                             if (authResponse.token != null) {
-                                tokenManager.saveTokens(authResponse.token, authResponse.refreshToken ?: "")
+                                tokenManager.beginSession(authResponse.token, authResponse.refreshToken ?: "")
                                 authResponse.deviceId?.let { tokenManager.saveDeviceId(it) }
                                 tokenManager.saveCurrentDeviceKeyId()
                                 if (authResponse.activeDevices != null && authResponse.maxDevices != null) {
@@ -872,6 +768,7 @@ fun AppNavigation(
                     effectiveDarkMode = effectiveDarkMode,
                     onThemeModeChange = onThemeModeChange,
                     vpnViewModel = vpnViewModel,
+                    newsletterViewModel = newsletterViewModel,
                     updateState = updateState,
                     updateActions = updateActions,
                     onLogout = {
@@ -906,6 +803,7 @@ fun AppNavigation(
         composable("settings") {
             authToken?.let { _ ->
                 SettingsScreen(
+                    newsletterViewModel = newsletterViewModel,
                     updateState = updateState,
                     updateActions = updateActions,
                     vpnViewModel = vpnViewModel,

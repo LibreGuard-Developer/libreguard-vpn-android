@@ -2,6 +2,10 @@ package net.libreguard.vpn.network
 
 import com.google.gson.JsonParser
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -33,7 +37,7 @@ object PingService {
         log = { android.util.Log.d("PingService", it) }
     )
 
-    internal fun resetConnections() = transport.resetConnections()
+    internal suspend fun resetConnections() = transport.resetConnections()
 
     suspend fun pingServer(serverHostname: String, port: Int = 5001): Int? =
         engine.measureEndpoint(ProbeEndpoint(serverHostname, port))
@@ -96,7 +100,14 @@ internal class WarmLatencyEngine(
         suspend fun request(warmUp: Boolean): Int? {
             currentCoroutineContext().ensureActive()
             if (!canProbe()) throw CancellationException("VPN latency probing blocked")
-            return withTimeoutOrNull(3_000L) { transport.ping(endpoint, warmUp) }
+            return try {
+                withTimeoutOrNull(3_000L) { transport.ping(endpoint, warmUp) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                log("Probe failed host=${endpoint.host} reason=${e.javaClass.simpleName}")
+                null
+            }
         }
         if (request(warmUp = true) == null) return@withTimeoutOrNull null
         val samples = List(3) { request(warmUp = false) }.filterNotNull().sorted()
@@ -119,7 +130,7 @@ internal class OkHttpPingTransport(
         HttpUrl.Builder().scheme("https").host(it.host).port(it.port).addPathSegment("ping").build()
     }
 ) : PingTransport {
-    private val client = (client?.newBuilder() ?: OkHttpClient.Builder())
+    private val clientTemplate = (client?.newBuilder() ?: OkHttpClient.Builder())
         .dispatcher(Dispatcher().apply { maxRequests = 8; maxRequestsPerHost = 8 })
         .connectionPool(ConnectionPool(8, 5, TimeUnit.MINUTES))
         .connectTimeout(3, TimeUnit.SECONDS)
@@ -137,7 +148,27 @@ internal class OkHttpPingTransport(
         .eventListenerFactory { call -> call.request().tag(ProbeTiming::class.java)!! }
         .build()
 
-    fun resetConnections() { client.connectionPool.evictAll() }
+    private val connectionLock = Mutex()
+    @Volatile private var activeClient = clientTemplate
+
+    suspend fun resetConnections() = withContext(Dispatchers.IO) {
+        connectionLock.withLock {
+            val old = activeClient
+            // Separate pools and dispatchers keep obsolete requests out of the new network's pool.
+            activeClient = clientTemplate.newBuilder()
+                .dispatcher(Dispatcher().apply { maxRequests = 8; maxRequestsPerHost = 8 })
+                .connectionPool(ConnectionPool(8, 5, TimeUnit.MINUTES)).build()
+            try {
+                old.dispatcher.cancelAll()
+                old.connectionPool.evictAll()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                log("Connection cleanup failed reason=${e.javaClass.simpleName}")
+                net.libreguard.vpn.util.CrashlyticsReporter.recordHandledException(e, "Latency connection cleanup failed")
+            }
+        }
+    }
 
     override suspend fun ping(endpoint: ProbeEndpoint, warmUp: Boolean): Int? {
         val timing = ProbeTiming(nanoTime)
@@ -148,28 +179,36 @@ internal class OkHttpPingTransport(
         } catch (_: IllegalArgumentException) {
             return null
         }
+        connectionLock.lock()
         return suspendCancellableCoroutine { continuation ->
-            val call = client.newCall(request)
-            continuation.invokeOnCancellation { call.cancel() }
-            call.enqueue(object : Callback {
-                override fun onFailure(call: Call, e: IOException) {
-                    log("Probe failed host=${endpoint.host} warmUp=$warmUp cancelled=${call.isCanceled()} reason=${e.javaClass.simpleName}")
-                    continuation.resume(null)
-                }
-
-                override fun onResponse(call: Call, response: Response) {
-                    val latency = try {
-                        response.use {
-                            val body = it.body?.string()
-                            if (it.isSuccessful && validPong(body)) timing.latencyMs() else null
-                        }
-                    } catch (_: Exception) {
-                        null
+            try {
+                // Enqueue before releasing the reset lock so cancelAll includes this request.
+                val client = activeClient
+                val call = client.newCall(request)
+                continuation.invokeOnCancellation { call.cancel() }
+                call.enqueue(object : Callback {
+                    override fun onFailure(call: Call, e: IOException) {
+                        log("Probe failed host=${endpoint.host} warmUp=$warmUp cancelled=${call.isCanceled()} reason=${e.javaClass.simpleName}")
+                        continuation.resume(null)
                     }
-                    log("Probe host=${endpoint.host} warmUp=$warmUp ${timing.diagnostics()} valid=${latency != null}")
-                    continuation.resume(latency)
-                }
-            })
+
+                    override fun onResponse(call: Call, response: Response) {
+                        val latency = try {
+                            response.use {
+                                val body = it.body?.string()
+                                if (client === activeClient && it.isSuccessful && validPong(body)) timing.latencyMs() else null
+                            }
+                        } catch (_: Exception) {
+                            null
+                        }
+                        log("Probe host=${endpoint.host} warmUp=$warmUp ${timing.diagnostics()} valid=${latency != null}")
+                        continuation.resume(latency)
+                    }
+                })
+            } finally {
+                // Do not hold the lock while waiting for the network response.
+                connectionLock.unlock()
+            }
         }
     }
 

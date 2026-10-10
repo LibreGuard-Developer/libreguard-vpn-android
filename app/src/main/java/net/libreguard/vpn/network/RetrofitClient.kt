@@ -38,6 +38,23 @@ object RetrofitClient {
         retrofit.create(ApiService::class.java)
     }
 
+    // Consent writes never follow redirects or replay after transport failures.
+    val newsletterApiService: ApiService by lazy {
+        val tokens = requireNotNull(tokenManager) { "RetrofitClient must be initialized first." }
+        val context = requireNotNull(appContext)
+        Retrofit.Builder()
+            .baseUrl(BASE_URL)
+            .client(newSecureOkHttpClientBuilder()
+                .retryOnConnectionFailure(false)
+                .followRedirects(false)
+                .followSslRedirects(false)
+                .authenticator(TokenAuthenticator(context, tokens, authApiService))
+                .addInterceptor(AuthInterceptor(tokens, context))
+                .build())
+            .addConverterFactory(GsonConverterFactory.create())
+            .build().create(ApiService::class.java)
+    }
+
     val instance: ApiService by lazy {
         if (tokenManager == null || appContext == null) {
             throw IllegalStateException("RetrofitClient must be initialized with context before use.")

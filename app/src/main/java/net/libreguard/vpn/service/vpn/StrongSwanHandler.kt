@@ -5,7 +5,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.net.Uri
-import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
@@ -70,10 +69,29 @@ class StrongSwanHandler(
     private val dataLimitNotificationShown = AtomicBoolean(false)
     @Volatile private var lastLogPosition = 0L
 
+    @Volatile private var permissionError: ConnectionState.Error? = null
+    private val vpnStateListener = VpnStateService.VpnStateListener {
+        val failure = when (vpnStateService?.errorState) {
+            VpnStateService.ErrorState.VPN_PERMISSION_REQUIRED -> VpnPermissionFailure.CONSENT_REQUIRED
+            VpnStateService.ErrorState.VPN_PERMISSION_REVOKED -> VpnPermissionFailure.CONSENT_REVOKED
+            else -> null
+        }
+        if (failure != null) {
+            val error = ConnectionState.Error("VPN permission needed", failure)
+            permissionError = error
+            stopLogMonitoring()
+            _state.value = error
+        }
+    }
+
     private val stateServiceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
             try {
                 vpnStateService = (service as? VpnStateService.LocalBinder)?.service
+                vpnStateService?.registerListener(vpnStateListener)
+                if (_state.value is ConnectionState.Connecting || _state.value is ConnectionState.Connected) {
+                    vpnStateListener.stateChanged()
+                }
                 Log.d(tag, "Connected to VpnStateService")
 
                 // Start monitoring for auth failures
@@ -112,6 +130,7 @@ class StrongSwanHandler(
     private fun unbindVpnStateService(context: Context) {
         if (!stateServiceBound) return
         try {
+            vpnStateService?.unregisterListener(vpnStateListener)
             context.unbindService(stateServiceConnection)
             stateServiceBound = false
             vpnStateService = null
@@ -122,6 +141,7 @@ class StrongSwanHandler(
     }
 
     private fun startLogMonitoring() {
+        if (permissionError != null) return
         if (!isMonitoring.compareAndSet(false, true)) {
             Log.d(tag, "Log monitoring already active")
             return
@@ -439,6 +459,7 @@ class StrongSwanHandler(
                     return@withContext false
                 }
 
+                permissionError = null
                 _state.value = ConnectionState.Connecting
                 dataLimitNotificationShown.set(false)
                 Log.d(tag, "Starting IKEv2 connection")
@@ -602,17 +623,11 @@ class StrongSwanHandler(
                      Log.w(tag, "KeyChain preflight failed: ${e.message}")
                  }
 
-                // Ensure VPN permission was granted; otherwise charon cannot initialize
-                try {
-                    val prep = VpnService.prepare(appContext)
-                    if (prep != null) {
-                        // UI must launch VpnService.prepare() intent (Android 10+), especially on Android 14.
-                        _state.value = ConnectionState.Error("VPN permission required. Tap Connect again and approve the VPN dialog.")
-                        Log.w(tag, "VPN permission not granted (VpnService.prepare returned an Intent)")
-                        return@withContext false
-                    }
-                } catch (e: Exception) {
-                    Log.w(tag, "VpnService.prepare check failed: ${e.message}")
+                checkVpnPermissionForStart(appContext)?.let { error ->
+                    permissionError = error
+                    stopLogMonitoring()
+                    _state.value = error
+                    return@withContext false
                 }
 
                 // Start service without FGS API to avoid 5s timeout; service will call startForeground() itself
@@ -623,6 +638,7 @@ class StrongSwanHandler(
                 // Phase 0: Wait for charon to initialize to avoid premature timeout
                 var charonStarted = false
                 for (i in 1..24) { // ~6 seconds total
+                    if (permissionError != null) return@withContext false
                     delay(250)
                     val logs = getConnectionLogs(context) ?: ""
                     if (logs.contains("charon started", ignoreCase = true)) {
@@ -657,6 +673,7 @@ class StrongSwanHandler(
                 // During this phase, DON'T treat plain TUN presence as success
                 for (i in 1..16) { // extend to ~8 seconds
                      delay(500) // Check every 500ms for faster failure detection
+                     if (permissionError != null) return@withContext false
 
                      // Check logs for authentication and connectivity failures
                      val logs = getConnectionLogs(context) ?: ""
@@ -715,6 +732,7 @@ class StrongSwanHandler(
                     Log.d(tag, "Auth phase complete, performing final verification...")
                     delay(1000)
 
+                    if (permissionError != null) return@withContext false
                     val finalLogs = getConnectionLogs(context) ?: ""
 
                     if (finalLogs.contains("failed to load user certificate and key", ignoreCase = true)) {
@@ -824,6 +842,9 @@ class StrongSwanHandler(
                     currentProfile = null
                     return@withContext false
 
+                } else if (permissionError != null) {
+                    _state.value = permissionError!!
+                    return@withContext false
                 } else if (connectionEstablished) {
                     _state.value = ConnectionState.Connected
                     Log.d(tag, "Connection established successfully")
@@ -843,6 +864,8 @@ class StrongSwanHandler(
                     return@withContext false
                 }
 
+            } catch (ex: kotlinx.coroutines.CancellationException) {
+                throw ex
             } catch (ex: Exception) {
                  Log.e(tag, "Connect failed", ex)
                  stopLogMonitoring()
@@ -889,6 +912,8 @@ class StrongSwanHandler(
                 }
                 if (profile == null) throw IllegalArgumentException("Unsupported config format; could not parse configuration")
                 connect(context, profile)
+            } catch (ex: kotlinx.coroutines.CancellationException) {
+                throw ex
             } catch (ex: Exception) {
                 Log.e(tag, "Connect failed", ex)
                 _state.value = ConnectionState.Error("Connect failed: ${ex.message}")
@@ -1003,18 +1028,6 @@ class StrongSwanHandler(
                      Log.w(tag, "Failed to send disconnect intents: ${e.message}")
                  }
 
-                // Method 3: Try to kill the VPN connection via VpnService if we have permission
-                try {
-                    // Check if we can prepare VPN service (means we have permission)
-                    val vpnPrepareIntent = VpnService.prepare(context)
-                    if (vpnPrepareIntent == null) {
-                        Log.d(tag, "VPN service prepared, attempting to revoke VPN")
-                        // We have VPN permission, but we can't directly revoke another app's VPN
-                        // However, stopping the service should work
-                    }
-                } catch (e: Exception) {
-                    Log.w(tag, "VPN service check failed: ${e.message}")
-                }
 
                 // Method 4: Clear StrongSwan state files to force cleanup
                 try {
@@ -1046,6 +1059,8 @@ class StrongSwanHandler(
                 Log.d(tag, "VPN disconnect process completed (success: $disconnectSuccess)")
                 return@withContext true // Always return true since we've cleaned up our state
 
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.e(tag, "Failed to disconnect", e)
                 stopLogMonitoring()
@@ -1061,6 +1076,8 @@ class StrongSwanHandler(
      */
     fun setCurrentProfile(profile: VpnProfile) {
         currentProfile = profile
+        vpnStateListener.stateChanged()
+        if (permissionError != null) return
 
         // Check if VPN is actually active and update our state accordingly
         val isVpnActive = checkIfVpnIsActive()

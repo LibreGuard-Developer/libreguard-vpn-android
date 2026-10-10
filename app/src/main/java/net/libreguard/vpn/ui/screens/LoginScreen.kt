@@ -36,10 +36,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import net.libreguard.vpn.network.ClientLoginStep
 import net.libreguard.vpn.ui.components.CenteredScreenHeader
-import net.libreguard.vpn.ui.components.GOOGLE_NEWSLETTER_CONSENT_TEST_TAG
 import net.libreguard.vpn.ui.components.LogoWithEdgeFade
 import net.libreguard.vpn.ui.components.LogoWordmark
-import net.libreguard.vpn.ui.components.NewsletterConsentCheckbox
 import net.libreguard.vpn.ui.theme.*
 import net.libreguard.vpn.viewmodel.ClientLoginViewModel
 import org.json.JSONObject
@@ -64,8 +62,6 @@ fun LoginScreen(
     var identifier by remember { mutableStateOf(prefilledEmail.orEmpty()) }
     var password by remember { mutableStateOf("") }
     var passwordVisible by remember { mutableStateOf(false) }
-    var consentSheet by remember { mutableStateOf(false) }
-    var newsletterConsent by remember { mutableStateOf(false) }
     val activity = context.findLoginActivity()
 
     DisposableEffect(activity, vm) {
@@ -284,8 +280,8 @@ fun LoginScreen(
                         Spacer(Modifier.height(sectionGap))
                         Button(
                             onClick = {
-                                newsletterConsent = false
-                                consentSheet = true
+                                password = ""
+                                vm.google()
                             },
                             modifier = Modifier.fillMaxWidth().height(buttonHeight),
                             enabled = !state.busy,
@@ -514,62 +510,11 @@ fun LoginScreen(
         }
     }
 
-    if (consentSheet) {
-        GoogleNewsletterConsentSheet(
-            newsletterConsent = newsletterConsent,
-            onNewsletterConsentChange = { newsletterConsent = it },
-            onDismiss = { consentSheet = false },
-            onContinue = {
-                consentSheet = false
-                password = ""
-                vm.google(newsletterConsent)
-            }
-        )
-    }
+
 }
 
 private tailrec fun Context.findLoginActivity(): Activity? = when (this) {
     is Activity -> this
     is ContextWrapper -> baseContext.findLoginActivity()
     else -> null
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun GoogleNewsletterConsentSheet(
-    newsletterConsent: Boolean,
-    onNewsletterConsentChange: (Boolean) -> Unit,
-    onDismiss: () -> Unit,
-    onContinue: () -> Unit
-) {
-    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = CardBackground) {
-        Column(
-            Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 8.dp).padding(bottom = 24.dp)
-        ) {
-            Text("Continue with Google", style = MaterialTheme.typography.titleLarge, color = Foreground)
-            Spacer(Modifier.height(16.dp))
-            NewsletterConsentCheckbox(
-                checked = newsletterConsent, onCheckedChange = onNewsletterConsentChange,
-                testTag = GOOGLE_NEWSLETTER_CONSENT_TEST_TAG
-            )
-            Spacer(Modifier.height(12.dp))
-            Text(
-                "This choice applies only if Google creates a new LibreGuard account. Existing accounts will not be subscribed or have their preferences changed.",
-                style = MaterialTheme.typography.bodySmall, color = MutedForeground
-            )
-            Spacer(Modifier.height(24.dp))
-            Row(
-                Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                TextButton(onClick = onDismiss) { Text("Cancel") }
-                Spacer(Modifier.width(8.dp))
-                Button(
-                    onClick = onContinue,
-                    shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Primary, contentColor = PrimaryForeground)
-                ) { Text("Continue with Google") }
-            }
-        }
-    }
 }

@@ -517,7 +517,7 @@ fun ConfirmEmailScreen(
         val token = auth.token
         val refreshToken = auth.refreshToken
         if (token.isNullOrBlank()) return false
-        tokenManager.saveTokens(token, refreshToken ?: "")
+        tokenManager.beginSession(token, refreshToken ?: "")
         auth.deviceId?.let { tokenManager.saveDeviceId(it) }
         tokenManager.saveCurrentDeviceKeyId()
         if (auth.activeDevices != null && auth.maxDevices != null) {

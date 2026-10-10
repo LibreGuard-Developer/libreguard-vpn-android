@@ -6,7 +6,7 @@ data class ClientDeviceRequest(
     val devicePublicKey: String?,
     val devicePublicKeyId: String?,
     val devicePublicKeyAlgorithm: String?,
-    val newsletterConsent: Boolean = false
+    val newsletterConsentFlow: String = "postAuth"
 )
 data class ClientPasswordRequest(
     val identifier: String,
@@ -47,6 +47,8 @@ data class ClientLoginResponse(
     val serviceAccess: Boolean? = null,
     val requiresRenewal: Boolean? = null,
     val warningRecoveryCodes: Boolean = false,
+    val isNewAccount: Boolean? = null,
+    val newsletterConsentPromptPending: Boolean? = null,
     val pendingLoginToken: String? = null,
     val loginContinuationToken: String? = null,
     val accountLinkToken: String? = null,

@@ -166,8 +166,8 @@ android {
         applicationId = "net.libreguard.vpn"
         minSdk = 29
         targetSdk = 36
-        versionCode = 20070
-        versionName = "2.0.7"
+        versionCode = 20110
+        versionName = "2.1.1"
 
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
@@ -346,6 +346,8 @@ dependencies {
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
     testImplementation(libs.mockwebserver)
+    androidTestImplementation(libs.mockwebserver)
+    androidTestImplementation(libs.okhttp.tls)
 
     implementation(libs.androidx.preference)
     implementation(libs.androidx.security.crypto)

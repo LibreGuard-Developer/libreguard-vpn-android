@@ -46,6 +46,14 @@ class WarmLatencyEngineTest {
         assertEquals(1, calls)
     }
 
+    @Test fun ordinaryProbeFailureDoesNotAbortOtherServers() = runTest {
+        val engine = WarmLatencyEngine(PingTransport { endpoint, _ ->
+            if (endpoint.host == "1.example") throw IllegalStateException("transport unavailable")
+            20
+        })
+        assertEquals(mapOf(2 to 20), engine.measure(listOf(server(1), server(2))))
+    }
+
     @Test fun eightSlotsRefillBeforeSlowServerFinishes() = runTest {
         val gates = (1..9).associate { "$it.example" to CompletableDeferred<Unit>() }
         val started = mutableListOf<String>()

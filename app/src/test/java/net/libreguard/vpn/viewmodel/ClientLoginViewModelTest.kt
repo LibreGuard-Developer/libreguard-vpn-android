@@ -129,7 +129,7 @@ class ClientLoginViewModelTest {
                 else -> error("Unexpected call")
             }
         })
-        vm.google(false)
+        vm.google()
         advanceUntilIdle()
         assertTrue(vm.state.value.step is ClientLoginStep.LinkPassword)
         vm.linkPassword("person", "password")

@@ -10,6 +10,8 @@ import retrofit2.http.POST
 import retrofit2.http.PUT
 import retrofit2.http.Streaming
 import retrofit2.http.Path
+import retrofit2.http.Tag
+import net.libreguard.vpn.util.AccountSessionContext
 
 data class VpnConfigRequest(
     val serverId: Int, // Changed to Int to match your API
@@ -149,6 +151,26 @@ data class VpnHealthResponse(
 )
 
 interface ApiService {
+    @GET("api/account/newsletter")
+    suspend fun getNewsletter(
+        @Header("Authorization") authorization: String,
+        @Tag session: AccountSessionContext
+    ): Response<NewsletterSettingsResponse>
+
+    @PUT("api/account/newsletter")
+    suspend fun updateNewsletter(
+        @Header("Authorization") authorization: String,
+        @Tag session: AccountSessionContext,
+        @Body request: UpdateNewsletterRequest
+    ): Response<NewsletterSettingsResponse>
+
+    @POST("api/account/newsletter/onboarding")
+    suspend fun completeNewsletterOnboarding(
+        @Header("Authorization") authorization: String,
+        @Tag session: AccountSessionContext,
+        @Body request: NewsletterOnboardingRequest
+    ): Response<NewsletterSettingsResponse>
+
     @POST("api/login/client/google/begin")
     suspend fun beginClientGoogle(@Body request: ClientDeviceRequest): Response<ClientGoogleBeginResponse>
     @POST("api/login/client/google/complete")

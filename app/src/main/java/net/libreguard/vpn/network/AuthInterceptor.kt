@@ -4,6 +4,8 @@ import android.content.Context
 import android.content.Intent
 import android.util.Log
 import net.libreguard.vpn.util.TokenManager
+import net.libreguard.vpn.util.AccountSessionContext
+import java.io.IOException
 import okhttp3.Interceptor
 import okhttp3.Response
 import org.json.JSONObject
@@ -23,17 +25,31 @@ class AuthInterceptor(
             return chain.proceed(originalRequest)
         }
 
-        val token = tokenManager.getAccessToken()
+        val requestSession = originalRequest.tag(AccountSessionContext::class.java)
+        val snapshot = tokenManager.sessionSnapshot()
+        if (requestSession != null && (snapshot?.context != requestSession ||
+                !tokenManager.isSessionCurrent(requestSession)))
+            throw IOException("The account session changed.")
+
+        val originSession = requestSession ?: snapshot?.context
+        val token = snapshot?.accessToken ?: tokenManager.getAccessToken()
 
         if (token == null) {
             return chain.proceed(originalRequest)
         }
 
         val newRequest = originalRequest.newBuilder()
+            .tag(AccountSessionContext::class.java, originSession)
             .header("Authorization", "Bearer $token")
             .build()
 
         val response = chain.proceed(newRequest)
+        // An old response must not revoke or alter the newly selected account.
+        if (originSession != null && !tokenManager.isSessionCurrent(originSession)) return response
+        // Preference errors cannot log out the VPN session. The authenticator may
+        // refresh a rejected 401; the newsletter UI handles the final failure.
+        val newsletterRequest = url == "/api/account/newsletter" || url == "/api/account/newsletter/onboarding"
+        if (newsletterRequest && response.code in setOf(401, 403)) return response
 
         // Handle 401: token is invalid or revoked
         if (response.code == 401) {
@@ -69,7 +85,7 @@ class AuthInterceptor(
 
             if (requiresLogin || authRetry > 0) {
                 Log.w(TAG, "Received 401 - logout required (authRetry=$authRetry)")
-                handleTokenRevocation()
+                originSession?.let(::handleTokenRevocation)
             } else {
                 Log.w(TAG, "Received 401 - attempting refresh (authRetry=$authRetry)")
             }
@@ -146,14 +162,14 @@ class AuthInterceptor(
 
             // Otherwise, treat as token revocation
             Log.w(TAG, "Received 403 response - revocation likely")
-            handleTokenRevocation()
+            originSession?.let(::handleTokenRevocation)
             return response
         }
 
         return response
     }
 
-    private fun handleTokenRevocation() {
+    private fun handleTokenRevocation(originSession: AccountSessionContext) {
         try {
             // CRITICAL: Prevent logout cascade - check if we already sent logout recently
             val prefs = context.getSharedPreferences("vpn_state_prefs", Context.MODE_PRIVATE)
@@ -170,10 +186,11 @@ class AuthInterceptor(
             prefs.edit().putLong("last_logout_broadcast", now).apply()
 
             // Clear tokens immediately
-            tokenManager.clearTokens()
+            if (!tokenManager.clearSessionIfCurrent(originSession)) return
 
             // Broadcast logout event to all components
             val logoutIntent = Intent("net.libreguard.vpn.ACTION_LOGOUT")
+            logoutIntent.putExtra("account_session_epoch", originSession.epoch)
             logoutIntent.setPackage(context.packageName)
             context.sendBroadcast(logoutIntent)
 

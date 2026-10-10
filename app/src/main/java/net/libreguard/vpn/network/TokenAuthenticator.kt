@@ -7,6 +7,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import net.libreguard.vpn.util.DeviceKeyManager
 import net.libreguard.vpn.util.TokenManager
+import net.libreguard.vpn.util.AccountSessionContext
 import okhttp3.Authenticator
 import okhttp3.Request
 import okhttp3.Response
@@ -28,11 +29,13 @@ class TokenAuthenticator(
 
         @Volatile
         private var lastRefreshedAccessToken: String? = null
+        @Volatile private var lastRefreshedSession: AccountSessionContext? = null
     }
 
     @Volatile
     private var consecutiveRefreshFailures = 0
     private val maxRefreshAttempts = 2
+    private var failureSession: AccountSessionContext? = null
 
     override fun authenticate(route: Route?, response: Response): Request? {
         val url = response.request.url.encodedPath
@@ -43,6 +46,13 @@ class TokenAuthenticator(
             return null
         }
 
+        val expectedSession = response.request.tag(AccountSessionContext::class.java) ?: return null
+        if (!tokenManager.isSessionCurrent(expectedSession)) return null
+        if (failureSession != expectedSession) {
+            consecutiveRefreshFailures = 0
+            failureSession = expectedSession
+        }
+
         val retryCount = response.request.header(HEADER_AUTH_RETRY)?.toIntOrNull() ?: 0
         if (retryCount >= MAX_RETRY_PER_REQUEST) {
             android.util.Log.w(TAG, "Auth retry limit reached. Not attempting further refresh.")
@@ -51,7 +61,8 @@ class TokenAuthenticator(
 
         if (consecutiveRefreshFailures >= maxRefreshAttempts) {
             android.util.Log.w(TAG, "Circuit breaker activated: $consecutiveRefreshFailures consecutive refresh failures. Forcing logout.")
-            logoutUser()
+            if (url != "/api/account/newsletter" && url != "/api/account/newsletter/onboarding" &&
+                tokenManager.isSessionCurrent(expectedSession)) logoutUser(expectedSession)
             return null
         }
 
@@ -62,19 +73,26 @@ class TokenAuthenticator(
             return null
         }
 
-        val storedToken = tokenManager.getAccessToken()
+        val storedSnapshot = tokenManager.sessionSnapshot()
+        if (storedSnapshot?.context != expectedSession) return null
+        val storedToken = storedSnapshot.accessToken
         val requestToken = response.request.header("Authorization")?.removePrefix("Bearer ")
         if (!storedToken.isNullOrBlank() && !requestToken.isNullOrBlank() && storedToken != requestToken) {
             android.util.Log.d(TAG, "Token already refreshed by another thread - retrying with stored token")
-            return response.request.newBuilder()
-                .header("Authorization", "Bearer $storedToken")
-                .header(HEADER_AUTH_RETRY, (retryCount + 1).toString())
-                .build()
+            return retryForSession(response, expectedSession, retryCount)
         }
 
         val refreshedToken: String? = runBlocking {
             refreshMutex.withLock {
-                val latestStored = tokenManager.getAccessToken()
+                val latestSnapshot = tokenManager.sessionSnapshot()
+                if (latestSnapshot?.context != expectedSession || !tokenManager.isSessionCurrent(expectedSession))
+                    return@withLock null
+                if (lastRefreshedSession != expectedSession) {
+                    lastRefreshedAccessToken = null
+                    lastRefreshedSession = expectedSession
+                    consecutiveRefreshFailures = 0
+                }
+                val latestStored = latestSnapshot.accessToken
                 val latestRequestToken = response.request.header("Authorization")?.removePrefix("Bearer ")
                 if (!latestStored.isNullOrBlank() && !latestRequestToken.isNullOrBlank() && latestStored != latestRequestToken) {
                     android.util.Log.d(TAG, "Token refreshed while waiting for mutex - reusing stored token")
@@ -82,12 +100,7 @@ class TokenAuthenticator(
                     return@withLock latestStored
                 }
 
-                if (!lastRefreshedAccessToken.isNullOrBlank() && lastRefreshedAccessToken != latestRequestToken) {
-                    android.util.Log.d(TAG, "Reusing last refreshed token")
-                    return@withLock lastRefreshedAccessToken
-                }
-
-                val refreshToken = tokenManager.getRefreshToken()
+                val refreshToken = tokenManager.currentRefreshToken(expectedSession)
                 if (refreshToken.isNullOrBlank()) {
                     android.util.Log.w(TAG, "No refresh token available")
                     return@withLock null
@@ -120,12 +133,15 @@ class TokenAuthenticator(
                     if (refreshResponse.isSuccessful) {
                         val authResponse = refreshResponse.body()
                         if (authResponse?.token != null && authResponse.refreshToken != null) {
-                            tokenManager.saveTokens(authResponse.token, authResponse.refreshToken)
-                            tokenManager.saveDeviceId(authResponse.deviceId ?: deviceId)
-                            tokenManager.saveCurrentDeviceKeyId(binding.keyId)
-                            if (authResponse.activeDevices != null && authResponse.maxDevices != null) {
-                                tokenManager.saveDeviceMetadata(authResponse.activeDevices, authResponse.maxDevices)
+                            val accepted = tokenManager.commitRefresh(
+                                expectedSession, authResponse.token, authResponse.refreshToken
+                            ) {
+                                tokenManager.saveDeviceId(authResponse.deviceId ?: deviceId)
+                                tokenManager.saveCurrentDeviceKeyId(binding.keyId)
+                                if (authResponse.activeDevices != null && authResponse.maxDevices != null)
+                                    tokenManager.saveDeviceMetadata(authResponse.activeDevices, authResponse.maxDevices)
                             }
+                            if (!accepted) return@withLock null
 
                             consecutiveRefreshFailures = 0
                             lastRefreshedAccessToken = authResponse.token
@@ -155,13 +171,20 @@ class TokenAuthenticator(
             return null
         }
 
+        return retryForSession(response, expectedSession, retryCount)
+    }
+
+    private fun retryForSession(response: Response, expectedSession: AccountSessionContext, retryCount: Int): Request? {
+        val snapshot = tokenManager.sessionSnapshot()
+        if (snapshot?.context != expectedSession || !tokenManager.isSessionCurrent(expectedSession)) return null
         return response.request.newBuilder()
-            .header("Authorization", "Bearer $refreshedToken")
+            .tag(AccountSessionContext::class.java, expectedSession)
+            .header("Authorization", "Bearer " + snapshot.accessToken)
             .header(HEADER_AUTH_RETRY, (retryCount + 1).toString())
             .build()
     }
 
-    private fun logoutUser() {
+    private fun logoutUser(originSession: AccountSessionContext) {
         val prefs = context.getSharedPreferences("vpn_state_prefs", Context.MODE_PRIVATE)
         val lastLogoutBroadcast = prefs.getLong("last_logout_broadcast", 0L)
         val now = System.currentTimeMillis()
@@ -173,9 +196,9 @@ class TokenAuthenticator(
 
         prefs.edit().putLong("last_logout_broadcast", now).apply()
 
-        tokenManager.clearTokens()
-        tokenManager.clearDeviceData()
+        if (!tokenManager.clearSessionIfCurrent(originSession) { tokenManager.clearDeviceData() }) return
         val intent = Intent("net.libreguard.vpn.ACTION_LOGOUT")
+        intent.putExtra("account_session_epoch", originSession.epoch)
         intent.setPackage(context.packageName)
         context.sendBroadcast(intent)
     }

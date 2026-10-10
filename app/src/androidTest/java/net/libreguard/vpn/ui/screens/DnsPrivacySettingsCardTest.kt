@@ -1,7 +1,7 @@
 package net.libreguard.vpn.ui.screens
 
+import androidx.compose.ui.test.assertHasNoClickAction
 import androidx.compose.ui.test.assertIsEnabled
-import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -22,7 +22,8 @@ class DnsPrivacySettingsCardTest {
     fun loadingDisablesToggle() {
         show(DnsPreferenceUiState(isLoading = true))
         composeRule.onNodeWithText("Checking your account setting…").assertExists()
-        composeRule.onNodeWithTag("dns_ad_blocking_switch").assertIsNotEnabled()
+        composeRule.onNodeWithTag("dns_ad_blocking_switch", useUnmergedTree = true).assertHasNoClickAction()
+        composeRule.onNodeWithTag("dns_ad_blocking_row").assertHasNoClickAction()
     }
 
     @Test
@@ -30,7 +31,7 @@ class DnsPrivacySettingsCardTest {
         var upgradeRequested = false
         show(DnsPreferenceUiState(isLoaded = true)) { upgradeRequested = true }
 
-        composeRule.onNodeWithTag("dns_ad_blocking_switch").assertIsNotEnabled()
+        composeRule.onNodeWithTag("dns_ad_blocking_switch", useUnmergedTree = true).assertHasNoClickAction()
         composeRule.onNodeWithTag("dns_ad_blocking_row").performClick()
         assertTrue(upgradeRequested)
     }

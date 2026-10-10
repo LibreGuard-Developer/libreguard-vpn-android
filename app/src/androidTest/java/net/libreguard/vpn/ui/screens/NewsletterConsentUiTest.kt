@@ -8,7 +8,9 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
-import net.libreguard.vpn.ui.components.GOOGLE_NEWSLETTER_CONSENT_TEST_TAG
+import androidx.compose.ui.test.assertIsOff
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
 import net.libreguard.vpn.ui.components.NEWSLETTER_CONSENT_TEXT
 import net.libreguard.vpn.ui.components.REGISTRATION_NEWSLETTER_CONSENT_TEST_TAG
 import net.libreguard.vpn.ui.theme.LibreGuardVPNTheme
@@ -39,26 +41,51 @@ class NewsletterConsentUiTest {
     }
 
     @Test
-    fun googleNewsletterConsentSheetIsUncheckedAndRequiresExplicitOptIn() {
-        var consent by mutableStateOf(false)
-
+    fun postLoginNewsletterChoiceIsUncheckedAndSubscribeNeedsExplicitOptIn() {
+        var state by mutableStateOf(net.libreguard.vpn.viewmodel.NewsletterUiState(
+            settings = net.libreguard.vpn.network.NewsletterSettingsResponse(
+                "account", false, true, true, NEWSLETTER_CONSENT_TEXT, "v1",
+                "https://libreguard.net/privacy", "3fea7638-e486-46cc-9c12-93863a70611c"
+            ), requiresRefresh = false, promptVisible = true
+        ))
+        var subscriptions = 0
         composeRule.setContent {
             LibreGuardVPNTheme {
-                GoogleNewsletterConsentSheet(
-                    newsletterConsent = consent,
-                    onNewsletterConsentChange = { consent = it },
+                net.libreguard.vpn.ui.components.NewsletterConsentDialog(
+                    state = state,
+                    onConsentChange = { state = state.copy(consentChecked = it) },
+                    onSubscribe = { subscriptions++ },
+                    onSkip = {},
                     onDismiss = {},
-                    onContinue = {}
+                    onRefresh = {}
                 )
             }
         }
+        composeRule.onNodeWithTag("newsletterOnboardingConsent").assertIsOff()
+        composeRule.onNodeWithTag("newsletterSubscribe").assertIsNotEnabled()
+        composeRule.onNodeWithTag("newsletterSkip").assertIsEnabled()
+        composeRule.onNodeWithTag("newsletterOnboardingConsent").performClick().assertIsOn()
+        composeRule.onNodeWithTag("newsletterSubscribe").performClick()
+        org.junit.Assert.assertEquals(1, subscriptions)
+    }
 
-        composeRule.onNodeWithText(NEWSLETTER_CONSENT_TEXT).assertExists()
-        composeRule.onNodeWithText(
-            "This choice applies only if Google creates a new LibreGuard account. Existing accounts will not be subscribed or have their preferences changed."
-        ).assertExists()
-
-        // A checked-by-default control would toggle off here and fail assertIsOn.
-        composeRule.onNodeWithTag(GOOGLE_NEWSLETTER_CONSENT_TEST_TAG).performClick().assertIsOn()
+    @Test
+    fun settingsKeepsConfirmedValueWhileSavingAndDisablesDuplicateWrites() {
+        var writes = 0
+        composeRule.setContent {
+            LibreGuardVPNTheme {
+                net.libreguard.vpn.ui.components.NewsletterPreferencesCard(
+                    state = net.libreguard.vpn.viewmodel.NewsletterUiState(
+                        settings = net.libreguard.vpn.network.NewsletterSettingsResponse(
+                            "account", true, true, false, NEWSLETTER_CONSENT_TEXT, "v1",
+                            "https://libreguard.net/privacy", "3fea7638-e486-46cc-9c12-93863a70611c"
+                        ), requiresRefresh = false, isSaving = true
+                    ),
+                    onToggle = { writes++ }, onRefresh = {}
+                )
+            }
+        }
+        composeRule.onNodeWithTag("accountNewsletterToggle").assertIsOn().assertIsNotEnabled()
+        org.junit.Assert.assertEquals(0, writes)
     }
 }

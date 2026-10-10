@@ -53,14 +53,14 @@ class ClientLoginViewModel(
         }
     }
 
-    fun google(newsletterConsent: Boolean) {
+    fun google() {
         if (mutableState.value.busy) return
         cancel()
         val currentGeneration = generation
         mutableState.value = mutableState.value.copy(busy = true, error = null, errorCode = null)
         requestJob = viewModelScope.launch {
             try {
-                val response = api.beginClientGoogle(device.copy(newsletterConsent = newsletterConsent))
+                val response = api.beginClientGoogle(device)
                 if (generation != currentGeneration) return@launch
                 if (!response.isSuccessful) { failure(response.code(), response.errorBody()?.string(), response.headers()["Retry-After"]); return@launch }
                 val begin = requireNotNull(response.body())
@@ -153,7 +153,7 @@ class ClientLoginViewModel(
                 DeviceKeyManager.exportPublicKeyBase64(), DeviceKeyManager.publicKeyId(), DeviceKeyManager.algorithm())
             @Suppress("UNCHECKED_CAST")
             return ClientLoginViewModel(RetrofitClient.authApiService, device, GoogleCredentialProvider(context)) { response ->
-                tokens.saveTokens(requireNotNull(response.token), requireNotNull(response.refreshToken))
+                tokens.beginSession(requireNotNull(response.token), requireNotNull(response.refreshToken), requireNotNull(response.userId))
                 tokens.saveDeviceId(requireNotNull(response.deviceId))
                 tokens.saveCurrentDeviceKeyId(requireNotNull(device.devicePublicKeyId))
                 tokens.saveDeviceMetadata(response.activeDevices ?: 0, response.maxDevices ?: 1)
