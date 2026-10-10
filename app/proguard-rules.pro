@@ -6,8 +6,10 @@
 -keepattributes Signature,*Annotation*,InnerClasses,EnclosingMethod,SourceFile,LineNumberTable
 -renamesourcefileattribute SourceFile
 
-# Improve obfuscation for app-owned code that is safe to rename.
--adaptclassstrings
+# Do not enable global -adaptclassstrings: Binder descriptors are protocol values,
+# even when they match class names. Rewriting Google Play services' service broker
+# descriptor breaks credential retrieval with "Binder invocation to an incorrect interface".
+# R8 handles ordinary class-name reflection; explicit runtime lookups are kept below.
 -allowaccessmodification
 
 # Ensure AGP's expected release mapping artifacts are materialized on fresh builds.

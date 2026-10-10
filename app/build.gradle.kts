@@ -166,8 +166,8 @@ android {
         applicationId = "net.libreguard.vpn"
         minSdk = 29
         targetSdk = 36
-        versionCode = 20110
-        versionName = "2.1.1"
+        versionCode = 20120
+        versionName = "2.1.2"
 
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
