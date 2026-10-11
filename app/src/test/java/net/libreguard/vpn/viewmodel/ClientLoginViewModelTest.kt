@@ -1,6 +1,8 @@
 package net.libreguard.vpn.viewmodel
 
 import android.app.Activity
+import androidx.credentials.exceptions.GetCredentialCancellationException
+import androidx.credentials.exceptions.GetCredentialUnknownException
 import com.google.gson.Gson
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.*
@@ -168,4 +170,93 @@ class ClientLoginViewModelTest {
         assertNotNull(vm.state.value.error)
         assertEquals(ClientLoginStep.Start, vm.state.value.step)
     }
+
+    @Test fun google_credential_failure_does_not_post_a_proof() = runTest(dispatcher) {
+        val unavailable = object : GoogleCredentialSource {
+            override fun attach(activity: Activity) {}
+            override fun detach(activity: Activity) {}
+            override suspend fun getToken(begin: ClientGoogleBeginResponse): String =
+                throw GetCredentialUnknownException("10: [28444] private-google-token person@example.com")
+        }
+        val vm = ClientLoginViewModel(api { method, _ ->
+            assertEquals("beginClientGoogle", method)
+            Response.success(ClientGoogleBeginResponse("attempt", capability, replacement, "web-client", expiry))
+        }, device, unavailable, saved::add)
+        vm.google()
+        advanceUntilIdle()
+        assertEquals(listOf("beginClientGoogle"), calls)
+        assertFalse(vm.state.value.busy)
+        assertNotNull(vm.state.value.error)
+        assertTrue(saved.isEmpty())
+    }
+
+    @Test fun google_backend_rejection_preserves_normal_error_handling() = runTest(dispatcher) {
+        val vm = ClientLoginViewModel(api { method, _ ->
+            when (method) {
+                "beginClientGoogle" -> Response.success(ClientGoogleBeginResponse("attempt", capability, replacement, "web-client", expiry))
+                "completeClientGoogle" -> error(ClientLoginResponse(errorCode = "INVALID_GOOGLE_PROOF", message = "private-backend-message"), 401)
+                else -> error("Unexpected call")
+            }
+        }, device, credentials, saved::add)
+        vm.google()
+        advanceUntilIdle()
+        assertEquals("INVALID_GOOGLE_PROOF", vm.state.value.errorCode)
+        assertTrue(saved.isEmpty())
+    }
+
+    @Test fun malformed_google_begin_stops_before_credential_retrieval() = runTest(dispatcher) {
+        var requestedToken = false
+        val unused = object : GoogleCredentialSource {
+            override fun attach(activity: Activity) {}
+            override fun detach(activity: Activity) {}
+            override suspend fun getToken(begin: ClientGoogleBeginResponse): String {
+                requestedToken = true
+                return "unused"
+            }
+        }
+        val vm = ClientLoginViewModel(api { _, _ ->
+            Response.success(ClientGoogleBeginResponse("attempt", capability, "bad", "web-client", expiry))
+        }, device, unused, saved::add)
+        vm.google()
+        advanceUntilIdle()
+        assertFalse(requestedToken)
+        assertNotNull(vm.state.value.error)
+    }
+
+    @Test fun google_cancellation_does_not_create_an_error_or_complete_login() = runTest(dispatcher) {
+        val cancelled = object : GoogleCredentialSource {
+            override fun attach(activity: Activity) {}
+            override fun detach(activity: Activity) {}
+            override suspend fun getToken(begin: ClientGoogleBeginResponse): String =
+                throw GetCredentialCancellationException("User cancelled")
+        }
+        val vm = ClientLoginViewModel(api { _, _ ->
+            Response.success(ClientGoogleBeginResponse("attempt", capability, replacement, "web-client", expiry))
+        }, device, cancelled, saved::add)
+        vm.google()
+        advanceUntilIdle()
+        assertNull(vm.state.value.error)
+        assertFalse(vm.state.value.busy)
+        assertEquals(listOf("beginClientGoogle"), calls)
+    }
+
+    @Test fun missing_google_activity_stops_before_creating_a_backend_attempt() = runTest(dispatcher) {
+        val detached = object : GoogleCredentialSource {
+            override fun attach(activity: Activity) {}
+            override fun detach(activity: Activity) {}
+            override fun ensureActivityAttached() {
+                throw IllegalStateException("Google sign-in requires a live Activity.")
+            }
+            override suspend fun getToken(begin: ClientGoogleBeginResponse): String = error("Must not request credentials")
+        }
+        val vm = ClientLoginViewModel(api { _, _ -> error("Must not call the backend") },
+            device, detached, saved::add)
+        vm.google()
+        advanceUntilIdle()
+        assertTrue(calls.isEmpty())
+        assertTrue(saved.isEmpty())
+        assertFalse(vm.state.value.busy)
+        assertNotNull(vm.state.value.error)
+    }
+
 }

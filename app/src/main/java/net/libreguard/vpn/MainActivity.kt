@@ -40,6 +40,7 @@ import net.libreguard.vpn.ui.screens.TwoFactorSettingsScreen
 import net.libreguard.vpn.viewmodel.ClientLoginViewModel
 import net.libreguard.vpn.viewmodel.NewsletterViewModel
 import net.libreguard.vpn.ui.components.NewsletterConsentHost
+import net.libreguard.vpn.ui.components.GoogleCredentialActivityHost
 import net.libreguard.vpn.ui.screens.RegisterScreen
 import net.libreguard.vpn.ui.screens.ConfirmEmailScreen
 import net.libreguard.vpn.ui.screens.PrivacyPolicyScreen
@@ -155,6 +156,7 @@ fun AppNavigation(
     }
 
     val clientLoginViewModel: ClientLoginViewModel = viewModel(factory = ClientLoginViewModel.Factory(context))
+    GoogleCredentialActivityHost(clientLoginViewModel.googleCredentials)
     val newsletterViewModel: NewsletterViewModel = viewModel(factory = NewsletterViewModel.Factory(context))
     var authToken by remember { mutableStateOf<String?>(null) }
     var isCheckingToken by remember { mutableStateOf(true) }

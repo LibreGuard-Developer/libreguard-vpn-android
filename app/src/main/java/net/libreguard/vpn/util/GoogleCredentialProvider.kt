@@ -15,6 +15,7 @@ import java.lang.ref.WeakReference
 interface GoogleCredentialSource {
     fun attach(activity: Activity)
     fun detach(activity: Activity)
+    fun ensureActivityAttached() {}
     suspend fun getToken(begin: ClientGoogleBeginResponse): String
 }
 
@@ -35,11 +36,19 @@ class GoogleCredentialProvider(context: Context) : GoogleCredentialSource {
         }
     }
 
+    override fun ensureActivityAttached() {
+        requireActivity()
+    }
+
+    private fun requireActivity(): Activity = checkNotNull(
+        activity.get()?.takeUnless { it.isFinishing || it.isDestroyed }
+    ) { "Google sign-in requires a live Activity." }
+
     override suspend fun getToken(begin: ClientGoogleBeginResponse): String {
         // The explicit button flow does not request automatic account selection.
         val option = GetSignInWithGoogleOption.Builder(begin.clientId).setNonce(begin.nonce).build()
         val request = GetCredentialRequest.Builder().addCredentialOption(option).build()
-        val context = MutableContextWrapper(requireNotNull(activity.get()))
+        val context = MutableContextWrapper(requireActivity())
         pendingContext = context
         try {
             val credential = manager.getCredential(context, request).credential

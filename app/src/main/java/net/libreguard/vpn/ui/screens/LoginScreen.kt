@@ -1,8 +1,5 @@
 package net.libreguard.vpn.ui.screens
 
-import android.app.Activity
-import android.content.Context
-import android.content.ContextWrapper
 import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.BackHandler
@@ -36,6 +33,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import net.libreguard.vpn.network.ClientLoginStep
 import net.libreguard.vpn.ui.components.CenteredScreenHeader
+import net.libreguard.vpn.ui.components.GoogleCredentialActivityHost
 import net.libreguard.vpn.ui.components.LogoWithEdgeFade
 import net.libreguard.vpn.ui.components.LogoWordmark
 import net.libreguard.vpn.ui.theme.*
@@ -62,12 +60,8 @@ fun LoginScreen(
     var identifier by remember { mutableStateOf(prefilledEmail.orEmpty()) }
     var password by remember { mutableStateOf("") }
     var passwordVisible by remember { mutableStateOf(false) }
-    val activity = context.findLoginActivity()
-
-    DisposableEffect(activity, vm) {
-        activity?.let(vm.googleCredentials::attach)
-        onDispose { activity?.let(vm.googleCredentials::detach) }
-    }
+    // AppNavigation owns the shared provider. Only a standalone screen owns its own binding.
+    if (loginViewModel == null) GoogleCredentialActivityHost(vm.googleCredentials)
     LaunchedEffect(prefilledEmail) {
         if (identifier.isBlank()) identifier = prefilledEmail.orEmpty()
     }
@@ -511,10 +505,4 @@ fun LoginScreen(
     }
 
 
-}
-
-private tailrec fun Context.findLoginActivity(): Activity? = when (this) {
-    is Activity -> this
-    is ContextWrapper -> baseContext.findLoginActivity()
-    else -> null
 }

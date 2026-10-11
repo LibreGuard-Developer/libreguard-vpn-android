@@ -60,15 +60,19 @@ class ClientLoginViewModel(
         mutableState.value = mutableState.value.copy(busy = true, error = null, errorCode = null)
         requestJob = viewModelScope.launch {
             try {
+                googleCredentials.ensureActivityAttached()
                 val response = api.beginClientGoogle(device)
                 if (generation != currentGeneration) return@launch
-                if (!response.isSuccessful) { failure(response.code(), response.errorBody()?.string(), response.headers()["Retry-After"]); return@launch }
+                val errorBody = if (response.isSuccessful) null else response.errorBody()?.string()
+                if (!response.isSuccessful) { failure(response.code(), errorBody, response.headers()["Retry-After"]); return@launch }
                 val begin = requireNotNull(response.body())
                 require(begin.redemptionToken.length in 32..128 && begin.nonce.length in 32..128 && begin.clientId.isNotBlank())
                 val idToken = googleCredentials.getToken(begin)
                 if (generation != currentGeneration) return@launch
                 val completed = api.completeClientGoogle(ClientGoogleCompleteRequest(begin.attemptId, begin.redemptionToken, idToken))
-                if (generation == currentGeneration) handle(completed)
+                if (generation == currentGeneration) {
+                    handle(completed)
+                }
             } catch (_: GetCredentialCancellationException) {
                 if (generation == currentGeneration) mutableState.value = ClientLoginUiState()
             } catch (ex: CancellationException) {
@@ -152,14 +156,14 @@ class ClientLoginViewModel(
             val device = ClientDeviceRequest(tokens.requireDeviceId(), tokens.getAppVersion(),
                 DeviceKeyManager.exportPublicKeyBase64(), DeviceKeyManager.publicKeyId(), DeviceKeyManager.algorithm())
             @Suppress("UNCHECKED_CAST")
-            return ClientLoginViewModel(RetrofitClient.authApiService, device, GoogleCredentialProvider(context)) { response ->
+            return ClientLoginViewModel(RetrofitClient.authApiService, device, GoogleCredentialProvider(context), persistSession = { response ->
                 tokens.beginSession(requireNotNull(response.token), requireNotNull(response.refreshToken), requireNotNull(response.userId))
                 tokens.saveDeviceId(requireNotNull(response.deviceId))
                 tokens.saveCurrentDeviceKeyId(requireNotNull(device.devicePublicKeyId))
                 tokens.saveDeviceMetadata(response.activeDevices ?: 0, response.maxDevices ?: 1)
                 context.getSharedPreferences("vpn_state_prefs", Context.MODE_PRIVATE).edit()
                     .remove("pending_device_limit_exceeded").apply()
-            } as T
+            }) as T
         }
     }
 }
